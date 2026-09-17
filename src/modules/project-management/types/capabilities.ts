@@ -15,8 +15,11 @@ import { z } from "zod";
  *
  * The matrix these mirror (head / granted assigner / plain member):
  * view, create and edit are open to every member; assign is head-or-granted; delete is
- * head-or-granted with a creator exception applied per row; grant is head-only; configure is
- * head-or-granted (the recorded decision that couples config editing to the grant).
+ * head-or-granted with a creator exception applied per row; configure is head-or-granted (the
+ * recorded decision that couples config editing to the grant). Grant is head-or-open-policy: where
+ * a department's `allow_all_members_grant` setting is ON (its default, including when no setting row
+ * exists), every member may grant. The one head-only flag is `canManageDepartmentSetting`, which
+ * gates that policy itself — so a member who may grant can never change the policy that lets them.
  */
 export const CapabilitiesSchema = z.object({
     canView: z.boolean(),
@@ -27,6 +30,8 @@ export const CapabilitiesSchema = z.object({
     canDelete: z.boolean(),
     canGrant: z.boolean(),
     canConfigure: z.boolean(),
+    /** Head-only: may change the department's assignment-grant policy (the members-may-grant toggle). */
+    canManageDepartmentSetting: z.boolean(),
 });
 
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;

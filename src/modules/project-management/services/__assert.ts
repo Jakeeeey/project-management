@@ -7,18 +7,20 @@
  * Exit code 0 means every assertion below passed.
  *
  * Both cores import nothing, so this harness proves the scope policy and the whole capability
- * matrix without a database and without the Directus client in the load path. Why the `.ts`
- * extension and the directive: Node resolves a relative import only when the specifier carries the
- * real file extension, while `tsc` rejects a `.ts` specifier unless `allowImportingTsExtensions` is
- * on — and the project `tsconfig.json` (a protected scaffold file this module may not edit) does
- * not enable it. The directive suppresses only that extension complaint, exactly as
+ * matrix without a database and without the Directus client in the load path. The matrix is asserted
+ * for BOTH department policies: `grant` follows the department's `allowAllMembersGrant` setting
+ * (head-only when OFF, every member when ON) while `manage-setting` — the toggle itself — stays
+ * head-only in both. Why the `.ts` extension and the directive: Node resolves a relative import
+ * only when the specifier carries the real file extension, while `tsc` rejects a `.ts` specifier
+ * unless `allowImportingTsExtensions` is on — and the project `tsconfig.json` (a protected scaffold
+ * file this module may not edit) does not enable it. The directive suppresses only that extension complaint, exactly as
  * `utils/__assert.ts` does; each module is still fully resolved and typed by `tsc`, so
  * `npx tsc --noEmit` stays green alongside this Node run.
  */
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
 import { DepartmentScopeError, assertSameDepartment, isSameDepartment } from "./department-scope.ts";
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
-import { PermissionError, allows, canAssignFrom, canConfigureFrom, canDeleteTaskFrom, canGrantFrom } from "./permission-matrix.ts";
+import { PermissionError, allows, canAssignFrom, canConfigureFrom, canDeleteTaskFrom, canGrantFrom, canManageSettingFrom } from "./permission-matrix.ts";
 
 let checks = 0;
 let failures = 0;
@@ -82,49 +84,135 @@ const MATRIX_ROLES = [
     { key: "plain", label: "plain member", isHead: false, hasGrant: false },
 ] as const;
 
-const MATRIX_CAPABILITIES = ["view", "create", "edit", "assign", "delete", "configure", "grant"] as const;
+const MATRIX_POLICIES = [
+    { key: "closed", label: "policy OFF", allowAllMembersGrant: false },
+    { key: "open", label: "policy ON", allowAllMembersGrant: true },
+] as const;
 
+const MATRIX_CAPABILITIES = [
+    "view",
+    "create",
+    "edit",
+    "assign",
+    "delete",
+    "configure",
+    "grant",
+    "manage-setting",
+] as const;
+
+type RoleKey = (typeof MATRIX_ROLES)[number]["key"];
+type CapabilityKey = (typeof MATRIX_CAPABILITIES)[number];
+
+const EVERYONE = { head: true, granted: true, plain: true } as const;
+const HEAD_OR_GRANTED = { head: true, granted: true, plain: false } as const;
+const HEAD_ONLY = { head: true, granted: false, plain: false } as const;
+
+/**
+ * The whole matrix, hard-coded per department policy. `grant` is the one capability the department
+ * setting moves — head-only when OFF, every member when ON; `manage-setting` never moves, because
+ * the toggle itself stays head-only in both policies. The other six capabilities do not read the
+ * policy at all.
+ */
 const EXPECTED_MATRIX: Record<
-    (typeof MATRIX_ROLES)[number]["key"],
-    Record<(typeof MATRIX_CAPABILITIES)[number], boolean>
+    (typeof MATRIX_POLICIES)[number]["key"],
+    Record<CapabilityKey, Record<RoleKey, boolean>>
 > = {
-    head: { view: true, create: true, edit: true, assign: true, delete: true, configure: true, grant: true },
-    granted: { view: true, create: true, edit: true, assign: true, delete: true, configure: true, grant: false },
-    plain: { view: true, create: true, edit: true, assign: false, delete: false, configure: false, grant: false },
+    closed: {
+        view: EVERYONE,
+        create: EVERYONE,
+        edit: EVERYONE,
+        assign: HEAD_OR_GRANTED,
+        delete: HEAD_OR_GRANTED,
+        configure: HEAD_OR_GRANTED,
+        grant: HEAD_ONLY,
+        "manage-setting": HEAD_ONLY,
+    },
+    open: {
+        view: EVERYONE,
+        create: EVERYONE,
+        edit: EVERYONE,
+        assign: HEAD_OR_GRANTED,
+        delete: HEAD_OR_GRANTED,
+        configure: HEAD_OR_GRANTED,
+        grant: EVERYONE,
+        "manage-setting": HEAD_ONLY,
+    },
 };
 
-for (const capability of MATRIX_CAPABILITIES) {
-    for (const role of MATRIX_ROLES) {
-        const actual = allows(capability, { isHead: role.isHead, hasGrant: role.hasGrant });
-        const expected = EXPECTED_MATRIX[role.key][capability];
-        check(`matrix: ${capability} / ${role.label}`, actual === expected, `expected ${expected}`);
+for (const policy of MATRIX_POLICIES) {
+    for (const capability of MATRIX_CAPABILITIES) {
+        for (const role of MATRIX_ROLES) {
+            const actual = allows(capability, {
+                isHead: role.isHead,
+                hasGrant: role.hasGrant,
+                allowAllMembersGrant: policy.allowAllMembersGrant,
+            });
+            const expected = EXPECTED_MATRIX[policy.key][capability][role.key];
+            check(
+                `matrix: ${capability} / ${role.label} / ${policy.label}`,
+                actual === expected,
+                `expected ${expected}`,
+            );
+        }
     }
 }
 
-check("a granted assigner can never grant", !canGrantFrom({ isHead: false, hasGrant: true }));
-check("a plain member can never grant", !canGrantFrom({ isHead: false, hasGrant: false }));
-check("the head is implicitly assign-capable with no grant row", canAssignFrom({ isHead: true, hasGrant: false }));
+check(
+    "a granted assigner can never grant while the policy is OFF",
+    !canGrantFrom({ isHead: false, hasGrant: true, allowAllMembersGrant: false }),
+);
+check(
+    "a plain member can never grant while the policy is OFF",
+    !canGrantFrom({ isHead: false, hasGrant: false, allowAllMembersGrant: false }),
+);
+check(
+    "a plain member may grant while the policy is ON (the new department default)",
+    canGrantFrom({ isHead: false, hasGrant: false, allowAllMembersGrant: true }),
+);
+check(
+    "the head may grant in both policies",
+    canGrantFrom({ isHead: true, hasGrant: false, allowAllMembersGrant: false })
+        && canGrantFrom({ isHead: true, hasGrant: false, allowAllMembersGrant: true }),
+);
+check(
+    "only the head may change the policy, even while the policy is ON",
+    canManageSettingFrom({ isHead: true, hasGrant: false, allowAllMembersGrant: true })
+        && !canManageSettingFrom({ isHead: false, hasGrant: true, allowAllMembersGrant: true })
+        && !canManageSettingFrom({ isHead: false, hasGrant: false, allowAllMembersGrant: true }),
+);
+check(
+    "the head is implicitly assign-capable with no grant row",
+    canAssignFrom({ isHead: true, hasGrant: false, allowAllMembersGrant: false }),
+);
+check(
+    "the open policy does not widen assigning",
+    !canAssignFrom({ isHead: false, hasGrant: false, allowAllMembersGrant: true }),
+);
 check(
     "a granted assigner may configure (the recorded coupling)",
-    canConfigureFrom({ isHead: false, hasGrant: true }),
+    canConfigureFrom({ isHead: false, hasGrant: true, allowAllMembersGrant: false }),
 );
-check("a plain member may not configure", !canConfigureFrom({ isHead: false, hasGrant: false }));
+check(
+    "a plain member may not configure, policy ON or OFF",
+    !canConfigureFrom({ isHead: false, hasGrant: false, allowAllMembersGrant: false })
+        && !canConfigureFrom({ isHead: false, hasGrant: false, allowAllMembersGrant: true }),
+);
 
 check(
     "row-aware delete: the task's creator may delete without a grant",
-    canDeleteTaskFrom({ isHead: false, hasGrant: false, isCreator: true }),
+    canDeleteTaskFrom({ isHead: false, hasGrant: false, allowAllMembersGrant: false, isCreator: true }),
 );
 check(
     "row-aware delete: a plain member who is not the creator may not",
-    !canDeleteTaskFrom({ isHead: false, hasGrant: false, isCreator: false }),
+    !canDeleteTaskFrom({ isHead: false, hasGrant: false, allowAllMembersGrant: true, isCreator: false }),
 );
 check(
     "row-aware delete: a granted assigner may delete a task they did not create",
-    canDeleteTaskFrom({ isHead: false, hasGrant: true, isCreator: false }),
+    canDeleteTaskFrom({ isHead: false, hasGrant: true, allowAllMembersGrant: false, isCreator: false }),
 );
 check(
     "row-aware delete: the head may delete a task they did not create",
-    canDeleteTaskFrom({ isHead: true, hasGrant: false, isCreator: false }),
+    canDeleteTaskFrom({ isHead: true, hasGrant: false, allowAllMembersGrant: false, isCreator: false }),
 );
 
 const forbidden = new PermissionError();

@@ -17,7 +17,7 @@ import { phNow } from "./ph-time.ts";
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
 import { buildTree, collectDescendantIds, computeDepth, flattenVisible, isDescendant } from "./tree.ts";
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
-import { CreateTaskSchema, MoveTaskSchema, UpdateTaskSchema } from "../tasks/types/pm-task.schema.ts";
+import { CreateTaskSchema, MoveTaskSchema, UpdateTaskSchema } from "../task-management/tasks/types/pm-task.schema.ts";
 
 interface ChainRow {
     id: number;

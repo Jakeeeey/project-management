@@ -1,28 +1,37 @@
 /**
  * The permission evaluator — the one place this module decides what an actor may do.
  *
- * The authorization inputs are exactly two data rows, never a role string: the actor's own
- * `department` row (already read into `actor.isDepartmentHead` by `resolveActor()`) and a live
- * `pm_task_assigner` row. Capability flags are never taken from client input.
+ * The authorization inputs are exactly three data rows, never a role string: the actor's own
+ * `department` row (already read into `actor.isDepartmentHead` by `resolveActor()`), a live
+ * `pm_task_assigner` row, and the department's `pm_task_department_setting` policy (an absent row
+ * means ON). Capability flags are never taken from client input.
  *
  * One matrix, two entry points:
- * - `getPermissionContext(actor)` — resolve once per request. It returns the seven coarse flags,
+ * - `getPermissionContext(actor)` — resolve once per request. It returns the eight coarse flags,
  *   the row-aware `canDeleteThisTask(task)`, and `capabilitiesForClient()` for the route payload.
  * - the `assertCan*` helpers — the same matrix, throwing `PermissionError` (code `FORBIDDEN`).
  *
  * `assertCanDelete(actor, task)` and every row's `can_delete` payload both go through
  * `canDeleteThisTask`, so the UI and the server can never disagree about the same row.
  *
+ * Granting and changing the policy were the same question while granting was head-only; they are two
+ * now, and the two must not be conflated:
+ * - `assertCanGrant` admits the head AND any member while the department policy is ON — it gates
+ *   handing out assigner rights, which members may do when the toggle is open.
+ * - `assertCanManageDepartmentSetting` is HEAD-ONLY and gates the toggle itself, so a member who may
+ *   grant can never open or close the right they were given.
+ *
  * The pure matrix lives in `./permission-matrix` (zero imports, Phase-A assertable) and is
  * re-exported here so this file presents the full evaluator surface.
  */
 
 import { readItems } from "./directus-client";
+import { DepartmentSettingService } from "../task-management/access/services/department-setting-service";
 import type { ScopedActor } from "./actor-service";
 import type { Capabilities } from "../types/capabilities";
 import { PermissionError, allows, canDeleteTaskFrom, type RoleFacts } from "./permission-matrix";
 
-export { PermissionError, allows, canAssignFrom, canConfigureFrom, canDeleteFrom, canDeleteTaskFrom, canGrantFrom } from "./permission-matrix";
+export { PermissionError, allows, canAssignFrom, canConfigureFrom, canDeleteFrom, canDeleteTaskFrom, canGrantFrom, canManageSettingFrom } from "./permission-matrix";
 export type { Capability, DeleteFacts, RoleFacts } from "./permission-matrix";
 
 /**
@@ -35,7 +44,7 @@ export interface TaskCreatorRow {
 }
 
 /**
- * The resolved evaluator for one actor in one request. The seven flags mirror the Permission
+ * The resolved evaluator for one actor in one request. The eight flags mirror the Permission
  * Matrix; the two methods carry the answers that cannot be plain flags.
  */
 export interface PermissionContext extends Capabilities {
@@ -44,7 +53,7 @@ export interface PermissionContext extends Capabilities {
      * This is the exact predicate `assertCanDelete` enforces, so a route must not re-derive it.
      */
     canDeleteThisTask(task: TaskCreatorRow): boolean;
-    /** The wire payload: the seven coarse flags only, never the row-aware method. */
+    /** The wire payload: the eight coarse flags only, never the row-aware method. */
     capabilitiesForClient(): Capabilities;
 }
 
@@ -88,9 +97,15 @@ async function hasActiveGrant(actor: ScopedActor): Promise<boolean> {
  * without a department cannot reach the evaluator at all — the route answers 403 first.
  */
 export async function getPermissionContext(actor: ScopedActor): Promise<PermissionContext> {
+    const [hasGrant, allowAllMembersGrant] = await Promise.all([
+        hasActiveGrant(actor),
+        DepartmentSettingService.resolveAllowAllMembersGrant(actor),
+    ]);
+
     const facts: RoleFacts = {
         isHead: actor.isDepartmentHead,
-        hasGrant: await hasActiveGrant(actor),
+        hasGrant,
+        allowAllMembersGrant,
     };
 
     const capabilities: Capabilities = {
@@ -101,6 +116,7 @@ export async function getPermissionContext(actor: ScopedActor): Promise<Permissi
         canDelete: allows("delete", facts),
         canGrant: allows("grant", facts),
         canConfigure: allows("configure", facts),
+        canManageDepartmentSetting: allows("manage-setting", facts),
     };
 
     return {
@@ -157,11 +173,27 @@ export async function assertCanAssign(actor: ScopedActor): Promise<void> {
     }
 }
 
-/** Grants or revokes assigner rights. Head-only — a granted assigner can never grant. */
+/**
+ * Grants or revokes assigner rights. The head always may; every member may while the department's
+ * `allow_all_members_grant` policy is ON (the default). This is NOT the guard for the toggle itself
+ * — see `assertCanManageDepartmentSetting`, which is head-only.
+ */
 export async function assertCanGrant(actor: ScopedActor): Promise<void> {
     const permissions = await getPermissionContext(actor);
     if (!permissions.canGrant) {
-        throw new PermissionError("FORBIDDEN: Granting assigner rights is limited to the department head");
+        throw new PermissionError("FORBIDDEN: Granting assigner rights requires the department head or an open department policy");
+    }
+}
+
+/**
+ * Changes the department's assignment-grant policy (the "allow all members to grant" toggle).
+ * HEAD-ONLY, always: the head must be able to turn the policy OFF while it is ON, and a member who
+ * may currently grant — because the policy is ON — must never be able to change that policy.
+ */
+export async function assertCanManageDepartmentSetting(actor: ScopedActor): Promise<void> {
+    const permissions = await getPermissionContext(actor);
+    if (!permissions.canManageDepartmentSetting) {
+        throw new PermissionError("FORBIDDEN: Changing the department's assignment-grant policy is limited to the department head");
     }
 }
 

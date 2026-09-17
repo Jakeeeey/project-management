@@ -85,6 +85,48 @@ export interface ScopedConfigRow {
     readonly updated_by: number | null;
 }
 
+/** A live `pm_task_field` row as the scoped loader returns it — one custom task column. */
+export interface ScopedFieldRow {
+    readonly id: number;
+    readonly department_id: number;
+    readonly label: string;
+    readonly field_type: string;
+    readonly sort_order: number;
+    readonly is_deleted: number;
+    readonly created_at: string | null;
+    readonly created_by: number | null;
+    readonly updated_at: string | null;
+    readonly updated_by: number | null;
+}
+
+/** A live `pm_task_field_option` row as the scoped loader returns it — one choice of a select column. */
+export interface ScopedFieldOptionRow {
+    readonly id: number;
+    readonly field_id: number;
+    readonly department_id: number;
+    readonly label: string;
+    readonly sort_order: number;
+    readonly is_deleted: number;
+    readonly created_at: string | null;
+    readonly created_by: number | null;
+    readonly updated_at: string | null;
+    readonly updated_by: number | null;
+}
+
+/** A live `pm_task_field_value` row as the scoped loader returns it — one task's answer. */
+export interface ScopedFieldValueRow {
+    readonly id: number;
+    readonly task_id: number;
+    readonly field_id: number;
+    readonly department_id: number;
+    readonly value: string | null;
+    readonly is_deleted: number;
+    readonly created_at: string | null;
+    readonly created_by: number | null;
+    readonly updated_at: string | null;
+    readonly updated_by: number | null;
+}
+
 /**
  * Normalises a route-supplied id. A value that cannot be a primary key resolves to "no match"
  * (404) rather than a query, so a malformed id never reaches Directus and never confirms anything.
@@ -154,6 +196,44 @@ export async function loadConfigScoped(
     const rows = await readItems<ScopedConfigRow>(CONFIG_COLLECTIONS[kind], {
         filter: {
             id: { _eq: rowId },
+            department_id: { _eq: actor.departmentId },
+            is_deleted: { _eq: 0 },
+        },
+        limit: 1,
+    });
+    return rows[0] ?? null;
+}
+
+/**
+ * Loads a live custom task column from the actor's department. Used before any field write and by
+ * the value writer, so a value can never be attached to another department's column.
+ */
+export async function loadFieldScoped(actor: ScopedActor, fieldId: string | number): Promise<ScopedFieldRow | null> {
+    const id = toScopedId(fieldId);
+    if (id === null) return null;
+
+    const rows = await readItems<ScopedFieldRow>("pm_task_field", {
+        filter: {
+            id: { _eq: id },
+            department_id: { _eq: actor.departmentId },
+            is_deleted: { _eq: 0 },
+        },
+        limit: 1,
+    });
+    return rows[0] ?? null;
+}
+
+/** Loads a live choice of the actor's department. The option's own `field_id` is what binds it to a column. */
+export async function loadFieldOptionScoped(
+    actor: ScopedActor,
+    optionId: string | number,
+): Promise<ScopedFieldOptionRow | null> {
+    const id = toScopedId(optionId);
+    if (id === null) return null;
+
+    const rows = await readItems<ScopedFieldOptionRow>("pm_task_field_option", {
+        filter: {
+            id: { _eq: id },
             department_id: { _eq: actor.departmentId },
             is_deleted: { _eq: 0 },
         },
