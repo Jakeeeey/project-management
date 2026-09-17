@@ -105,10 +105,20 @@ export interface TreeDndProviderProps {
     /** Ids whose children are currently shown; the sortable projection follows the visible rows. */
     expandedIds: ReadonlySet<number>;
     /**
-     * Called with the pinned `{ parent_id, sibling_ids }` payload when a drop settles on a valid
-     * target. Never called for a no-op, and never called for a cycle.
+     * Called with the moved row's id and the pinned `{ parent_id, sibling_ids }` payload when a drop
+     * settles on a valid target. Never called for a no-op, and never called for a cycle. The id is
+     * part of the contract because the move route is addressed by the moved node
+     * (`PATCH /tasks/<id>/move`) while the payload describes its destination.
      */
-    onMove?: (payload: MoveTaskInput) => void;
+    onMove?: (activeId: number, payload: MoveTaskInput) => void;
+    /**
+     * The department's COMPLETE flat row set — every root, across every page. It is used only for
+     * the cycle guard and for the emitted `sibling_ids`, and defaults to the rows under `roots`.
+     * Pagination is by root, so pass this whenever `roots` is a page slice: the reorder contract is
+     * defined over the destination parent's complete child list, and computing it from one page
+     * would omit the off-page siblings and make the move route reject every root move.
+     */
+    allRows?: readonly DndRow[];
     /** Disables every drag handle — todo 21 sets this while a filter or search is active. */
     reorderDisabled?: boolean;
     /** Overrides the dragged-row clone; defaults to a compact title + badges card. */
@@ -157,6 +167,7 @@ export function TreeDndProvider({
     roots,
     expandedIds,
     onMove,
+    allRows,
     reorderDisabled = false,
     renderOverlay,
     children,
@@ -166,16 +177,20 @@ export function TreeDndProvider({
     const [overId, setOverId] = useState<number | null>(null);
     const [intent, setIntent] = useState<DropIntent | null>(null);
 
-    const rows = useMemo(() => collectAllRows(roots), [roots]);
+    const pageRows = useMemo(() => collectAllRows(roots), [roots]);
+    const computationRows = useMemo<readonly DndRow[]>(
+        () => allRows ?? pageRows,
+        [allRows, pageRows],
+    );
     const visibleIds = useMemo(
         () => flattenVisible(roots, expandedIds).map((node) => node.id),
         [roots, expandedIds],
     );
     const nodesById = useMemo(() => {
         const byId = new Map<number, TreeNode<TaskRowView>>();
-        for (const node of rows) byId.set(node.id, node);
+        for (const node of pageRows) byId.set(node.id, node);
         return byId;
-    }, [rows]);
+    }, [pageRows]);
 
     const pointerRef = useRef<{ x: number; y: number } | null>(null);
     const overRectRef = useRef<{ top: number; height: number } | null>(null);
@@ -225,7 +240,7 @@ export function TreeDndProvider({
             return;
         }
 
-        const overIsDescendant = isDescendant(rows, active, over);
+        const overIsDescendant = isDescendant(computationRows, active, over);
         const rect = event.over?.rect ?? null;
         overRectRef.current = rect === null ? null : { top: rect.top, height: rect.height };
 
@@ -251,12 +266,13 @@ export function TreeDndProvider({
 
         clearDragState();
 
+        if (reorderDisabled) return;
         if (over === null || finalIntent === null) return;
 
-        const payload = resolveDropPayload(rows, active, over, finalIntent);
+        const payload = resolveDropPayload(computationRows, active, over, finalIntent);
         if (payload === null) return;
 
-        onMove?.(payload);
+        onMove?.(active, payload);
     };
 
     const contextValue = useMemo<TreeDndContextValue>(
@@ -264,11 +280,12 @@ export function TreeDndProvider({
             activeId,
             overId,
             intent,
-            isOverDescendant: activeId !== null && overId !== null && isDescendant(rows, activeId, overId),
+            isOverDescendant:
+                activeId !== null && overId !== null && isDescendant(computationRows, activeId, overId),
             isReorderDisabled: reorderDisabled,
-            rows,
+            rows: computationRows,
         }),
-        [activeId, overId, intent, rows, reorderDisabled],
+        [activeId, overId, intent, computationRows, reorderDisabled],
     );
 
     const activeNode = activeId === null ? null : (nodesById.get(activeId) ?? null);

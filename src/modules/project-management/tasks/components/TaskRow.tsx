@@ -3,6 +3,7 @@
 import type { CSSProperties, ReactNode, Ref } from "react";
 import { ChevronRight } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { cn, formatDateLong } from "@/lib/utils";
@@ -108,6 +109,8 @@ export function TaskRow({
     rowClassName,
 }: TaskRowProps) {
     const indentDepth = Math.min(node.depth, MAX_INDENT_DEPTH);
+    const subtaskCount = node.children.length;
+    const subtaskLabel = `${subtaskCount} sub-task${subtaskCount === 1 ? "" : "s"}`;
     const expandLabel = isExpanded ? `Collapse ${node.title}` : `Expand ${node.title}`;
     const startText = formatTaskDate(node.start_date);
     const endText = formatTaskDate(node.end_date);
@@ -154,10 +157,21 @@ export function TaskRow({
             </TableCell>
 
             <TableCell className="max-w-[360px]">
-                <div className="flex items-center" style={{ paddingLeft: indentDepth * INDENT_STEP_PX }}>
+                <div className="flex items-center gap-1.5" style={{ paddingLeft: indentDepth * INDENT_STEP_PX }}>
                     <span className="block max-w-[320px] truncate font-medium" title={node.title}>
                         {node.title}
                     </span>
+                    {subtaskCount > 0 ? (
+                        <Badge
+                            variant="secondary"
+                            data-slot="task-subtask-count"
+                            title={subtaskLabel}
+                            className="shrink-0 border-border/60 px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground"
+                        >
+                            <span aria-hidden="true">{subtaskCount}</span>
+                            <span className="sr-only">{subtaskLabel}</span>
+                        </Badge>
+                    ) : null}
                 </div>
             </TableCell>
 

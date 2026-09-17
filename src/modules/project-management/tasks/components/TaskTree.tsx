@@ -3,6 +3,7 @@
 import { Fragment, useMemo, type ReactNode } from "react";
 import { ChevronRight, ListTree, RotateCcw, TriangleAlert } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -26,6 +27,10 @@ import {
     type TaskRowView,
 } from "./TaskRow";
 import { TaskRowBadges } from "./TaskRowBadges";
+
+function subtaskLabel(count: number): string {
+    return `${count} sub-task${count === 1 ? "" : "s"}`;
+}
 
 interface TaskTreeColumn {
     key: string;
@@ -284,12 +289,27 @@ export function TaskTree({
                                         ) : null}
 
                                         <div className="min-w-0 flex-1 space-y-1.5">
-                                            <p
-                                                className="break-words text-sm font-medium"
-                                                title={node.title}
-                                            >
-                                                {node.title}
-                                            </p>
+                                            <div className="flex items-center gap-1.5">
+                                                <p
+                                                    className="min-w-0 break-words text-sm font-medium"
+                                                    title={node.title}
+                                                >
+                                                    {node.title}
+                                                </p>
+                                                {hasChildren ? (
+                                                    <Badge
+                                                        variant="secondary"
+                                                        data-slot="task-subtask-count"
+                                                        title={subtaskLabel(node.children.length)}
+                                                        className="shrink-0 border-border/60 px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground"
+                                                    >
+                                                        <span aria-hidden="true">{node.children.length}</span>
+                                                        <span className="sr-only">
+                                                            {subtaskLabel(node.children.length)}
+                                                        </span>
+                                                    </Badge>
+                                                ) : null}
+                                            </div>
                                             <TaskRowBadges status={node.status} priority={node.priority} />
                                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                                                 <AssigneeStack assignees={node.assignees} max={2} />
