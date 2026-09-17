@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import {
     CalendarDays,
@@ -38,9 +38,48 @@ import type { TaskListItem } from "../../hooks/useTasks";
  * body nor the render runs on the server) and hands us a chunk-loading fallback for free. The
  * alternative — a `useEffect`-set `mounted` flag — would still import and evaluate the module on the
  * server, which is the half of the hazard this approach removes.
+ *
+ * The loader also binds the chart's own `columns`, for a reason that is NOT cosmetic — see below.
+ *
+ * ## The collapsed-sidebar "unique key" warning, and this workaround
+ *
+ * Collapsing the label sidepanel sets the store's `displayMode` to `"chart"`. To fill the narrow
+ * strip that remains, react-gantt builds the sidebar's column list as:
+ *
+ *     e === "chart"
+ *         ? [{ ...t.filter((n) => n.id === "add-task")[0], resize: false }]
+ *         : t
+ *
+ * (`Dt` in `@svar-ui/react-gantt@2.7.3`.) In `readonly` the vendor first **removes** the add-task
+ * column — `if (d !== -1) { … if (e) f.splice(d, 1) }` — so the `find` returns `undefined` and the
+ * spread becomes `{ ...undefined, resize: false }`: a column with **no `id`**. React Grid then keys
+ * every header/footer cell by `cell.id` (`key={b.id}` in its `Lt` render), so `key={undefined}`
+ * makes React warn "Each child in a list should have a unique key prop. Check the render method of
+ * Lt." It is a vendor bug we cannot patch (no `node_modules` edits) and must not suppress.
+ *
+ * The fix from the host: pass the vendor's own `defaultColumns` back to it — all four already carry
+ * ids (`text`, `start`, `duration`, `add-task`) — and append a **second, hidden `add-task` entry**.
+ * `readonly` consumes exactly one add-task (its `splice`), so the duplicate survives the lookup and
+ * the collapsed column is built from a real column with `id: "add-task"` instead of `undefined`.
+ * `hidden` keeps the duplicate out of the expanded sidebar, so the default `all` view is unchanged.
+ * Nothing under `node_modules` is touched and the warning is not suppressed — the offending column
+ * is prevented rather than silenced.
  */
 const GanttChart = dynamic(
-    () => import("@svar-ui/react-gantt").then((module) => module.Gantt),
+    () =>
+        import("@svar-ui/react-gantt").then((module) => {
+            const Gantt = module.Gantt;
+            const columns = [
+                ...module.defaultColumns.map((column, index) => ({
+                    ...column,
+                    id: column.id ?? `column-${index}`,
+                })),
+                { id: "add-task", header: "", width: 0, hidden: true, sort: false, resize: false },
+            ];
+            return function ColumnBoundGantt(props: ComponentProps<typeof Gantt>) {
+                return <Gantt {...props} columns={columns} />;
+            };
+        }),
     {
         ssr: false,
         loading: () => (
