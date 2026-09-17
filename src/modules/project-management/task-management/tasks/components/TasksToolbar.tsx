@@ -1,18 +1,18 @@
 "use client";
 
+import { useMemo } from "react";
 import { RotateCcw, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { CatalogChipDot } from "@/modules/project-management/components/CatalogChip";
+import {
+    TaskCombobox,
+    type TaskComboboxOption,
+} from "@/modules/project-management/components/TaskCombobox";
+
+import { TaskFieldFilter, type FieldFilterClause } from "./TaskFieldFilter";
+import type { TaskField } from "../hooks/useTasks";
 
 /**
  * The tasks filter bar: search, the catalog-driven filters, and the list controls.
@@ -26,13 +26,14 @@ import { CatalogChipDot } from "@/modules/project-management/components/CatalogC
  * department's catalogs and members from the access directory, so nothing here hardcodes a status,
  * priority or person.
  *
- * Every control is the primitive's DEFAULT size (`h-9`), so the search field, the three selects and
- * the two buttons share one baseline. Mixing sizes here is what previously left the row visibly
+ * Every control is the primitive's DEFAULT size (`h-9`), so the search field, the three comboboxes
+ * and the two buttons share one baseline. Mixing sizes here is what previously left the row visibly
  * misaligned.
+ *
+ * The three catalog filters are searchable `TaskCombobox`es because their option sets come from
+ * database tables and grow with the department; each carries its own clear (X), so "all statuses"
+ * is a real control state rather than a sentinel list row.
  */
-
-/** Radix `SelectItem` cannot carry an empty value, so "no filter" has an explicit sentinel. */
-const ALL_VALUE = "__all__";
 
 /** The catalog option shape the toolbar renders; a `TaskCatalogOption` satisfies it structurally. */
 export interface TasksToolbarCatalogOption {
@@ -56,6 +57,11 @@ export interface TasksToolbarProps {
     readonly onPriorityFilterChange: (value: number | null) => void;
     readonly assigneeFilter: number | null;
     readonly onAssigneeFilterChange: (value: number | null) => void;
+    /** The "filter by field" clause: a column key plus the value to match. */
+    readonly fieldFilter: FieldFilterClause;
+    readonly onFieldFilterChange: (next: FieldFilterClause) => void;
+    /** The department's enabled custom columns — the clause's only source of fields. */
+    readonly fields: readonly TaskField[];
     /** The department's live statuses — the filter's only source of options. */
     readonly statuses: readonly TasksToolbarCatalogOption[];
     /** The department's live priorities — the filter's only source of options. */
@@ -72,14 +78,14 @@ export interface TasksToolbarProps {
     readonly onRefresh: () => void;
 }
 
-/** A number filter as the string a `Select` needs, or the "all" sentinel when unset. */
-function filterValue(value: number | null): string {
-    return value === null ? ALL_VALUE : String(value);
+/** A catalog id filter as the combobox's string value, or `null` when unset. */
+function filterValue(value: number | null): string | null {
+    return value === null ? null : String(value);
 }
 
-/** A `Select` value back to a number filter; the sentinel and anything non-numeric clear the filter. */
-function parseFilterValue(value: string): number | null {
-    if (value === ALL_VALUE) return null;
+/** A combobox value back to a number filter; `null` and anything non-numeric clear the filter. */
+function parseFilterValue(value: string | null): number | null {
+    if (value === null) return null;
     const parsed = Number(value);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
@@ -93,6 +99,9 @@ export function TasksToolbar({
     onPriorityFilterChange,
     assigneeFilter,
     onAssigneeFilterChange,
+    fieldFilter,
+    onFieldFilterChange,
+    fields,
     statuses,
     priorities,
     members,
@@ -102,6 +111,28 @@ export function TasksToolbar({
     isRefreshing,
     onRefresh,
 }: TasksToolbarProps) {
+    // Stable option identities: a new array every render would make the combobox re-register its
+    // items and drop an in-progress search, so each catalog is mapped once per source change.
+    const statusOptions = useMemo<TaskComboboxOption[]>(
+        () => statuses.map((option) => ({ value: String(option.id), label: option.label, color: option.color })),
+        [statuses],
+    );
+    const priorityOptions = useMemo<TaskComboboxOption[]>(
+        () => priorities.map((option) => ({ value: String(option.id), label: option.label, color: option.color })),
+        [priorities],
+    );
+    const assigneeOptions = useMemo<TaskComboboxOption[]>(
+        () =>
+            members.map((member) => ({
+                value: String(member.user_id),
+                label:
+                    member.user_id === currentUserId
+                        ? `${member.full_name} (you)`
+                        : member.full_name,
+            })),
+        [members, currentUserId],
+    );
+
     return (
         <div
             data-slot="tasks-toolbar"
@@ -123,52 +154,44 @@ export function TasksToolbar({
             </div>
 
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:flex lg:shrink-0 lg:items-center">
-                <Select value={filterValue(statusFilter)} onValueChange={(value) => onStatusFilterChange(parseFilterValue(value))}>
-                    <SelectTrigger className="w-full lg:w-40" aria-label="Filter by status">
-                        <SelectValue placeholder="All statuses" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-64">
-                        <SelectItem value={ALL_VALUE}>All statuses</SelectItem>
-                        {statuses.map((option) => (
-                            <SelectItem key={option.id} value={String(option.id)}>
-                                <CatalogChipDot color={option.color} density="comfortable" />
-                                <span className="min-w-0 truncate">{option.label}</span>
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
+                <TaskCombobox
+                    ariaLabel="Filter by status"
+                    placeholder="All statuses"
+                    searchPlaceholder="Search statuses..."
+                    className="w-full lg:w-40"
+                    options={statusOptions}
+                    value={filterValue(statusFilter)}
+                    onValueChange={(next) => onStatusFilterChange(parseFilterValue(next))}
+                />
 
-                <Select value={filterValue(priorityFilter)} onValueChange={(value) => onPriorityFilterChange(parseFilterValue(value))}>
-                    <SelectTrigger className="w-full lg:w-40" aria-label="Filter by priority">
-                        <SelectValue placeholder="All priorities" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-64">
-                        <SelectItem value={ALL_VALUE}>All priorities</SelectItem>
-                        {priorities.map((option) => (
-                            <SelectItem key={option.id} value={String(option.id)}>
-                                <CatalogChipDot color={option.color} density="comfortable" />
-                                <span className="min-w-0 truncate">{option.label}</span>
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
+                <TaskCombobox
+                    ariaLabel="Filter by priority"
+                    placeholder="All priorities"
+                    searchPlaceholder="Search priorities..."
+                    className="w-full lg:w-40"
+                    options={priorityOptions}
+                    value={filterValue(priorityFilter)}
+                    onValueChange={(next) => onPriorityFilterChange(parseFilterValue(next))}
+                />
 
-                <Select value={filterValue(assigneeFilter)} onValueChange={(value) => onAssigneeFilterChange(parseFilterValue(value))}>
-                    <SelectTrigger className="w-full lg:w-44" aria-label="Filter by assignee">
-                        <SelectValue placeholder="Anyone" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-64">
-                        <SelectItem value={ALL_VALUE}>Anyone</SelectItem>
-                        {members.map((member) => (
-                            <SelectItem key={member.user_id} value={String(member.user_id)}>
-                                {member.user_id === currentUserId
-                                    ? `${member.full_name} (you)`
-                                    : member.full_name}
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
+                <TaskCombobox
+                    ariaLabel="Filter by assignee"
+                    placeholder="Anyone"
+                    searchPlaceholder="Search members..."
+                    className="w-full lg:w-44"
+                    options={assigneeOptions}
+                    value={filterValue(assigneeFilter)}
+                    onValueChange={(next) => onAssigneeFilterChange(parseFilterValue(next))}
+                />
             </div>
+
+            <TaskFieldFilter
+                clause={fieldFilter}
+                onClauseChange={onFieldFilterChange}
+                fields={fields}
+                statuses={statuses}
+                priorities={priorities}
+            />
 
             <div className="flex items-center gap-2 lg:ml-auto">
                 {isFiltering ? (

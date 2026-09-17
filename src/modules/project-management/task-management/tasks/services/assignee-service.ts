@@ -4,6 +4,8 @@ import type { ScopedTaskRow } from "@/modules/project-management/services/scopin
 import { phNow } from "@/modules/project-management/utils/ph-time";
 import type { AssigneeMutationInput } from "../types/pm-task.schema";
 import { TaskServiceError } from "./task-service";
+import { TASK_ACTIVITY_FIELD_LABELS, buildActivityChange } from "./task-activity-delta";
+import { TaskActivityService } from "./task-activity-service";
 import { isDeletedFlag, toNumberOrNull, toPhTimestamp } from "./task-payload";
 
 /**
@@ -106,6 +108,7 @@ export class AssigneeService {
 
         const existing = await AssigneeService.readReviveCandidate(task.id, input.user_id);
         const now = phNow();
+        const wasAlreadyAssigned = existing !== null && !isDeletedFlag(existing.is_deleted);
 
         if (existing !== null) {
             await updateItem<unknown>(ASSIGNEE_COLLECTION, existing.id, {
@@ -113,7 +116,9 @@ export class AssigneeService {
                 updated_at: now,
                 updated_by: actor.userId,
             });
-            return toWireRow({ ...existing, is_deleted: 0, updated_at: now, updated_by: actor.userId });
+            const wire = toWireRow({ ...existing, is_deleted: 0, updated_at: now, updated_by: actor.userId });
+            await AssigneeService.recordAssignment(actor, task.id, input.user_id, wasAlreadyAssigned);
+            return wire;
         }
 
         await createItem<unknown>(ASSIGNEE_COLLECTION, {
@@ -127,7 +132,9 @@ export class AssigneeService {
             updated_by: actor.userId,
         });
 
-        return toWireRow(await AssigneeService.readLiveRow(actor, task.id, input.user_id));
+        const wire = toWireRow(await AssigneeService.readLiveRow(actor, task.id, input.user_id));
+        await AssigneeService.recordAssignment(actor, task.id, input.user_id, false);
+        return wire;
     }
 
     /**
@@ -166,7 +173,48 @@ export class AssigneeService {
             updated_at: now,
             updated_by: actor.userId,
         });
+
+        const label = await TaskActivityService.resolveUserLabel(input.user_id);
+        await TaskActivityService.record(actor, task.id, "updated", [
+            buildActivityChange({
+                field_key: "assignee",
+                field_label: TASK_ACTIVITY_FIELD_LABELS.assignee,
+                old_value: input.user_id,
+                new_value: null,
+                old_label: label,
+                new_label: null,
+            }),
+        ]);
+
         return toWireRow({ ...row, is_deleted: 1, updated_at: now, updated_by: actor.userId });
+    }
+
+    /**
+     * Records one assignment change, after the assignment row was written.
+     *
+     * The label is the target's name resolved NOW — the trail snapshots it, so a later rename or
+     * deletion never rewrites this row. Re-assigning a member who is already assigned is a no-op on
+     * both sides, so `buildTaskActivityDeltas` drops it and no history row appears for a call that
+     * changed nothing; an audit failure cannot reach the caller because `record` never throws.
+     */
+    private static async recordAssignment(
+        actor: ScopedActor,
+        taskId: number,
+        userId: number,
+        wasAlreadyAssigned: boolean,
+    ): Promise<void> {
+        const label = await TaskActivityService.resolveUserLabel(userId);
+        const id = String(userId);
+        await TaskActivityService.record(actor, taskId, "updated", [
+            buildActivityChange({
+                field_key: "assignee",
+                field_label: TASK_ACTIVITY_FIELD_LABELS.assignee,
+                old_value: wasAlreadyAssigned ? id : null,
+                new_value: id,
+                old_label: wasAlreadyAssigned ? label : null,
+                new_label: label,
+            }),
+        ]);
     }
 
     /**

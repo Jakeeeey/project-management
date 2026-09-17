@@ -8,6 +8,8 @@ import type { MoveTaskInput } from "../types/pm-task.schema";
 import { containsExactlyOnce, isCompletePostMoveChildSet } from "./task-move-rules";
 import { TaskItemService } from "./task-item-service";
 import { TaskService, TaskServiceError } from "./task-service";
+import { TASK_ACTIVITY_FIELD_LABELS, buildActivityChange } from "./task-activity-delta";
+import { TaskActivityService } from "./task-activity-service";
 import type { TaskClientRow } from "./task-payload";
 
 /**
@@ -71,6 +73,26 @@ export class TaskMoveService {
         const target: MoveTarget = { movedId: task.id, parentId, siblingIds: input.sibling_ids };
         TaskMoveService.assertMoveTarget(rows, target);
         await TaskMoveService.writeSiblingOrder(actor, target);
+
+        // The two structural facts a move can change, logged after the write. `buildTaskActivityDeltas`
+        // drops whichever side did not actually move, so a pure reorder records no `parent_id` row and
+        // a re-parent at the same index records no `sort_order` row. The old `sort_order` is the value
+        // the loaded row carried — the stored index — and the new one is the moved node's position in
+        // the sibling list that was just written.
+        await TaskActivityService.record(actor, task.id, "updated", [
+            buildActivityChange({
+                field_key: "parent_id",
+                field_label: TASK_ACTIVITY_FIELD_LABELS.parent_id,
+                old_value: task.parent_id,
+                new_value: parentId,
+            }),
+            buildActivityChange({
+                field_key: "sort_order",
+                field_label: TASK_ACTIVITY_FIELD_LABELS.sort_order,
+                old_value: task.sort_order,
+                new_value: input.sibling_ids.indexOf(task.id),
+            }),
+        ]);
 
         const moved = await loadTaskScoped(actor, task.id);
         if (moved === null) {

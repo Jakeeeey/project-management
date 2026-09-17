@@ -37,6 +37,9 @@ export interface TaskFieldFormInput {
     readonly field_type: TaskFieldType;
 }
 
+/** Reorder direction for the keyboard-accessible up/down controls. */
+export type TaskFieldMoveDirection = "up" | "down";
+
 /** The canonical return of the custom-fields builder hook. */
 export interface UseTaskFieldsResult {
     /** The department's live columns with their choices, ordered by `(sort_order, id)`. */
@@ -54,10 +57,16 @@ export interface UseTaskFieldsResult {
     readonly deleteField: (id: number, label: string) => Promise<boolean>;
     readonly setEnabled: (fieldId: number, enabled: boolean) => Promise<boolean>;
     readonly setDefaultValue: (fieldId: number, value: string | null) => Promise<boolean>;
-    readonly createOption: (fieldId: number, label: string, color: string | null) => Promise<boolean>;
+    /** Adds a choice; resolves to the new choice's id, or `null` when the write failed. */
+    readonly createOption: (fieldId: number, label: string, color: string | null) => Promise<number | null>;
     readonly renameOption: (optionId: number, label: string) => Promise<boolean>;
     readonly setOptionColor: (optionId: number, color: string | null) => Promise<boolean>;
     readonly deleteOption: (optionId: number, label: string) => Promise<boolean>;
+    readonly moveOption: (
+        fieldId: number,
+        optionId: number,
+        direction: TaskFieldMoveDirection,
+    ) => Promise<boolean>;
 }
 
 /** Strips the service's `VALIDATION_FAILED:` / `NOT_FOUND:` code so the UI never shows machine text. */
@@ -137,7 +146,7 @@ export function useTaskFields(): UseTaskFieldsResult {
     }, [fetchFields]);
 
     /** Fires one request, reads the envelope, and throws the server message when it failed. */
-    const request = useCallback(async (method: HttpMethod, body: unknown): Promise<void> => {
+    const request = useCallback(async (method: HttpMethod, body: unknown): Promise<unknown> => {
         const res = await fetch(ENDPOINT, {
             method,
             headers: { "Content-Type": "application/json" },
@@ -146,11 +155,12 @@ export function useTaskFields(): UseTaskFieldsResult {
 
         const envelope = await readEnvelope(res);
         if (!res.ok) throw new Error(readMessage(envelope, "The custom-field operation could not be completed"));
+        return envelope.data;
     }, []);
 
     /** Every mutation runs through here: act, refetch, toast, and record the persistent error. */
     const runMutation = useCallback(
-        async (action: () => Promise<void>, successMessage: string): Promise<boolean> => {
+        async (action: () => Promise<unknown>, successMessage: string): Promise<boolean> => {
             setIsSubmitting(true);
             try {
                 await action();
@@ -214,15 +224,24 @@ export function useTaskFields(): UseTaskFieldsResult {
     );
 
     const createOption = useCallback(
-        async (fieldId: number, label: string, color: string | null): Promise<boolean> => {
+        async (fieldId: number, label: string, color: string | null): Promise<number | null> => {
             const field = fields.find((candidate) => candidate.id === fieldId);
             const sortOrder =
                 (field?.options.reduce((highest, option) => Math.max(highest, option.sort_order), -1) ?? -1) + 1;
 
-            return runMutation(
-                () => request("POST", { kind: "option", field_id: fieldId, label, color, sort_order: sortOrder }),
-                `${label} added as a choice`,
-            );
+            let createdId: number | null = null;
+            const ok = await runMutation(async () => {
+                const data = await request("POST", {
+                    kind: "option",
+                    field_id: fieldId,
+                    label,
+                    color,
+                    sort_order: sortOrder,
+                });
+                if (isRecord(data) && typeof data.id === "number") createdId = data.id;
+            }, `${label} added as a choice`);
+
+            return ok ? createdId : null;
         },
         [fields, request, runMutation],
     );
@@ -245,6 +264,38 @@ export function useTaskFields(): UseTaskFieldsResult {
         [request, runMutation],
     );
 
+    /**
+     * Reorders one choice within its column. The column's choices are renumbered with sequential
+     * `sort_order` values and only the rows whose position actually changed are written, so a swap of
+     * two adjacent choices on an already-sequential list is exactly two writes.
+     */
+    const moveOption = useCallback(
+        async (fieldId: number, optionId: number, direction: TaskFieldMoveDirection): Promise<boolean> => {
+            const field = fields.find((candidate) => candidate.id === fieldId);
+            if (field === undefined) return false;
+
+            const list = field.options;
+            const index = list.findIndex((option) => option.id === optionId);
+            const target = direction === "up" ? index - 1 : index + 1;
+
+            if (index < 0 || target < 0 || target >= list.length) return false;
+
+            const reordered = [...list];
+            const moved = reordered[index];
+            reordered[index] = reordered[target];
+            reordered[target] = moved;
+
+            return runMutation(async () => {
+                for (let position = 0; position < reordered.length; position += 1) {
+                    const option = reordered[position];
+                    if (option.sort_order === position) continue;
+                    await request("PATCH", { kind: "option", id: option.id, sort_order: position });
+                }
+            }, "Order updated");
+        },
+        [fields, request, runMutation],
+    );
+
     useEffect(() => {
         void refresh();
     }, [refresh]);
@@ -265,5 +316,6 @@ export function useTaskFields(): UseTaskFieldsResult {
         renameOption,
         setOptionColor,
         deleteOption,
+        moveOption,
     };
 }

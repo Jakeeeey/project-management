@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 import type { TaskAttachmentRef } from "../hooks/useTasks";
 
 /**
- * The inline preview surface for one attachment.
+ * The preview surface for one attachment. It is rendered inside `AttachmentPreviewDialog` and
+ * carries no dialog chrome of its own — only the framed viewer body.
  *
  * The browser is only ever handed the module's OWN stream route — never Directus's raw
  * `/assets/<uuid>`, which needs the server-only static token and would 401 from the browser. Every
@@ -53,7 +54,7 @@ export function attachmentDisplayName(attachment: TaskAttachmentRef): string {
     return name !== undefined && name !== "" ? name : `Attachment #${attachment.id}`;
 }
 
-/** Shared framed box for a rendered preview. */
+/** Shared framed box for a rendered preview; the `70vh` viewer height is dialog-relative, not fixed. */
 const PREVIEW_FRAME_CLASS = "w-full rounded-md border border-border/60 bg-muted/30";
 
 export interface AttachmentPreviewProps {
@@ -83,7 +84,7 @@ export function AttachmentPreview({
                     src={viewUrl}
                     alt={`Inline preview of ${name}`}
                     loading="lazy"
-                    className={cn(PREVIEW_FRAME_CLASS, "max-h-72 object-contain")}
+                    className={cn(PREVIEW_FRAME_CLASS, "max-h-[70vh] object-contain")}
                 />
                 <p className="text-xs text-muted-foreground">Inline preview of {name}.</p>
             </div>
@@ -96,7 +97,7 @@ export function AttachmentPreview({
                 <iframe
                     src={viewUrl}
                     title={`Inline preview of ${name}`}
-                    className={cn(PREVIEW_FRAME_CLASS, "h-72")}
+                    className={cn(PREVIEW_FRAME_CLASS, "h-[70vh]")}
                 />
                 <p className="text-xs text-muted-foreground">
                     If the preview does not load, use Download.

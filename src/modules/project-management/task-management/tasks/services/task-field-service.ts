@@ -24,6 +24,13 @@ import {
     type UpdateTaskFieldInput,
     type UpdateTaskFieldOptionInput,
 } from "../types/task-field.schema";
+import {
+    TASK_ACTIVITY_CUSTOM_FIELD_KEY,
+    buildActivityChange,
+    type TaskActivityAction,
+    type TaskActivityChange,
+} from "./task-activity-delta";
+import { TaskActivityService } from "./task-activity-service";
 import { TaskFieldValueError, normaliseFieldValue } from "./task-field-value";
 
 /**
@@ -79,10 +86,31 @@ export interface TaskFieldValueClientRow {
     readonly value: string | null;
 }
 
-/** A validated answer, ready to be written. */
+/**
+ * A validated answer, ready to be written — plus the column metadata the activity trail snapshots.
+ *
+ * The label travels WITH the answer because the resolver already loaded the column (and, for a
+ * `select`, its choices), so the writer never has to re-read them just to label a history row.
+ */
 export interface ResolvedFieldValue {
     readonly field_id: number;
     readonly value: string | null;
+    /** The column's `label` at write time — the history row's `field_label` snapshot. */
+    readonly field_label: string;
+    /** Choice labels by option id; present only for a `select` column, absent for every other type. */
+    readonly option_labels?: ReadonlyMap<number, string>;
+}
+
+/**
+ * How one `writeValues` call attributes the rows it adds to the activity trail.
+ *
+ * `action` separates a create's first answers (`created`) from a later edit (`updated`), and
+ * `batchId` groups them with the rest of the same logical save — a create threads one id through its
+ * task-level rows, its supplied answers and the defaults that land afterwards.
+ */
+export interface TaskFieldWriteActivity {
+    readonly action: TaskActivityAction;
+    readonly batchId: string;
 }
 
 /** `(sort_order, id)` — every custom-column list has this one order. */
@@ -476,7 +504,16 @@ export class TaskFieldService {
                 throw new TaskFieldError("VALIDATION_FAILED", `"${field.label}" does not offer that choice`);
             }
 
-            resolved.push({ field_id: field.id, value });
+            const optionLabels =
+                type.data === "select"
+                    ? new Map(field.options.map((option) => [option.id, option.label] as const))
+                    : null;
+            resolved.push({
+                field_id: field.id,
+                value,
+                field_label: field.label,
+                ...(optionLabels === null ? {} : { option_labels: optionLabels }),
+            });
         }
 
         return resolved;
@@ -494,9 +531,11 @@ export class TaskFieldService {
         actor: ScopedActor,
         taskId: number,
         resolved: readonly ResolvedFieldValue[],
+        activity?: TaskFieldWriteActivity,
     ): Promise<void> {
         if (resolved.length === 0) return;
         const now = phNow();
+        const changes: TaskActivityChange[] = [];
 
         for (const entry of resolved) {
             const existing = await readItems<ScopedFieldValueRow>("pm_task_field_value", {
@@ -508,6 +547,9 @@ export class TaskFieldService {
             });
 
             const row = existing[0];
+            // A soft-deleted row IS "no answer", so the old side of the history is `null` for it: that
+            // is what makes a revive of the same value still read as a change.
+            const previousValue = row === undefined || isTrueFlag(row.is_deleted) ? null : row.value;
 
             // Clearing an answer hides the row rather than storing an empty string, so "no answer" has
             // exactly one representation: absent. The row itself is kept, because the unique key
@@ -519,6 +561,7 @@ export class TaskFieldService {
                         updated_at: now,
                         updated_by: actor.userId,
                     });
+                    changes.push(TaskFieldService.valueChange(entry, previousValue, null));
                 }
                 continue;
             }
@@ -535,6 +578,7 @@ export class TaskFieldService {
                     updated_at: now,
                     updated_by: actor.userId,
                 });
+                changes.push(TaskFieldService.valueChange(entry, null, entry.value));
                 continue;
             }
 
@@ -546,7 +590,10 @@ export class TaskFieldService {
                 updated_at: now,
                 updated_by: actor.userId,
             });
+            changes.push(TaskFieldService.valueChange(entry, previousValue, entry.value));
         }
+
+        await TaskActivityService.record(actor, taskId, activity?.action ?? "updated", changes, activity?.batchId);
     }
 
     /**
@@ -565,15 +612,58 @@ export class TaskFieldService {
         actor: ScopedActor,
         taskId: number,
         suppliedFieldIds: readonly number[],
+        activity?: TaskFieldWriteActivity,
     ): Promise<void> {
         const fields = await TaskFieldService.listEnabledFields(actor);
         const supplied = new Set(suppliedFieldIds);
 
         const defaults: ResolvedFieldValue[] = fields
             .filter((field) => !supplied.has(field.id) && field.default_value !== null)
-            .map((field) => ({ field_id: field.id, value: field.default_value }));
+            .map((field) => {
+                const optionLabels =
+                    field.field_type === "select"
+                        ? new Map(field.options.map((option) => [option.id, option.label] as const))
+                        : null;
+                return {
+                    field_id: field.id,
+                    value: field.default_value,
+                    field_label: field.label,
+                    ...(optionLabels === null ? {} : { option_labels: optionLabels }),
+                };
+            });
 
-        await TaskFieldService.writeValues(actor, taskId, defaults);
+        // The same activity context is threaded through, so a default that lands on a NEW task is
+        // attributed to the create rather than reading as a later edit.
+        await TaskFieldService.writeValues(actor, taskId, defaults, activity);
+    }
+
+    /**
+     * The display text of one custom answer: a `select` shows its choice's label, and every other
+     * type's stored text IS its display text. A choice the department no longer offers — or names —
+     * has no label, so the history row keeps the raw id with a `null` label rather than inventing one.
+     */
+    private static valueLabel(entry: ResolvedFieldValue, value: string | null): string | null {
+        if (value === null) return null;
+        if (entry.option_labels === undefined) return value;
+        const optionId = Number(value);
+        return Number.isFinite(optionId) ? entry.option_labels.get(optionId) ?? null : null;
+    }
+
+    /** One custom-column change with both sides' labels snapshotted at write time. */
+    private static valueChange(
+        entry: ResolvedFieldValue,
+        oldValue: string | null,
+        newValue: string | null,
+    ): TaskActivityChange {
+        return buildActivityChange({
+            field_key: TASK_ACTIVITY_CUSTOM_FIELD_KEY,
+            field_id: entry.field_id,
+            field_label: entry.field_label,
+            old_value: oldValue,
+            new_value: newValue,
+            old_label: TaskFieldService.valueLabel(entry, oldValue),
+            new_label: TaskFieldService.valueLabel(entry, newValue),
+        });
     }
 
     /** The department's live columns, ordered. Every column read funnels through here. */

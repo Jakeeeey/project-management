@@ -1,9 +1,16 @@
 "use client";
 
-import { Component, useMemo, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
-import { ChartGantt, RotateCcw, TriangleAlert } from "lucide-react";
-import type { ITask } from "@svar-ui/react-gantt";
+import {
+    CalendarDays,
+    ChartGantt,
+    ChevronLeft,
+    ChevronRight,
+    RotateCcw,
+    TriangleAlert,
+} from "lucide-react";
+import type { IApi, ITask } from "@svar-ui/react-gantt";
 
 import "@svar-ui/react-gantt/style.css";
 
@@ -11,8 +18,14 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
+import {
+    resolveCatalogForeground,
+    resolveCatalogHex,
+} from "@/modules/project-management/components/CatalogChip";
+
 import { parseDateOnly } from "../SingleDatePicker";
 import type { TaskViewProps } from "../../types/task-view";
+import type { TaskListItem } from "../../hooks/useTasks";
 
 /**
  * The SVAR Gantt chart, loaded lazily **on the client only**.
@@ -40,6 +53,29 @@ const GanttChart = dynamic(
 );
 
 /**
+ * The vendor icon font, fetched at runtime.
+ *
+ * The library renders its controls as `<i class="… wxi-…">` and relies on a *separate* stylesheet for
+ * the glyphs. Measured facts about the installed package (`@svar-ui/react-gantt@2.7.3`):
+ *
+ * - `dist/index.css` (what `style.css` maps to) has ZERO `@font-face` rules and ZERO `wxi-` rules.
+ * - `dist-full/index.css` (what `all.css` maps to) is NOT the fix either: its 6 `@font-face` rules are
+ *   only Roboto / Open Sans, it defines no `wxi-` glyph `content`, and its theme blocks
+ *   (`.wx-material-theme`, `.wx-willow-theme`) do not supply the font. Swapping to `all.css` would
+ *   therefore NOT render a single icon.
+ * - The glyphs live in `https://cdn.svar.dev/fonts/wxi/wx-icons.css` (96 `:before` `content` rules +
+ *   a `wx-icons` `@font-face`). The library injects that stylesheet itself, but only from its
+ *   `<Material>` / `<Willow>` wrappers — components this view deliberately does NOT mount, because
+ *   they add the vendor's own `.wx-*-theme` class and would override the app's remap (see below).
+ *
+ * So the fix is to load exactly that one stylesheet, without the theme wrapper. It contains no
+ * `--wx-*` custom properties and no `.wx-*-theme` selectors (verified by counting), so it cannot
+ * regress the theme. It is declared with `@import` at the top of the stylesheet because `@import`
+ * must precede every other rule.
+ */
+const GANTT_ICON_FONT_CSS = `@import url("https://cdn.svar.dev/fonts/wxi/wx-icons.css");`;
+
+/**
  * The library's theme contract, scoped to `.pm-task-gantt`.
  *
  * The library reads its colours/sizes from `--wx-*` custom properties. Its own defaults live under
@@ -52,7 +88,7 @@ const GanttChart = dynamic(
  * Only variables the library reads are declared; `--wx-table-*` is deliberately omitted because the
  * library sets those on its own `.wx-table` element and remaps them from these values.
  */
-const GANTT_THEME_CSS = `
+const GANTT_THEME_CSS = `${GANTT_ICON_FONT_CSS}
 .pm-task-gantt {
     --wx-font-family: var(--font-sans, ui-sans-serif), system-ui, sans-serif;
     --wx-font-size: 0.875rem;
@@ -235,6 +271,123 @@ function skippedLabel(withoutDates: number, invertedRange: number): string {
     return `${parts.join(", and ")} — not shown on the timeline.`;
 }
 
+/** Months of empty timeline left reachable before the first and after the last task. */
+const NAVIGABLE_PADDING_MONTHS = 6;
+
+/**
+ * Pixels per day. The vendor default is `cellWidth = 100`, which shows only three or four days at a
+ * time; a month is the unit this view navigates by, so a more compact cell keeps a usable slice of
+ * that month on screen.
+ */
+const GANTT_CELL_WIDTH = 36;
+
+/** Month granularity helpers. Every one works in LOCAL calendar parts, never UTC. */
+function monthStart(date: Date): Date {
+    return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function monthEnd(date: Date): Date {
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+
+function shiftMonths(date: Date, count: number): Date {
+    return new Date(date.getFullYear(), date.getMonth() + count, 1);
+}
+
+/**
+ * `September 2026`, from a FIXED locale.
+ *
+ * The locale is pinned rather than left to the runtime so a server pass and a client pass can never
+ * disagree about the string, and so the label is stable regardless of the viewer's machine settings.
+ */
+const MONTH_LABEL_FORMAT = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" });
+
+function monthLabel(date: Date): string {
+    return MONTH_LABEL_FORMAT.format(date);
+}
+
+/** The scrollable span the chart is given, plus the months the navigation may actually land on. */
+interface GanttRange {
+    readonly start: Date;
+    readonly end: Date;
+    readonly minAnchor: Date;
+    readonly maxAnchor: Date;
+}
+
+/**
+ * Builds the timeline's range once per row set.
+ *
+ * The range deliberately does NOT depend on the navigation anchor. It is derived only from the tasks
+ * (padded on both sides and widened to include today), so stepping a month changes nothing but the
+ * scroll position — the store is never re-initialised mid-navigation, and there is no window where a
+ * re-init races the scroll. The returned anchors are the months a user may land on.
+ */
+function buildRange(items: readonly TaskListItem[]): GanttRange {
+    const today = new Date();
+    let minTime = today.getTime();
+    let maxTime = today.getTime();
+
+    for (const item of items) {
+        const start = parseDateOnly(item.start_date);
+        const end = parseDateOnly(item.end_date);
+
+        if (start !== undefined) {
+            minTime = Math.min(minTime, start.getTime());
+            maxTime = Math.max(maxTime, start.getTime());
+        }
+        if (end !== undefined) {
+            minTime = Math.min(minTime, end.getTime());
+            maxTime = Math.max(maxTime, end.getTime());
+        }
+    }
+
+    const minAnchor = shiftMonths(monthStart(new Date(minTime)), -NAVIGABLE_PADDING_MONTHS);
+    const maxAnchor = shiftMonths(monthStart(new Date(maxTime)), NAVIGABLE_PADDING_MONTHS);
+
+    return { start: minAnchor, end: monthEnd(maxAnchor), minAnchor, maxAnchor };
+}
+
+/**
+ * One CSS rule per task that carries a status colour, keyed to the vendor's own bar variables.
+ *
+ * The vendor exposes no per-task colour property (both its bundles contain zero occurrences of
+ * `color`; `ITask`'s index signature accepts an extra key but ignores it). What it does expose is the
+ * cascade: a task bar is an element carrying `data-task-id` that paints itself with
+ * `background-color: var(--wx-gantt-task-color)`. Declaring that variable ON the `[data-task-id]`
+ * node therefore beats the single declaration on `.pm-task-gantt`, because a custom property set on
+ * the element itself resolves before any inherited value.
+ *
+ * The colour is keyed to the task's **status** (`pm_task_status.color`, the same stored hex the rest
+ * of the module paints through `CatalogChip`), so a bar's colour means the same thing here as it does
+ * in the tree. `resolveCatalogForeground` picks near-black or white for the bar's label so text stays
+ * legible on every status colour. Tasks without a valid status hex keep the theme's default primary.
+ *
+ * Fidelity note: this targets the STABLE `data-task-id` attribute, not the vendor's CSS-module class
+ * hash (`.wx-GKbcLEGA`), which changes between releases.
+ */
+function buildBarColourCss(items: readonly TaskListItem[]): string {
+    const rules: string[] = [];
+
+    for (const item of items) {
+        const hex = resolveCatalogHex(item.status?.color);
+        if (hex === null) {
+            continue;
+        }
+
+        const foreground = resolveCatalogForeground(hex);
+        rules.push(
+            `.pm-task-gantt [data-task-id="${item.id}"]{` +
+                `--wx-gantt-task-color:${hex};` +
+                `--wx-gantt-task-fill-color:${hex};` +
+                `--wx-gantt-task-border:1px solid ${hex};` +
+                `--wx-gantt-task-font-color:${foreground};` +
+                `}`,
+        );
+    }
+
+    return rules.join("");
+}
+
 /**
  * The tasks page's read-only Gantt timeline.
  *
@@ -298,6 +451,70 @@ export function GanttView({ items, isLoading, error, onRetry }: TaskViewProps) {
         return { tasks, withoutDates, invertedRange };
     }, [items]);
 
+    const range = useMemo(() => buildRange(items), [items]);
+    const barColourRules = useMemo(() => buildBarColourCss(items), [items]);
+
+    /** The month the user navigated to, or `null` while the view still follows the data. */
+    const [anchor, setAnchor] = useState<Date | null>(null);
+
+    /** The store handle from `init` — the only route to the library's actions. */
+    const [api, setApi] = useState<IApi | null>(null);
+
+    const handleReady = useCallback((next: IApi) => {
+        setApi(next);
+    }, []);
+
+    const defaultAnchor = useMemo(() => {
+        const today = monthStart(new Date());
+        if (today.getTime() < range.minAnchor.getTime()) {
+            return range.minAnchor;
+        }
+        if (today.getTime() > range.maxAnchor.getTime()) {
+            return range.maxAnchor;
+        }
+        return today;
+    }, [range]);
+
+    const visibleMonth = anchor ?? defaultAnchor;
+
+    const goToMonth = useCallback(
+        (next: Date) => {
+            const clamped = Math.min(
+                Math.max(next.getTime(), range.minAnchor.getTime()),
+                range.maxAnchor.getTime(),
+            );
+            setAnchor(monthStart(new Date(clamped)));
+        },
+        [range],
+    );
+
+    const showPreviousMonth = useCallback(() => {
+        goToMonth(shiftMonths(visibleMonth, -1));
+    }, [goToMonth, visibleMonth]);
+
+    const showNextMonth = useCallback(() => {
+        goToMonth(shiftMonths(visibleMonth, 1));
+    }, [goToMonth, visibleMonth]);
+
+    const showToday = useCallback(() => {
+        goToMonth(monthStart(new Date()));
+    }, [goToMonth]);
+
+    /**
+     * Scrolls the chart onto the current month.
+     *
+     * `scroll-chart` is the store's own action for this; it converts `{ date }` into a pixel offset
+     * from the chart's start and moves the chart there. It must re-run whenever the range changes,
+     * because the library re-initialises its store from `start`/`end` and that resets the scroll.
+     */
+    useEffect(() => {
+        if (api === null) {
+            return;
+        }
+
+        void api.exec("scroll-chart", { date: monthStart(visibleMonth) });
+    }, [api, visibleMonth, range]);
+
     const showError = error !== null && error !== "";
     const isEmpty = !isLoading && !showError && projection.tasks.length === 0;
     const skipMessage = skippedLabel(projection.withoutDates, projection.invertedRange);
@@ -347,7 +564,50 @@ export function GanttView({ items, isLoading, error, onRetry }: TaskViewProps) {
 
     return (
         <section data-slot="task-gantt" aria-label="Task timeline" className="w-full min-w-0 space-y-3">
-            <style>{GANTT_THEME_CSS}</style>
+            <style>{GANTT_THEME_CSS + barColourRules}</style>
+
+            {/* The library exposes the store action but renders no toolbar of its own, so the month
+                stepper is hosted here. Its buttons use the app's own Lucide icons and are therefore
+                never blank, independent of the vendor font. */}
+            <div
+                data-slot="task-gantt-nav"
+                role="group"
+                aria-label="Timeline navigation"
+                className="flex flex-wrap items-center gap-2"
+            >
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label="Show the previous month"
+                    onClick={showPreviousMonth}
+                >
+                    <ChevronLeft className="size-4" aria-hidden="true" />
+                </Button>
+
+                <p
+                    data-slot="task-gantt-period"
+                    aria-live="polite"
+                    className="min-w-36 text-center text-sm font-medium tabular-nums text-muted-foreground"
+                >
+                    {monthLabel(visibleMonth)}
+                </p>
+
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label="Show the next month"
+                    onClick={showNextMonth}
+                >
+                    <ChevronRight className="size-4" aria-hidden="true" />
+                </Button>
+
+                <Button type="button" variant="outline" size="sm" onClick={showToday}>
+                    <CalendarDays className="size-4" aria-hidden="true" />
+                    Today
+                </Button>
+            </div>
 
             {/* `overflow-hidden` + a bounded height keep the chart's own scrolling inside this box, so a
                 375px viewport never gains a page-level horizontal scrollbar. */}
@@ -365,8 +625,20 @@ export function GanttView({ items, isLoading, error, onRetry }: TaskViewProps) {
                     }
                 >
                     {/* `readonly` removes the add-task column and every editor; no `on*` write
-                        callback is passed, so there is no path from this view back to a mutation. */}
-                    <GanttChart tasks={projection.tasks} readonly />
+                        callback is passed, so there is no path from this view back to a mutation.
+
+                        `autoScale` is switched off so the visible span is the one computed from the
+                        rows (plus padding), not one fitted to the tasks — without that, the range
+                        cannot extend past the last task and month stepping has nowhere to go. */}
+                    <GanttChart
+                        tasks={projection.tasks}
+                        readonly
+                        autoScale={false}
+                        start={range.start}
+                        end={range.end}
+                        cellWidth={GANTT_CELL_WIDTH}
+                        init={handleReady}
+                    />
                 </GanttErrorBoundary>
             </div>
 

@@ -8,6 +8,10 @@ import {
     AvatarImage,
 } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import {
+    assigneeColorFor,
+    assigneeForegroundFor,
+} from "@/modules/project-management/components/assignee-color";
 
 /**
  * One assigned member, as the tasks route resolves it.
@@ -63,20 +67,34 @@ export function AssigneeStack({ assignees, max = 3, className }: AssigneeStackPr
             aria-label={`Assignees: ${allNames}`}
             className={cn("w-fit", className)}
         >
-            {visible.map((assignee) => (
-                <Avatar
-                    key={assignee.user_id}
-                    size="sm"
-                    role="img"
-                    aria-label={assignee.full_name}
-                    title={assignee.full_name}
-                >
-                    {assignee.avatar_url ? (
-                        <AvatarImage src={assignee.avatar_url} alt={assignee.full_name} />
-                    ) : null}
-                    <AvatarFallback>{initialsOf(assignee.full_name)}</AvatarFallback>
-                </Avatar>
-            ))}
+            {visible.map((assignee) => {
+                /*
+                 * The FALLBACK is tinted from the user id, so a member without a photo is still
+                 * recognisable at a glance and matches their chip in the assign picker. The colour
+                 * and its readable ink both come from the one derived-colour module; the `+N` pill
+                 * below stays neutral, because it stands for a count, not a person.
+                 */
+                const fill = assigneeColorFor(assignee.user_id);
+
+                return (
+                    <Avatar
+                        key={assignee.user_id}
+                        size="sm"
+                        role="img"
+                        aria-label={assignee.full_name}
+                        title={assignee.full_name}
+                    >
+                        {assignee.avatar_url ? (
+                            <AvatarImage src={assignee.avatar_url} alt={assignee.full_name} />
+                        ) : null}
+                        <AvatarFallback
+                            style={{ backgroundColor: fill, color: assigneeForegroundFor(fill) }}
+                        >
+                            {initialsOf(assignee.full_name)}
+                        </AvatarFallback>
+                    </Avatar>
+                );
+            })}
 
             {overflow > 0 && (
                 <AvatarGroupCount

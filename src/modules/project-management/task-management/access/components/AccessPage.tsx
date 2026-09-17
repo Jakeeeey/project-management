@@ -45,10 +45,8 @@ export function AccessPage() {
             <div className="space-y-1">
                 <h1 className="text-lg font-semibold tracking-tight">Access</h1>
                 <p className="text-sm text-muted-foreground">
-                    Who may edit this department&apos;s tasks. Edit access covers everything a task edit
-                    can change — assigning people, setting status and priority, and changing dates and
-                    custom fields. Your department decides whether the head alone or every member can
-                    grant Edit access.
+                    Who can edit this department&apos;s tasks — status, priority, dates, assignees and
+                    custom fields.
                 </p>
             </div>
 

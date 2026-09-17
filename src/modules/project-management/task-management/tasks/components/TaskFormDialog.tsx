@@ -4,17 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
-import { Check, ChevronRight, ChevronsUpDown, Loader2 } from "lucide-react";
+import { ChevronRight, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-    Command,
-    CommandEmpty,
-    CommandGroup,
-    CommandInput,
-    CommandItem,
-    CommandList,
-} from "@/components/ui/command";
 import {
     Dialog,
     DialogContent,
@@ -33,30 +25,26 @@ import {
     FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { MemberAccessItem } from "@/modules/project-management/task-management/access/hooks/useAccess";
-import { CatalogChipDot } from "@/modules/project-management/components/CatalogChip";
+import {
+    TaskCombobox,
+    type TaskComboboxOption,
+} from "@/modules/project-management/components/TaskCombobox";
 import type { Capabilities } from "@/modules/project-management/types/capabilities";
 
-import type { TaskCatalogOption, TaskCatalogs, TaskField, TaskListItem } from "../hooks/useTasks";
+import type { TaskCatalogOption, TaskCatalogs, TaskListItem } from "../hooks/useTasks";
 import type { CreateTaskInput, UpdateTaskInput } from "../types/pm-task.schema";
+import { AssigneeDialog } from "./AssigneeDialog";
+import { AssigneeStack } from "./AssigneeStack";
 import { DATE_RANGE_ERROR_MESSAGE, TaskDateRange, isValidDateRange } from "./TaskDateRange";
-import { SingleDatePicker } from "./SingleDatePicker";
 
 /**
  * The create/edit dialog for a task or a sub-task.
  *
  * One dialog serves both verbs and both levels: `task === null` creates (under `parent` when it is a
- * sub-task) and a row edits it. Statuses and priorities are DATA — the two selects render exactly
+ * sub-task) and a row edits it. Statuses and priorities are DATA — the two comboboxes render exactly
  * the department's live catalog rows passed in as `catalogs`, and an omitted status/priority falls
  * back to the department's default row exactly as the create route does.
  *
@@ -71,9 +59,6 @@ import { SingleDatePicker } from "./SingleDatePicker";
  * precedes Submit, and Submit is disabled for the whole in-flight window.
  */
 
-/** Radix `SelectItem` cannot carry an empty value, so "nothing chosen" is `""` (the placeholder). */
-const NO_SELECTION = "";
-
 const TaskFormSchema = z
     .object({
         title: z.string().trim().min(1, "Title is required").max(255, "Title must be 255 characters or fewer"),
@@ -85,12 +70,6 @@ const TaskFormSchema = z
         end_date: z.string().nullable(),
         /** Local to the form: assignments go through the assignees route, never a task update. */
         assignee_ids: z.array(z.number().int().positive()),
-        /**
-         * The custom-column answers, keyed by column id as a string. They live in the form's own
-         * store rather than a second `useState` so the existing `form.reset` on open resets them with
-         * everything else, and a reopened dialog can never show the previous subject's answers.
-         */
-        custom_values: z.record(z.string(), z.string()),
     })
     .superRefine((values, ctx) => {
         // `superRefine` rather than a per-field `refine`: a narrowing predicate would collapse the
@@ -116,7 +95,6 @@ const EMPTY_VALUES: TaskFormValues = {
     start_date: null,
     end_date: null,
     assignee_ids: [],
-    custom_values: {},
 };
 
 /** Anchors the dates label to the start picker, so the composite control keeps a real label. */
@@ -137,16 +115,10 @@ export interface TaskFormDialogProps {
     readonly parent: TaskBreadcrumb | null;
     /** The chain from the root down to the task (create: to `parent`), rendered as a breadcrumb. */
     readonly parentTrail: readonly TaskBreadcrumb[];
-    /** The department's live catalogs — the selects' only source of options. */
+    /** The department's live catalogs — the comboboxes' only source of options. */
     readonly catalogs: TaskCatalogs;
     /** The department's live members — the assign picker's only source of options. */
     readonly members: readonly MemberAccessItem[];
-    /**
-     * The department's custom columns. Each renders its own editor; the values live in local state
-     * rather than the Zod schema because the set of columns is dynamic, and the server owns the
-     * per-type validation (a `number` column rejecting `abc`, a `select` rejecting an unknown id).
-     */
-    readonly fields: readonly TaskField[];
     /** Server-resolved capabilities; `canAssign` is the only gate on the assign control. */
     readonly capabilities: Capabilities | null;
     readonly isSubmitting: boolean;
@@ -175,7 +147,6 @@ export function TaskFormDialog({
     parentTrail,
     catalogs,
     members,
-    fields,
     capabilities,
     isSubmitting,
     onCreate,
@@ -187,8 +158,6 @@ export function TaskFormDialog({
 }: TaskFormDialogProps) {
     const isEditing = task !== null;
     const canAssign = capabilities?.canAssign === true;
-
-    const [pickerOpen, setPickerOpen] = useState(false);
 
     const form = useForm<TaskFormValues>({
         resolver: zodResolver(TaskFormSchema),
@@ -206,39 +175,45 @@ export function TaskFormDialog({
             start_date: task?.start_date ?? null,
             end_date: task?.end_date ?? null,
             assignee_ids: task ? task.assignees.map((assignee) => assignee.user_id) : [],
-            custom_values: Object.fromEntries(
-                fields.map((field) => [
-                    String(field.id),
-                    task?.custom_values.find((entry) => entry.field_id === field.id)?.value ?? "",
-                ]),
-            ),
         });
-    }, [open, task, catalogs, fields, form]);
+    }, [open, task, catalogs, form]);
 
     // `useWatch` rather than `form.watch(...)`: the latter is an incompatible-library call the React
     // Compiler refuses to memoize, which the module's lint gate rejects.
-    const selectedIds = useWatch({ control: form.control, name: "assignee_ids" });
-    const selectedSet = useMemo(() => new Set(selectedIds ?? []), [selectedIds]);
     const startDate = useWatch({ control: form.control, name: "start_date" }) ?? null;
     const endDate = useWatch({ control: form.control, name: "end_date" }) ?? null;
-    const customValues = useWatch({ control: form.control, name: "custom_values" }) ?? {};
 
-    const setCustomField = (fieldId: number, value: string): void => {
-        form.setValue(
-            "custom_values",
-            { ...form.getValues("custom_values"), [String(fieldId)]: value },
-            { shouldDirty: true },
-        );
+    const statusOptions = useMemo<TaskComboboxOption[]>(
+        () =>
+            catalogs.statuses.map((option) => ({
+                value: String(option.id),
+                label: option.label,
+                color: option.color,
+            })),
+        [catalogs.statuses],
+    );
+    const priorityOptions = useMemo<TaskComboboxOption[]>(
+        () =>
+            catalogs.priorities.map((option) => ({
+                value: String(option.id),
+                label: option.label,
+                color: option.color,
+            })),
+        [catalogs.priorities],
+    );
+
+    const [isAssigneeDialogOpen, setIsAssigneeDialogOpen] = useState(false);
+    const [assigneeDialogTitle, setAssigneeDialogTitle] = useState("");
+
+    /**
+     * Opens the centered assignee modal. The subject's title is read at open time: on edit it is the
+     * row's title (unless the field was just changed, which is the honest current draft), and on
+     * create — where no row exists yet — the title being typed, falling back to a generic label.
+     */
+    const handleOpenAssigneeDialog = (): void => {
+        setAssigneeDialogTitle(form.getValues("title").trim() || "this task");
+        setIsAssigneeDialogOpen(true);
     };
-
-    const selectedLabel = useMemo(() => {
-        if (selectedSet.size === 0) return "Select members…";
-        if (selectedSet.size === 1) {
-            const only = members.find((member) => selectedSet.has(member.user_id));
-            return only?.full_name ?? "1 member selected";
-        }
-        return `${selectedSet.size} members selected`;
-    }, [selectedSet, members]);
 
     const nameOf = (userId: number): string =>
         members.find((member) => member.user_id === userId)?.full_name ?? `User #${userId}`;
@@ -253,21 +228,12 @@ export function TaskFormDialog({
             end_date: values.end_date,
         };
 
-        // A blank answer is sent as `null` only when the task already stores one, so the write clears
-        // it; on a create, blanks are omitted entirely and no empty row is written at all.
-        const customValuesPayload = fields
-            .map((field) => {
-                const raw = (values.custom_values[String(field.id)] ?? "").trim();
-                return { field_id: field.id, value: raw === "" ? null : raw };
-            })
-            .filter(
-                (entry) =>
-                    entry.value !== null ||
-                    (task?.custom_values.some((stored) => stored.field_id === entry.field_id) ?? false),
-            );
-
+        // The payload deliberately OMITS `custom_values`. Custom answers are edited inline in the
+        // task table (and cleared there explicitly), so this form must not write them at all: the
+        // server treats an omitted key as "leave every stored answer untouched", while a payload of
+        // nulls would clear them. See TaskItemService.updateTask.
         if (task !== null) {
-            const saved = await onUpdate(task.id, { ...baseFields, custom_values: customValuesPayload });
+            const saved = await onUpdate(task.id, baseFields);
             if (!saved) return;
 
             // Assignments are diffed against the row's server truth, so an untouched picker writes
@@ -284,7 +250,6 @@ export function TaskFormDialog({
             const createdId = await onCreate({
                 ...baseFields,
                 parent_id: parent?.id ?? null,
-                custom_values: customValuesPayload,
             });
             if (createdId === null) return;
 
@@ -396,42 +361,31 @@ export function TaskFormDialog({
                                 )}
                             />
 
+                            {/*
+                             * Both catalog controls are `TaskCombobox`es: statuses and priorities are
+                             * table rows, so the lists are searchable and each carries its own clear
+                             * (X). The combobox names itself from `ariaLabel`, so these labels omit
+                             * `htmlFor` rather than point at an id the control does not expose.
+                             */}
                             <div className="grid gap-4 sm:grid-cols-2">
                                 <FormField
                                     control={form.control}
                                     name="status_id"
                                     render={({ field }) => (
                                         <FormItem>
-                                            <FormLabel>
+                                            <FormLabel htmlFor={undefined}>
                                                 Status <span className="text-destructive">*</span>
                                             </FormLabel>
-                                            <Select
-                                                value={field.value === null ? NO_SELECTION : String(field.value)}
-                                                onValueChange={(value) => field.onChange(Number(value))}
-                                            >
-                                                <FormControl>
-                                                    <SelectTrigger
-                                                        className="w-full"
-                                                        aria-label="Status"
-                                                        onBlur={field.onBlur}
-                                                    >
-                                                        <SelectValue placeholder="Pick a status" />
-                                                    </SelectTrigger>
-                                                </FormControl>
-                                                <SelectContent className="max-h-80">
-                                                    {catalogs.statuses.map((option) => (
-                                                        <SelectItem key={option.id} value={String(option.id)}>
-                                                            <CatalogChipDot
-                                                                color={option.color}
-                                                                density="comfortable"
-                                                            />
-                                                            <span className="min-w-0 truncate">
-                                                                {option.label}
-                                                            </span>
-                                                        </SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
+                                            <TaskCombobox
+                                                options={statusOptions}
+                                                value={field.value === null ? null : String(field.value)}
+                                                onValueChange={(value) =>
+                                                    field.onChange(value === null ? null : Number(value))
+                                                }
+                                                placeholder="Pick a status"
+                                                ariaLabel="Status"
+                                                className="w-full"
+                                            />
                                             <FormMessage />
                                         </FormItem>
                                     )}
@@ -442,36 +396,19 @@ export function TaskFormDialog({
                                     name="priority_id"
                                     render={({ field }) => (
                                         <FormItem>
-                                            <FormLabel>
+                                            <FormLabel htmlFor={undefined}>
                                                 Priority <span className="text-destructive">*</span>
                                             </FormLabel>
-                                            <Select
-                                                value={field.value === null ? NO_SELECTION : String(field.value)}
-                                                onValueChange={(value) => field.onChange(Number(value))}
-                                            >
-                                                <FormControl>
-                                                    <SelectTrigger
-                                                        className="w-full"
-                                                        aria-label="Priority"
-                                                        onBlur={field.onBlur}
-                                                    >
-                                                        <SelectValue placeholder="Pick a priority" />
-                                                    </SelectTrigger>
-                                                </FormControl>
-                                                <SelectContent className="max-h-80">
-                                                    {catalogs.priorities.map((option) => (
-                                                        <SelectItem key={option.id} value={String(option.id)}>
-                                                            <CatalogChipDot
-                                                                color={option.color}
-                                                                density="comfortable"
-                                                            />
-                                                            <span className="min-w-0 truncate">
-                                                                {option.label}
-                                                            </span>
-                                                        </SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
+                                            <TaskCombobox
+                                                options={priorityOptions}
+                                                value={field.value === null ? null : String(field.value)}
+                                                onValueChange={(value) =>
+                                                    field.onChange(value === null ? null : Number(value))
+                                                }
+                                                placeholder="Pick a priority"
+                                                ariaLabel="Priority"
+                                                className="w-full"
+                                            />
                                             <FormMessage />
                                         </FormItem>
                                     )}
@@ -508,183 +445,59 @@ export function TaskFormDialog({
                                 <FormField
                                     control={form.control}
                                     name="assignee_ids"
-                                    render={({ field }) => {
-                                        const toggle = (userId: number): void => {
-                                            // Read the live store, not the captured `field.value`: two
-                                            // picks resolved in the same tick would otherwise both start
-                                            // from the pre-pick array and the first one would be lost.
-                                            const next = new Set(form.getValues("assignee_ids"));
-                                            if (next.has(userId)) next.delete(userId);
-                                            else next.add(userId);
-                                            field.onChange([...next]);
-                                        };
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            {/*
+                                             * The control is a TRIGGER, not the picker: it shows the
+                                             * current selection and opens the shared centered modal. The
+                                             * save contract is untouched — `assignee_ids` still carries
+                                             * `number[]`, which the submit handler diffs against the
+                                             * row's current assignees; `AssigneeDialog.onSave` already
+                                             * converts its internal `string[]` totally, so no `NaN` can
+                                             * reach the schema.
+                                             */}
+                                            <FormLabel htmlFor={undefined}>Assignees</FormLabel>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={handleOpenAssigneeDialog}
+                                                disabled={isSubmitting}
+                                                aria-label="Assignees"
+                                                className="w-full justify-start"
+                                            >
+                                                <AssigneeStack
+                                                    assignees={field.value.map((userId) => ({
+                                                        user_id: userId,
+                                                        full_name: nameOf(userId),
+                                                    }))}
+                                                    max={3}
+                                                />
+                                            </Button>
+                                            <FormDescription>
+                                                Only members of your department can be assigned.
+                                            </FormDescription>
+                                            <FormMessage />
 
-                                        return (
-                                            <FormItem>
-                                                <FormLabel>Assignees</FormLabel>
-                                                <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-                                                    <PopoverTrigger asChild>
-                                                        <FormControl>
-                                                            <Button
-                                                                type="button"
-                                                                variant="outline"
-                                                                role="combobox"
-                                                                aria-expanded={pickerOpen}
-                                                                aria-label="Assign department members"
-                                                                onBlur={field.onBlur}
-                                                                className="w-full justify-between"
-                                                            >
-                                                                <span
-                                                                    className={cn(
-                                                                        "min-w-0 flex-1 truncate text-left",
-                                                                        selectedSet.size === 0 &&
-                                                                            "text-muted-foreground",
-                                                                    )}
-                                                                >
-                                                                    {selectedLabel}
-                                                                </span>
-                                                                <ChevronsUpDown
-                                                                    className="ml-2 size-4 shrink-0 opacity-50"
-                                                                    aria-hidden="true"
-                                                                />
-                                                            </Button>
-                                                        </FormControl>
-                                                    </PopoverTrigger>
-                                                    <PopoverContent
-                                                        align="start"
-                                                        className="w-(--radix-popover-trigger-width) p-0"
-                                                    >
-                                                        <Command>
-                                                            <CommandInput
-                                                                placeholder="Search members by name or email…"
-                                                                aria-label="Search department members"
-                                                            />
-                                                            <CommandList
-                                                                className="max-h-64 overflow-y-auto overscroll-contain"
-                                                                onWheel={(event) => event.stopPropagation()}
-                                                            >
-                                                                <CommandEmpty>
-                                                                    No matching member.
-                                                                </CommandEmpty>
-                                                                <CommandGroup heading="Members">
-                                                                    {members.map((member) => (
-                                                                        <CommandItem
-                                                                            key={member.user_id}
-                                                                            value={`${member.user_id} ${member.full_name} ${member.user_email ?? ""}`}
-                                                                            onSelect={() => toggle(member.user_id)}
-                                                                        >
-                                                                            <Check
-                                                                                className={cn(
-                                                                                    "mr-2 size-4 shrink-0",
-                                                                                    selectedSet.has(member.user_id)
-                                                                                        ? "opacity-100"
-                                                                                        : "opacity-0",
-                                                                                )}
-                                                                                aria-hidden="true"
-                                                                            />
-                                                                            <span
-                                                                                className="min-w-0 flex-1 truncate"
-                                                                                title={member.full_name}
-                                                                            >
-                                                                                {member.full_name}
-                                                                            </span>
-                                                                            {member.user_email ? (
-                                                                                <span className="ml-2 max-w-[45%] truncate text-xs text-muted-foreground">
-                                                                                    {member.user_email}
-                                                                                </span>
-                                                                            ) : null}
-                                                                        </CommandItem>
-                                                                    ))}
-                                                                </CommandGroup>
-                                                            </CommandList>
-                                                        </Command>
-                                                    </PopoverContent>
-                                                </Popover>
-                                                <FormDescription>
-                                                    Only members of your department can be assigned.
-                                                </FormDescription>
-                                                <FormMessage />
-                                            </FormItem>
-                                        );
-                                    }}
+                                            <AssigneeDialog
+                                                open={isAssigneeDialogOpen}
+                                                onOpenChange={setIsAssigneeDialogOpen}
+                                                task={{
+                                                    ...(task !== null ? { id: task.id } : {}),
+                                                    title: assigneeDialogTitle,
+                                                }}
+                                                members={members}
+                                                selectedIds={field.value}
+                                                isSubmitting={isSubmitting}
+                                                onSave={(userIds) => {
+                                                    form.setValue("assignee_ids", [...userIds], {
+                                                        shouldDirty: true,
+                                                    });
+                                                    setIsAssigneeDialogOpen(false);
+                                                }}
+                                            />
+                                        </FormItem>
+                                    )}
                                 />
-                            ) : null}
-
-                            {fields.length > 0 ? (
-                                <div className="space-y-4 rounded-lg border border-border/50 bg-muted/20 p-3">
-                                    <div className="space-y-0.5">
-                                        <p className="text-sm font-medium">Custom fields</p>
-                                        <p className="text-xs text-muted-foreground">
-                                            Your department&apos;s own columns. Leave one blank to clear it.
-                                        </p>
-                                    </div>
-
-                                    {fields.map((field) => {
-                                        const inputId = `task-field-${field.id}`;
-                                        const value = customValues[String(field.id)] ?? "";
-
-                                        return (
-                                            <div key={field.id} className="space-y-1.5">
-                                                <label htmlFor={inputId} className="text-sm font-medium">
-                                                    {field.label}
-                                                </label>
-
-                                                {field.field_type === "select" ? (
-                                                    <Select
-                                                        value={value}
-                                                        onValueChange={(next) => setCustomField(field.id, next)}
-                                                    >
-                                                        <SelectTrigger
-                                                            id={inputId}
-                                                            className="w-full"
-                                                            aria-label={field.label}
-                                                        >
-                                                            <SelectValue placeholder="Not set" />
-                                                        </SelectTrigger>
-                                                        <SelectContent className="max-h-80">
-                                                            {field.options.map((option) => (
-                                                                <SelectItem
-                                                                    key={option.id}
-                                                                    value={String(option.id)}
-                                                                >
-                                                                    <span className="min-w-0 truncate">
-                                                                        {option.label}
-                                                                    </span>
-                                                                </SelectItem>
-                                                            ))}
-                                                        </SelectContent>
-                                                    </Select>
-                                                ) : field.field_type === "date" ? (
-                                                    <SingleDatePicker
-                                                        id={inputId}
-                                                        aria-label={field.label}
-                                                        value={value === "" ? null : value}
-                                                        onChange={(next) => setCustomField(field.id, next ?? "")}
-                                                        disabled={isSubmitting}
-                                                    />
-                                                ) : (
-                                                    <Input
-                                                        id={inputId}
-                                                        aria-label={field.label}
-                                                        autoComplete="off"
-                                                        inputMode={
-                                                            field.field_type === "number" ? "decimal" : undefined
-                                                        }
-                                                        placeholder={
-                                                            field.field_type === "number"
-                                                                ? "e.g. 42"
-                                                                : "Add a value"
-                                                        }
-                                                        value={value}
-                                                        onChange={(event) =>
-                                                            setCustomField(field.id, event.target.value)
-                                                        }
-                                                    />
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
                             ) : null}
                         </div>
 

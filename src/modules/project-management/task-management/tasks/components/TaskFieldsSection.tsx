@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Check, ChevronRight, EyeOff, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, EyeOff, Loader2, Pencil, Plus, Star, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -33,10 +33,8 @@ import { CatalogChip } from "@/modules/project-management/components/CatalogChip
 
 import { fieldTypeLabel, useTaskFields, type TaskFieldFormInput } from "../hooks/useTaskFields";
 import type { TaskField, TaskFieldOption } from "../hooks/useTasks";
-import { TaskFieldDefaultValueEditor } from "./TaskFieldDefaultValueEditor";
 import { TaskFieldDialog } from "./TaskFieldDialog";
-import { TaskFieldOptionColorPicker } from "./TaskFieldOptionColorPicker";
-import { TaskFieldOptionDialog } from "./TaskFieldOptionDialog";
+import { TaskFieldOptionDialog, type TaskFieldOptionFormInput } from "./TaskFieldOptionDialog";
 
 /** Which column the column-dialog is editing, or `null` when it is closed. */
 interface FieldEditorState {
@@ -96,6 +94,7 @@ export function TaskFieldsSection() {
         renameOption,
         setOptionColor,
         deleteOption,
+        moveOption,
     } = useTaskFields();
 
     const [fieldEditor, setFieldEditor] = useState<FieldEditorState | null>(null);
@@ -129,13 +128,52 @@ export function TaskFieldsSection() {
         if (saved) setFieldEditor(null);
     };
 
-    const handleOptionSubmit = async (label: string) => {
+    /**
+     * Saves one choice from the dialog.
+     *
+     * The column, not the choice, owns the default: `default_value` names ONE option, so the switch
+     * is a per-choice view of that single fact — the same fact the row's star writes. Turning it ON
+     * moves the default here; turning it OFF clears the default only when this choice WAS the
+     * default, so editing some other choice can never wipe the column's default by accident.
+     */
+    const handleOptionSubmit = async (values: TaskFieldOptionFormInput) => {
         if (optionEditor === null) return;
-        const saved =
-            optionEditor.option === null
-                ? await createOption(optionEditor.field.id, label, null)
-                : await renameOption(optionEditor.option.id, label);
-        if (saved) setOptionEditor(null);
+        const { field, option } = optionEditor;
+
+        if (option === null) {
+            const createdId = await createOption(field.id, values.label, values.color);
+            if (createdId === null) return;
+            // The create request carries the colour but the route does not persist it, so a non-null
+            // colour is written through the same recolour path an edit uses.
+            if (values.color !== null) {
+                const coloured = await setOptionColor(createdId, values.color);
+                if (!coloured) return;
+            }
+            if (values.isDefault) {
+                const set = await setDefaultValue(field.id, String(createdId));
+                if (!set) return;
+            }
+        } else {
+            if (values.label !== option.label) {
+                const renamed = await renameOption(option.id, values.label);
+                if (!renamed) return;
+            }
+            if (values.color !== option.color) {
+                const coloured = await setOptionColor(option.id, values.color);
+                if (!coloured) return;
+            }
+            if (values.isDefault) {
+                if (String(option.id) !== field.default_value) {
+                    const set = await setDefaultValue(field.id, String(option.id));
+                    if (!set) return;
+                }
+            } else if (String(option.id) === field.default_value) {
+                const cleared = await setDefaultValue(field.id, null);
+                if (!cleared) return;
+            }
+        }
+
+        setOptionEditor(null);
     };
 
     const handleConfirmDelete = async () => {
@@ -193,7 +231,10 @@ export function TaskFieldsSection() {
                             No custom columns yet. Add one and it appears on the task list straight away.
                         </p>
                     ) : (
-                        <ul className="space-y-2">
+                        <ul
+                            data-slot="task-field-list"
+                            className="divide-y divide-border overflow-hidden rounded-lg border"
+                        >
                             {pagedFields.map((field) => {
                                 const isExpanded = expandedFieldId === field.id;
                                 const choiceCount = field.options.length;
@@ -203,12 +244,9 @@ export function TaskFieldsSection() {
                                         key={field.id}
                                         data-slot="task-field-row"
                                         data-expanded={isExpanded}
-                                        className={cn(
-                                            "rounded-lg border",
-                                            field.is_enabled ? undefined : "opacity-60",
-                                        )}
+                                        className={cn(field.is_enabled ? undefined : "opacity-60")}
                                     >
-                                        <div className="flex flex-wrap items-center gap-2 p-2">
+                                        <div className="flex items-center gap-2 px-3 py-2">
                                             <Button
                                                 type="button"
                                                 variant="ghost"
@@ -233,188 +271,242 @@ export function TaskFieldsSection() {
                                                 />
                                             </Button>
 
-                                            <Switch
-                                                checked={field.is_enabled}
-                                                disabled={isSubmitting}
-                                                aria-label={
-                                                    field.is_enabled
-                                                        ? `Hide ${field.label}`
-                                                        : `Show ${field.label}`
-                                                }
-                                                title={
-                                                    field.is_enabled
-                                                        ? `Hide ${field.label}`
-                                                        : `Show ${field.label}`
-                                                }
-                                                onCheckedChange={(next) => {
-                                                    void setEnabled(field.id, next);
-                                                }}
-                                            />
-                                            <span className="min-w-0 truncate text-sm font-medium">{field.label}</span>
-                                            <Badge variant="secondary">{fieldTypeLabel(field.field_type)}</Badge>
+                                            <div className="min-w-0 flex-1">
+                                                <CatalogChip
+                                                    value={{ label: field.label, color: null }}
+                                                    density="comfortable"
+                                                    className="max-w-full"
+                                                    data-slot="task-field-chip"
+                                                />
+                                            </div>
+
+                                            <Badge variant="secondary" className="shrink-0 text-[11px]">
+                                                {fieldTypeLabel(field.field_type)}
+                                            </Badge>
 
                                             {field.field_type === "select" ? (
-                                                <span className="text-xs text-muted-foreground">
+                                                <span className="shrink-0 text-xs text-muted-foreground">
                                                     {choiceCount} choice{choiceCount === 1 ? "" : "s"}
                                                 </span>
                                             ) : null}
 
                                             {field.is_enabled ? null : (
-                                                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                                <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                                                     <EyeOff className="size-3.5 shrink-0" aria-hidden="true" />
                                                     Hidden
                                                 </span>
                                             )}
 
-                                            <div className="ml-auto flex items-center gap-1">
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="icon-sm"
-                                                aria-label={`Rename the column ${field.label}`}
-                                                title={`Rename ${field.label}`}
-                                                disabled={isSubmitting}
-                                                onClick={() => setFieldEditor({ field })}
-                                            >
-                                                <Pencil className="size-4" aria-hidden="true" />
-                                            </Button>
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="icon-sm"
-                                                aria-label={`Remove the column ${field.label}`}
-                                                title={`Remove ${field.label}`}
-                                                disabled={isSubmitting}
-                                                onClick={() =>
-                                                    setPendingDelete({
-                                                        kind: "field",
-                                                        id: field.id,
-                                                        label: field.label,
-                                                        parentLabel: field.label,
-                                                    })
-                                                }
-                                            >
-                                                <Trash2 className="size-4" aria-hidden="true" />
-                                            </Button>
-                                        </div>
+                                            <div className="flex shrink-0 items-center gap-0.5">
+                                                <Switch
+                                                    checked={field.is_enabled}
+                                                    disabled={isSubmitting}
+                                                    className="mx-1"
+                                                    aria-label={
+                                                        field.is_enabled
+                                                            ? `Hide ${field.label}`
+                                                            : `Show ${field.label}`
+                                                    }
+                                                    title={
+                                                        field.is_enabled
+                                                            ? `Hide ${field.label}`
+                                                            : `Show ${field.label}`
+                                                    }
+                                                    onCheckedChange={(next) => {
+                                                        void setEnabled(field.id, next);
+                                                    }}
+                                                />
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon-sm"
+                                                    aria-label={`Rename the column ${field.label}`}
+                                                    title={`Rename ${field.label}`}
+                                                    disabled={isSubmitting}
+                                                    onClick={() => setFieldEditor({ field })}
+                                                >
+                                                    <Pencil className="size-4" aria-hidden="true" />
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon-sm"
+                                                    aria-label={`Remove the column ${field.label}`}
+                                                    title={`Remove ${field.label}`}
+                                                    disabled={isSubmitting}
+                                                    onClick={() =>
+                                                        setPendingDelete({
+                                                            kind: "field",
+                                                            id: field.id,
+                                                            label: field.label,
+                                                            parentLabel: field.label,
+                                                        })
+                                                    }
+                                                >
+                                                    <Trash2 className="size-4" aria-hidden="true" />
+                                                </Button>
+                                            </div>
                                         </div>
 
                                         {isExpanded ? (
-                                            <>
+                                            <div className="space-y-3 border-t px-3 pb-3 pt-3">
                                                 {field.is_enabled ? null : (
-                                        <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                                        <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                                             <EyeOff className="size-3.5 shrink-0" aria-hidden="true" />
                                             Hidden from the task list and the form. Every stored answer is kept.
                                         </p>
                                     )}
 
-                                    <div className="mt-3 flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                                        <div className="min-w-0">
-                                            <p className="text-xs font-medium">Default value</p>
-                                            <p className="text-xs text-muted-foreground">
-                                                Applies to new tasks only.
-                                            </p>
-                                        </div>
-                                        <div className="w-full shrink-0 sm:w-64">
-                                            <TaskFieldDefaultValueEditor
-                                                key={`${field.id}:${field.default_value ?? ""}`}
-                                                field={field}
-                                                disabled={isSubmitting}
-                                                onCommit={(value) => {
-                                                    void setDefaultValue(field.id, value);
-                                                }}
-                                            />
-                                        </div>
-                                    </div>
-
                                     {field.field_type === "select" ? (
-                                        <div className="mt-3 space-y-2 border-t pt-3">
+                                        <div className="space-y-2">
                                             {field.options.length === 0 ? (
                                                 <p className="text-xs text-muted-foreground">
                                                     No choices yet. A Choice column with no choices stores nothing.
                                                 </p>
                                             ) : (
-                                                <ul className="space-y-2">
-                                                    {field.options.map((option) => (
-                                                        <li
-                                                            key={option.id}
-                                                            className="rounded-md border bg-muted/20 p-2"
-                                                        >
-                                                            <div className="flex flex-wrap items-center gap-2">
-                                                                <CatalogChip
-                                                                    value={{
-                                                                        label: option.label,
-                                                                        color: option.color,
-                                                                    }}
-                                                                    density="comfortable"
-                                                                    className="max-w-[16rem]"
-                                                                />
-                                                                {String(option.id) === field.default_value ? (
-                                                                    <Badge variant="secondary" className="gap-1">
-                                                                        <Check
-                                                                            className="size-3"
-                                                                            aria-hidden="true"
-                                                                        />
-                                                                        Default
-                                                                    </Badge>
-                                                                ) : null}
-                                                                <div className="ml-auto flex items-center gap-1">
-                                                                    <Button
-                                                                        type="button"
-                                                                        variant="ghost"
-                                                                        size="icon-sm"
-                                                                        className="size-6"
-                                                                        aria-label={`Rename the choice ${option.label} of ${field.label}`}
-                                                                        title={`Rename ${option.label}`}
-                                                                        disabled={isSubmitting}
-                                                                        onClick={() =>
-                                                                            setOptionEditor({ field, option })
-                                                                        }
-                                                                    >
-                                                                        <Pencil
-                                                                            className="size-3.5"
-                                                                            aria-hidden="true"
-                                                                        />
-                                                                    </Button>
-                                                                    <Button
-                                                                        type="button"
-                                                                        variant="ghost"
-                                                                        size="icon-sm"
-                                                                        className="size-6"
-                                                                        aria-label={`Remove the choice ${option.label} of ${field.label}`}
-                                                                        title={`Remove ${option.label}`}
-                                                                        disabled={isSubmitting}
-                                                                        onClick={() =>
-                                                                            setPendingDelete({
-                                                                                kind: "option",
-                                                                                id: option.id,
-                                                                                label: option.label,
-                                                                                parentLabel: field.label,
-                                                                            })
-                                                                        }
-                                                                    >
-                                                                        <Trash2
-                                                                            className="size-3.5"
-                                                                            aria-hidden="true"
-                                                                        />
-                                                                    </Button>
-                                                                </div>
-                                                            </div>
+                                                <ul className="divide-y divide-border overflow-hidden rounded-lg border">
+                                                    {field.options.map((option, index) => {
+                                                        const isDefault =
+                                                            String(option.id) === field.default_value;
 
-                                                            <div className="mt-2">
-                                                                <TaskFieldOptionColorPicker
-                                                                    key={`${option.id}:${option.color ?? ""}`}
-                                                                    optionLabel={option.label}
-                                                                    fieldLabel={field.label}
-                                                                    color={option.color}
-                                                                    disabled={isSubmitting}
-                                                                    onChange={(color) => {
-                                                                        void setOptionColor(option.id, color);
-                                                                    }}
-                                                                />
-                                                            </div>
-                                                        </li>
-                                                    ))}
+                                                        return (
+                                                            <li key={option.id} className="px-3 py-2">
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="min-w-0 flex-1">
+                                                                        <CatalogChip
+                                                                            value={{
+                                                                                label: option.label,
+                                                                                color: option.color,
+                                                                            }}
+                                                                            density="comfortable"
+                                                                            className="max-w-full"
+                                                                        />
+                                                                    </div>
+
+                                                                    {isDefault ? (
+                                                                        <Badge
+                                                                            variant="secondary"
+                                                                            className="shrink-0 text-[11px]"
+                                                                        >
+                                                                            Default
+                                                                        </Badge>
+                                                                    ) : null}
+
+                                                                    <div className="flex shrink-0 items-center gap-0.5">
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="ghost"
+                                                                            size="icon-sm"
+                                                                            onClick={() => {
+                                                                                void moveOption(
+                                                                                    field.id,
+                                                                                    option.id,
+                                                                                    "up",
+                                                                                );
+                                                                            }}
+                                                                            disabled={isSubmitting || index === 0}
+                                                                            aria-label={`Move ${option.label} up`}
+                                                                            title={
+                                                                                index === 0
+                                                                                    ? "Already first"
+                                                                                    : `Move ${option.label} up`
+                                                                            }
+                                                                        >
+                                                                            <ArrowUp
+                                                                                className="size-4"
+                                                                                aria-hidden="true"
+                                                                            />
+                                                                        </Button>
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="ghost"
+                                                                            size="icon-sm"
+                                                                            onClick={() => {
+                                                                                void moveOption(
+                                                                                    field.id,
+                                                                                    option.id,
+                                                                                    "down",
+                                                                                );
+                                                                            }}
+                                                                            disabled={
+                                                                                isSubmitting ||
+                                                                                index === field.options.length - 1
+                                                                            }
+                                                                            aria-label={`Move ${option.label} down`}
+                                                                            title={
+                                                                                index === field.options.length - 1
+                                                                                    ? "Already last"
+                                                                                    : `Move ${option.label} down`
+                                                                            }
+                                                                        >
+                                                                            <ArrowDown
+                                                                                className="size-4"
+                                                                                aria-hidden="true"
+                                                                            />
+                                                                        </Button>
+                                                                        {isDefault ? null : (
+                                                                            <Button
+                                                                                type="button"
+                                                                                variant="ghost"
+                                                                                size="icon-sm"
+                                                                                onClick={() => {
+                                                                                    void setDefaultValue(
+                                                                                        field.id,
+                                                                                        String(option.id),
+                                                                                    );
+                                                                                }}
+                                                                                disabled={isSubmitting}
+                                                                                aria-label={`Make ${option.label} the default choice`}
+                                                                                title={`Make ${option.label} the default choice`}
+                                                                            >
+                                                                                <Star
+                                                                                    className="size-4"
+                                                                                    aria-hidden="true"
+                                                                                />
+                                                                            </Button>
+                                                                        )}
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="ghost"
+                                                                            size="icon-sm"
+                                                                            aria-label={`Edit the choice ${option.label} of ${field.label}`}
+                                                                            title={`Edit ${option.label}`}
+                                                                            disabled={isSubmitting}
+                                                                            onClick={() =>
+                                                                                setOptionEditor({ field, option })
+                                                                            }
+                                                                        >
+                                                                            <Pencil
+                                                                                className="size-4"
+                                                                                aria-hidden="true"
+                                                                            />
+                                                                        </Button>
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="ghost"
+                                                                            size="icon-sm"
+                                                                            aria-label={`Remove the choice ${option.label} of ${field.label}`}
+                                                                            title={`Remove ${option.label}`}
+                                                                            disabled={isSubmitting}
+                                                                            onClick={() =>
+                                                                                setPendingDelete({
+                                                                                    kind: "option",
+                                                                                    id: option.id,
+                                                                                    label: option.label,
+                                                                                    parentLabel: field.label,
+                                                                                })
+                                                                            }
+                                                                        >
+                                                                            <Trash2
+                                                                                className="size-4"
+                                                                                aria-hidden="true"
+                                                                            />
+                                                                        </Button>
+                                                                    </div>
+                                                                </div>
+                                                            </li>
+                                                        );
+                                                    })}
                                                 </ul>
                                             )}
 
@@ -430,7 +522,7 @@ export function TaskFieldsSection() {
                                             </Button>
                                         </div>
                                             ) : null}
-                                            </>
+                                            </div>
                                         ) : null}
                                     </li>
                                 );
@@ -539,6 +631,11 @@ export function TaskFieldsSection() {
                 }}
                 option={optionEditor?.option ?? null}
                 fieldLabel={optionEditor?.field.label ?? ""}
+                isDefault={
+                    optionEditor !== null &&
+                    optionEditor.option !== null &&
+                    String(optionEditor.option.id) === optionEditor.field.default_value
+                }
                 isSubmitting={isSubmitting}
                 onSubmit={handleOptionSubmit}
             />

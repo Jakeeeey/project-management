@@ -27,6 +27,7 @@ import type { TaskField, TaskListItem } from "../hooks/useTasks";
 import { AssigneeStack } from "./AssigneeStack";
 import { AttachmentList } from "./AttachmentList";
 import { AttachmentUploader } from "./AttachmentUploader";
+import { TaskActivityTimeline } from "./TaskActivityTimeline";
 import { formatTaskDate, formatTaskFieldValue } from "./TaskRow";
 import { TaskPriorityBadge, TaskStatusBadge } from "./TaskRowBadges";
 import type { TaskBreadcrumb } from "./TaskFormDialog";
@@ -57,18 +58,6 @@ import type { TaskBreadcrumb } from "./TaskFormDialog";
 function displayName(userId: number | null, names: ReadonlyMap<number, string>): string {
     if (userId === null) return "Unknown";
     return names.get(userId) ?? `User #${userId}`;
-}
-
-/**
- * A stored audit timestamp as display text.
- *
- * The column holds Philippine wall-clock `YYYY-MM-DD HH:mm:ss`; Directus serialises it back with a
- * `T` separator. The string is only reshaped — never parsed into a `Date`, which would re-read a
- * naive stamp in the browser's zone and could shift the day.
- */
-function formatAuditStamp(value: string | null): string {
-    if (value === null || value.trim() === "") return "—";
-    return value.replace("T", " ").replace(/\.\d+/, "").replace(/Z$/, "");
 }
 
 export interface TaskDetailSheetProps {
@@ -145,7 +134,7 @@ export function TaskDetailSheet({
         <Sheet open={open} onOpenChange={handleOpenChange}>
             <SheetContent
                 side="right"
-                className="flex w-full flex-col gap-0 p-0 sm:max-w-[500px]"
+                className="flex w-full flex-col gap-0 p-0 sm:max-w-[560px] lg:max-w-[1000px]"
             >
                 <SheetHeader className="border-b px-6 pt-6 pb-4">
                     <SheetTitle className="line-clamp-2">
@@ -164,129 +153,136 @@ export function TaskDetailSheet({
                     </div>
                 ) : (
                     <>
-                        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-4">
-                            <div className="space-y-1">
-                                <p className="text-xs font-medium text-muted-foreground">Parent</p>
-                                <div
-                                    data-slot="task-detail-parent-breadcrumb"
-                                    className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm"
-                                >
-                                    {parentTrail.length === 0 ? (
-                                        <span className="text-muted-foreground">Top-level task</span>
-                                    ) : (
-                                        parentTrail.map((ancestor, index) => (
-                                            <span key={ancestor.id} className="flex min-w-0 items-center gap-1">
-                                                {index > 0 ? (
-                                                    <span className="text-muted-foreground" aria-hidden="true">
-                                                        ›
+                        <div
+                            data-slot="task-detail-columns"
+                            className="min-h-0 flex-1 overflow-y-auto lg:flex lg:overflow-hidden"
+                        >
+                            <div
+                                data-slot="task-detail-main"
+                                className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-4"
+                            >
+                                <div className="space-y-1">
+                                    <p className="text-xs font-medium text-muted-foreground">Parent</p>
+                                    <div
+                                        data-slot="task-detail-parent-breadcrumb"
+                                        className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm"
+                                    >
+                                        {parentTrail.length === 0 ? (
+                                            <span className="text-muted-foreground">Top-level task</span>
+                                        ) : (
+                                            parentTrail.map((ancestor, index) => (
+                                                <span key={ancestor.id} className="flex min-w-0 items-center gap-1">
+                                                    {index > 0 ? (
+                                                        <span className="text-muted-foreground" aria-hidden="true">
+                                                            ›
+                                                        </span>
+                                                    ) : null}
+                                                    <span className="max-w-[220px] truncate" title={ancestor.title}>
+                                                        {ancestor.title}
                                                     </span>
-                                                ) : null}
-                                                <span className="max-w-[220px] truncate" title={ancestor.title}>
-                                                    {ancestor.title}
                                                 </span>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <TaskStatusBadge status={task.status} />
+                                    <TaskPriorityBadge priority={task.priority} />
+                                </div>
+
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <div
+                                        data-slot="task-detail-dates"
+                                        className="space-y-1 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
+                                    >
+                                        <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                                            <CalendarDays className="size-3.5" aria-hidden="true" />
+                                            Schedule
+                                        </p>
+                                        <p className="text-sm">
+                                            {formatTaskDate(task.start_date)}
+                                            <span className="mx-1 text-muted-foreground" aria-hidden="true">
+                                                →
                                             </span>
-                                        ))
+                                            {formatTaskDate(task.end_date)}
+                                        </p>
+                                    </div>
+
+                                    <div
+                                        data-slot="task-detail-assignees"
+                                        className="space-y-1 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
+                                    >
+                                        <p className="text-xs font-medium text-muted-foreground">Assignees</p>
+                                        <AssigneeStack assignees={assignees} />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-1">
+                                    <p className="text-xs font-medium text-muted-foreground">Description</p>
+                                    {task.description === null ? (
+                                        <p className="text-sm text-muted-foreground">No description.</p>
+                                    ) : (
+                                        <p className="max-h-[240px] overflow-y-auto whitespace-pre-wrap break-words text-sm">
+                                            {task.description}
+                                        </p>
                                     )}
                                 </div>
+
+                                {fields.length > 0 ? (
+                                    <div data-slot="task-detail-custom-fields" className="space-y-2">
+                                        <p className="text-xs font-medium text-muted-foreground">Custom fields</p>
+                                        <dl className="grid gap-2 sm:grid-cols-2">
+                                            {fields.map((field) => {
+                                                const answer =
+                                                    task.custom_values.find((entry) => entry.field_id === field.id)
+                                                        ?.value ?? null;
+                                                return (
+                                                    <div
+                                                        key={field.id}
+                                                        className="space-y-0.5 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
+                                                    >
+                                                        <dt className="text-xs font-medium text-muted-foreground">
+                                                            {field.label}
+                                                        </dt>
+                                                        <dd className="break-words text-sm">
+                                                            {formatTaskFieldValue(field, answer)}
+                                                        </dd>
+                                                    </div>
+                                                );
+                                            })}
+                                        </dl>
+                                    </div>
+                                ) : null}
+
+                                <div data-slot="task-detail-attachments" className="space-y-2">
+                                    <p className="text-xs font-medium text-muted-foreground">Attachments</p>
+                                    <AttachmentUploader
+                                        taskId={task.id}
+                                        onUpload={onUploadAttachment}
+                                        disabled={isSubmitting}
+                                    />
+                                    <AttachmentList
+                                        taskId={task.id}
+                                        attachments={task.attachments}
+                                        onDetach={onDetachAttachment}
+                                        disabled={isSubmitting}
+                                    />
+                                </div>
+
                             </div>
 
-                            <div className="flex flex-wrap items-center gap-2">
-                                <TaskStatusBadge status={task.status} />
-                                <TaskPriorityBadge priority={task.priority} />
-                            </div>
-
-                            <div className="grid gap-3 sm:grid-cols-2">
+                            <aside
+                                data-slot="task-detail-history"
+                                className="border-t border-border/60 bg-muted/20 lg:flex lg:min-h-0 lg:w-[360px] lg:shrink-0 lg:flex-col lg:border-t-0 lg:border-l"
+                            >
                                 <div
-                                    data-slot="task-detail-dates"
-                                    className="space-y-1 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
+                                    data-slot="task-detail-audit"
+                                    className="px-6 py-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
                                 >
-                                    <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                        <CalendarDays className="size-3.5" aria-hidden="true" />
-                                        Schedule
-                                    </p>
-                                    <p className="text-sm">
-                                        {formatTaskDate(task.start_date)}
-                                        <span className="mx-1 text-muted-foreground" aria-hidden="true">
-                                            →
-                                        </span>
-                                        {formatTaskDate(task.end_date)}
-                                    </p>
+                                    <TaskActivityTimeline taskId={task.id} />
                                 </div>
-
-                                <div
-                                    data-slot="task-detail-assignees"
-                                    className="space-y-1 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
-                                >
-                                    <p className="text-xs font-medium text-muted-foreground">Assignees</p>
-                                    <AssigneeStack assignees={assignees} />
-                                </div>
-                            </div>
-
-                            <div className="space-y-1">
-                                <p className="text-xs font-medium text-muted-foreground">Description</p>
-                                {task.description === null ? (
-                                    <p className="text-sm text-muted-foreground">No description.</p>
-                                ) : (
-                                    <p className="max-h-[240px] overflow-y-auto whitespace-pre-wrap break-words text-sm">
-                                        {task.description}
-                                    </p>
-                                )}
-                            </div>
-
-                            {fields.length > 0 ? (
-                                <div data-slot="task-detail-custom-fields" className="space-y-2">
-                                    <p className="text-xs font-medium text-muted-foreground">Custom fields</p>
-                                    <dl className="grid gap-2 sm:grid-cols-2">
-                                        {fields.map((field) => {
-                                            const answer =
-                                                task.custom_values.find((entry) => entry.field_id === field.id)
-                                                    ?.value ?? null;
-                                            return (
-                                                <div
-                                                    key={field.id}
-                                                    className="space-y-0.5 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
-                                                >
-                                                    <dt className="text-xs font-medium text-muted-foreground">
-                                                        {field.label}
-                                                    </dt>
-                                                    <dd className="break-words text-sm">
-                                                        {formatTaskFieldValue(field, answer)}
-                                                    </dd>
-                                                </div>
-                                            );
-                                        })}
-                                    </dl>
-                                </div>
-                            ) : null}
-
-                            <div data-slot="task-detail-attachments" className="space-y-2">
-                                <p className="text-xs font-medium text-muted-foreground">Attachments</p>
-                                <AttachmentUploader
-                                    taskId={task.id}
-                                    onUpload={onUploadAttachment}
-                                    disabled={isSubmitting}
-                                />
-                                <AttachmentList
-                                    taskId={task.id}
-                                    attachments={task.attachments}
-                                    onDetach={onDetachAttachment}
-                                    disabled={isSubmitting}
-                                />
-                            </div>
-                        </div>
-
-                        <div
-                            data-slot="task-detail-audit"
-                            className="space-y-1 border-t px-6 py-4 text-xs text-muted-foreground"
-                        >
-                            <p data-slot="task-detail-created">
-                                Created {formatAuditStamp(task.created_at)} by{" "}
-                                {displayName(task.created_by, memberNameById)}
-                            </p>
-                            <p data-slot="task-detail-updated">
-                                Last updated {formatAuditStamp(task.updated_at)} by{" "}
-                                {displayName(task.updated_by, memberNameById)}
-                            </p>
+                            </aside>
                         </div>
 
                         <SheetFooter className="mt-0 flex-wrap gap-2 border-t bg-muted/20 px-6 py-4 sm:flex-row sm:justify-end">

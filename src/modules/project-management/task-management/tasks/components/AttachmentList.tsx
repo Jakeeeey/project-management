@@ -16,13 +16,13 @@ import { Button } from "@/components/ui/button";
 
 import type { TaskAttachmentRef } from "../hooks/useTasks";
 import {
-    AttachmentPreview,
     attachmentDisplayName,
     attachmentDownloadUrl,
 } from "./AttachmentPreview";
+import { AttachmentPreviewDialog } from "./AttachmentPreviewDialog";
 
 /**
- * The attachment list for one task: the rows, the inline preview surface, the Blob download and the
+ * The attachment list for one task: the rows, the centered preview modal, the Blob download and the
  * detach action.
  *
  * Data comes from the task row, not a request of its own: the list route already resolves each
@@ -70,8 +70,12 @@ export interface AttachmentListProps {
 }
 
 export function AttachmentList({ taskId, attachments, onDetach, disabled = false }: AttachmentListProps) {
-    /** Which row's inline preview is open; only one at a time keeps the sheet short. */
-    const [expandedId, setExpandedId] = useState<number | null>(null);
+    /**
+     * The row whose preview modal is open, held whole rather than by id: a refetch of the task list
+     * rebuilds the attachment objects, and keeping the row itself means the modal cannot close or
+     * orphan mid-view. Only one preview is open at a time.
+     */
+    const [previewAttachment, setPreviewAttachment] = useState<TaskAttachmentRef | null>(null);
     /** The row whose Blob download is in flight — drives the spinner, never blocks the others. */
     const [downloadingId, setDownloadingId] = useState<number | null>(null);
     /** The row awaiting detach confirmation. */
@@ -123,7 +127,7 @@ export function AttachmentList({ taskId, attachments, onDetach, disabled = false
         try {
             const detached = await onDetach(taskId, pendingDetach.id, attachmentDisplayName(pendingDetach));
             if (!detached) return;
-            setExpandedId((current) => (current === pendingDetach.id ? null : current));
+            setPreviewAttachment((current) => (current?.id === pendingDetach.id ? null : current));
             setPendingDetach(null);
         } finally {
             setIsDetaching(false);
@@ -149,7 +153,7 @@ export function AttachmentList({ taskId, attachments, onDetach, disabled = false
                     {ordered.map((attachment) => {
                         const name = attachmentDisplayName(attachment);
                         const typeLabel = attachment.file_type?.trim() || "Unknown type";
-                        const isOpen = expandedId === attachment.id;
+                        const isOpen = previewAttachment?.id === attachment.id;
                         const isDownloading = downloadingId === attachment.id;
 
                         return (
@@ -186,7 +190,7 @@ export function AttachmentList({ taskId, attachments, onDetach, disabled = false
                                             title={`${isOpen ? "Hide preview of" : "Show preview of"} ${name}`}
                                             aria-expanded={isOpen}
                                             data-slot="attachment-toggle-preview"
-                                            onClick={() => setExpandedId(isOpen ? null : attachment.id)}
+                                            onClick={() => setPreviewAttachment(isOpen ? null : attachment)}
                                             disabled={disabled}
                                         >
                                             {isOpen ? (
@@ -230,17 +234,6 @@ export function AttachmentList({ taskId, attachments, onDetach, disabled = false
                                     </div>
                                 </div>
 
-                                {isOpen ? (
-                                    <div className="border-t border-border/50 px-3 py-3">
-                                        <AttachmentPreview
-                                            attachment={attachment}
-                                            onDownload={(target) => {
-                                                void handleDownload(target);
-                                            }}
-                                            isDownloading={isDownloading}
-                                        />
-                                    </div>
-                                ) : null}
                             </li>
                         );
                     })}
@@ -289,6 +282,17 @@ export function AttachmentList({ taskId, attachments, onDetach, disabled = false
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            <AttachmentPreviewDialog
+                attachment={previewAttachment}
+                onOpenChange={(next) => {
+                    if (!next) setPreviewAttachment(null);
+                }}
+                onDownload={(target) => {
+                    void handleDownload(target);
+                }}
+                isDownloading={previewAttachment !== null && downloadingId === previewAttachment.id}
+            />
         </div>
     );
 }

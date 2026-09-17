@@ -23,13 +23,14 @@ import {
     MAX_INDENT_DEPTH,
     TaskRow,
     formatTaskDate,
-    formatTaskDateRange,
     formatTaskFieldValue,
+    type TaskRowPatch,
     type TaskRowProps,
     type TaskRowView,
 } from "./TaskRow";
-import { TaskRowBadges } from "./TaskRowBadges";
-import type { TaskField } from "../hooks/useTasks";
+import { TaskPriorityBadge, TaskStatusBadge } from "./TaskRowBadges";
+import type { CellEditRequest, CellMemberOption } from "./TaskCellEditor";
+import type { TaskCatalogs, TaskField } from "../hooks/useTasks";
 
 function subtaskLabel(count: number): string {
     return `${count} sub-task${count === 1 ? "" : "s"}`;
@@ -48,16 +49,20 @@ interface TaskTreeColumn {
  * time, so this is only the part that never varies.
  *
  * The widths are chosen so the columns' SUM stays under the `max-w-7xl` container's usable width at
- * `xl` and up: the start and due dates share one cell, because two full-date columns pushed the row
- * past its container and forced a horizontal scrollbar at every viewport.
+ * `xl` and up. Start and due are two separate columns now, so the title, priority, status,
+ * assignees and custom-column widths were trimmed to make room for the second date column.
+ *
+ * Order: the expand gutter, then task title, assignees, start, due, priority and status; the
+ * custom columns follow the fixed set and the actions gutter is appended last.
  */
 const BASE_COLUMNS: readonly TaskTreeColumn[] = [
     { key: "expand", label: "Expand", srOnly: true, className: "w-[76px]" },
-    { key: "title", label: "Task", className: "min-w-[240px]" },
-    { key: "status", label: "Status", className: "w-[150px]" },
-    { key: "priority", label: "Priority", className: "w-[150px]" },
-    { key: "assignees", label: "Assignees", className: "w-[170px]" },
-    { key: "dates", label: "Dates", className: "w-[190px]" },
+    { key: "title", label: "Task", className: "min-w-[220px]" },
+    { key: "assignees", label: "Assignees", className: "w-[160px]" },
+    { key: "start", label: "Start", className: "w-[160px]" },
+    { key: "due", label: "Due", className: "w-[160px]" },
+    { key: "priority", label: "Priority", className: "w-[140px]" },
+    { key: "status", label: "Status", className: "w-[140px]" },
 ];
 
 /** The actions gutter is always last, whatever the department has added. */
@@ -75,7 +80,7 @@ function buildColumns(fields: readonly TaskField[]): TaskTreeColumn[] {
         ...fields.map((field) => ({
             key: `field-${field.id}`,
             label: field.label,
-            className: "w-[170px]",
+            className: "w-[160px]",
         })),
         ACTIONS_COLUMN,
     ];
@@ -136,6 +141,18 @@ export interface TaskTreeProps {
     renderRow?: (props: TaskRowProps) => ReactNode;
     /** The department's custom columns — one extra table column and one extra card field each. */
     fields?: readonly TaskField[];
+    /**
+     * In-place editing seam. When `onStartCellEdit` is supplied the WIDE table's data cells become
+     * editable; the narrow-viewport card below `xl` stays a read-only projection, because it has no
+     * per-column cell to swap an editor into.
+     */
+    catalogs?: TaskCatalogs;
+    members?: readonly CellMemberOption[];
+    editingCell?: { readonly taskId: number; readonly column: string } | null;
+    cellPatches?: ReadonlyMap<string, TaskRowPatch>;
+    onStartCellEdit?: (taskId: number, column: string) => void;
+    onCancelCellEdit?: () => void;
+    onCommitCellEdit?: (taskId: number, column: string, request: CellEditRequest) => void;
     className?: string;
     /** Accessible name of the grid. */
     "aria-label"?: string;
@@ -194,6 +211,13 @@ export function TaskTree({
     renderActions,
     renderRow,
     fields = [],
+    catalogs,
+    members,
+    editingCell = null,
+    cellPatches,
+    onStartCellEdit,
+    onCancelCellEdit,
+    onCommitCellEdit,
     className,
     "aria-label": ariaLabel = "Task list",
 }: TaskTreeProps) {
@@ -275,8 +299,8 @@ export function TaskTree({
                             const isExpanded = expandedIds.has(node.id);
                             const indentDepth = Math.min(node.depth, MAX_INDENT_DEPTH);
                             const expandLabel = isExpanded ? `Collapse ${node.title}` : `Expand ${node.title}`;
-                            const rangeText = formatTaskDateRange(node.start_date, node.end_date);
-                            const rangeTitle = `Start: ${formatTaskDate(node.start_date)} · Due: ${formatTaskDate(node.end_date)}`;
+                            const startText = formatTaskDate(node.start_date);
+                            const endText = formatTaskDate(node.end_date);
 
                             return (
                                 <li
@@ -338,10 +362,17 @@ export function TaskTree({
                                                     </Badge>
                                                 ) : null}
                                             </div>
-                                            <TaskRowBadges status={node.status} priority={node.priority} />
                                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                                                 <AssigneeStack assignees={node.assignees} max={2} />
-                                                <span title={rangeTitle}>{rangeText}</span>
+                                                <span title={`Start: ${startText}`}>Start: {startText}</span>
+                                                <span title={`Due: ${endText}`}>Due: {endText}</span>
+                                            </div>
+                                            <div
+                                                data-slot="task-row-badges"
+                                                className="flex flex-wrap items-center gap-1.5"
+                                            >
+                                                <TaskPriorityBadge priority={node.priority} />
+                                                <TaskStatusBadge status={node.status} />
                                             </div>
                                             {fields.length > 0 ? (
                                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -372,7 +403,7 @@ export function TaskTree({
 
             <div className="hidden overflow-x-auto xl:block">
                 <div className="rounded-2xl border border-border/50 bg-card shadow-sm">
-                    <Table role="treegrid" aria-label={ariaLabel} className="min-w-[1024px]">
+                    <Table role="treegrid" aria-label={ariaLabel} className="min-w-[1120px]">
                         <TableHeader className="bg-muted/30">
                             <TableRow>
                                 {columns.map((column) => (
@@ -402,6 +433,13 @@ export function TaskTree({
                                               dragHandle: renderDragHandle?.(node),
                                               actions: renderActions?.(node),
                                               fields,
+                                              catalogs,
+                                              members,
+                                              editingCell,
+                                              cellPatches,
+                                              onStartCellEdit,
+                                              onCancelCellEdit,
+                                              onCommitCellEdit,
                                           };
                                           const rendered = renderRow
                                               ? renderRow(rowProps)

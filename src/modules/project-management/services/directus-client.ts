@@ -23,6 +23,12 @@ export interface DirectusQuery {
     /** Directus accepts `-1` for "no limit"; the tasks list relies on that. */
     readonly limit?: number;
     readonly page?: number;
+    /**
+     * Rows to skip. Directus treats `offset` as the row-level alternative to `page`, which is what a
+     * reader needs to fetch `limit + 1` rows at an arbitrary row boundary — a page-number read cannot
+     * express that, because its stride is the requested limit.
+     */
+    readonly offset?: number;
 }
 
 /** A non-2xx response from Directus. */
@@ -59,6 +65,7 @@ function withQuery(url: string, query?: DirectusQuery): string {
     if (query.sort !== undefined) params.push(`sort=${encodeURIComponent(query.sort.join(","))}`);
     if (query.limit !== undefined) params.push(`limit=${query.limit}`);
     if (query.page !== undefined) params.push(`page=${query.page}`);
+    if (query.offset !== undefined) params.push(`offset=${query.offset}`);
 
     return params.length === 0 ? url : `${url}?${params.join("&")}`;
 }

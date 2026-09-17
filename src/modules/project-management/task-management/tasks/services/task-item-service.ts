@@ -9,6 +9,14 @@ import type { UpdateTaskInput } from "../types/pm-task.schema";
 import { TaskServiceError, assertDateOrder, resolveCatalogId } from "./task-service";
 import { TaskFieldService } from "./task-field-service";
 import {
+    TASK_ACTIVITY_FIELD_LABELS,
+    buildActivityChange,
+    catalogLabelOf,
+    formatActivityValue,
+    type TaskActivityChange,
+} from "./task-activity-delta";
+import { TaskActivityService } from "./task-activity-service";
+import {
     buildShaping,
     liveFieldValues,
     liveNestedRows,
@@ -145,11 +153,39 @@ export class TaskItemService {
         const mergedEnd = toDateOnly(input.end_date === undefined ? task.end_date : input.end_date);
         assertDateOrder(mergedStart, mergedEnd);
 
+        // One batch id for the whole save: the scalar changes and the custom answers of this same
+        // request land in one logical group even though they are separate statements.
+        const batchId = TaskActivityService.newBatchId();
+        const activity: TaskActivityChange[] = [];
+
         const changes: Record<string, unknown> = {};
         applyChange(changes, "title", input.title, task.title);
         applyChange(changes, "description", input.description, task.description);
         applyChange(changes, "start_date", input.start_date, toDateOnly(task.start_date));
         applyChange(changes, "end_date", input.end_date, toDateOnly(task.end_date));
+
+        // The `changes` map is already the diff, so each entry present in it is exactly one history
+        // row; `stored` is the pre-change side the task row was loaded with.
+        const scalarFields: ReadonlyArray<readonly [string, string, unknown]> = [
+            ["title", TASK_ACTIVITY_FIELD_LABELS.title, task.title],
+            ["description", TASK_ACTIVITY_FIELD_LABELS.description, task.description],
+            ["start_date", TASK_ACTIVITY_FIELD_LABELS.start_date, toDateOnly(task.start_date)],
+            ["end_date", TASK_ACTIVITY_FIELD_LABELS.end_date, toDateOnly(task.end_date)],
+        ];
+        for (const [field, fieldLabel, stored] of scalarFields) {
+            if (changes[field] === undefined) continue;
+            activity.push(
+                buildActivityChange({
+                    field_key: field,
+                    field_label: fieldLabel,
+                    old_value: stored,
+                    new_value: changes[field],
+                    // A value-like field displays as itself; only a catalog id needs its own label.
+                    old_label: formatActivityValue(stored),
+                    new_label: formatActivityValue(changes[field]),
+                }),
+            );
+        }
 
         const statusChanged = input.status_id !== undefined && input.status_id !== task.status_id;
         const priorityChanged = input.priority_id !== undefined && input.priority_id !== task.priority_id;
@@ -157,11 +193,35 @@ export class TaskItemService {
             const catalogs = await TaskConfigService.listCatalog(actor);
             if (statusChanged) {
                 const statusId = resolveCatalogId(catalogs.statuses, input.status_id, "status");
-                if (statusId !== task.status_id) changes.status_id = statusId;
+                if (statusId !== task.status_id) {
+                    changes.status_id = statusId;
+                    activity.push(
+                        buildActivityChange({
+                            field_key: "status_id",
+                            field_label: TASK_ACTIVITY_FIELD_LABELS.status_id,
+                            old_value: task.status_id,
+                            new_value: statusId,
+                            old_label: catalogLabelOf(catalogs.statuses, task.status_id),
+                            new_label: catalogLabelOf(catalogs.statuses, statusId),
+                        }),
+                    );
+                }
             }
             if (priorityChanged) {
                 const priorityId = resolveCatalogId(catalogs.priorities, input.priority_id, "priority");
-                if (priorityId !== task.priority_id) changes.priority_id = priorityId;
+                if (priorityId !== task.priority_id) {
+                    changes.priority_id = priorityId;
+                    activity.push(
+                        buildActivityChange({
+                            field_key: "priority_id",
+                            field_label: TASK_ACTIVITY_FIELD_LABELS.priority_id,
+                            old_value: task.priority_id,
+                            new_value: priorityId,
+                            old_label: catalogLabelOf(catalogs.priorities, task.priority_id),
+                            new_label: catalogLabelOf(catalogs.priorities, priorityId),
+                        }),
+                    );
+                }
             }
         }
 
@@ -178,8 +238,15 @@ export class TaskItemService {
             });
         }
 
+        // After the write, never before: a failed update must leave no history row behind, and this
+        // call cannot throw even when the trail table is missing.
+        await TaskActivityService.record(actor, task.id, "updated", activity, batchId);
+
         if (resolvedValues.length > 0) {
-            await TaskFieldService.writeValues(actor, task.id, resolvedValues);
+            await TaskFieldService.writeValues(actor, task.id, resolvedValues, {
+                action: "updated",
+                batchId,
+            });
         }
 
         const updated = Object.keys(changes).length > 0 ? await loadTaskScoped(actor, task.id) : task;
@@ -219,6 +286,19 @@ export class TaskItemService {
                 "The task subtree could not be fully deleted; retry the delete to finish it",
             );
         }
+
+        // ONE row, for the subject only: the descendants were loaded as ids alone, so logging their
+        // field values would be an invention. Only the subject's own row was in hand.
+        await TaskActivityService.record(actor, task.id, "updated", [
+            buildActivityChange({
+                field_key: "title",
+                field_label: TASK_ACTIVITY_FIELD_LABELS.title,
+                old_value: task.title,
+                new_value: null,
+                old_label: task.title,
+                new_label: null,
+            }),
+        ]);
 
         return { id: task.id, deleted_ids: [task.id, ...descendants] };
     }

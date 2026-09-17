@@ -13,7 +13,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatDateLong, toISODate } from "@/lib/utils";
-import { CatalogChipDot } from "@/modules/project-management/components/CatalogChip";
+import {
+    CatalogChipDot,
+    catalogSolidStyle,
+    resolveCatalogHex,
+} from "@/modules/project-management/components/CatalogChip";
 
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
 import type { TaskListItem } from "../../hooks/useTasks";
@@ -362,13 +366,15 @@ interface CalendarTaskChipProps {
  * One task as a compact chip.
  *
  * A `<span>`, deliberately: the calendar is read-only, so a chip must not be focusable, must not be
- * a button and must not open anything. The stored status hex rides on the shared `CatalogChipDot`,
- * which applies it as an inline style (never a Tailwind class, which cannot hold a user-chosen
- * colour) and keeps it visible on both themes.
+ * a button and must not open anything. A stored status colour fills it SOLIDLY through the shared
+ * `catalogSolidStyle` (never a Tailwind class, which cannot hold a user-chosen colour) with a
+ * luminance-derived label, so it matches the catalog chips elsewhere. A task whose status has no
+ * colour keeps the neutral border and the muted dot instead.
  */
 function CalendarTaskChip({ task, memberNameById }: CalendarTaskChipProps) {
     const spanning = isSpanning(task);
     const end = parseDateOnly(task.end_date);
+    const hex = resolveCatalogHex(task.status?.color);
 
     return (
         <span
@@ -376,16 +382,20 @@ function CalendarTaskChip({ task, memberNameById }: CalendarTaskChipProps) {
             data-task-id={task.id}
             data-spanning={spanning ? "true" : undefined}
             title={buildChipTitle(task, memberNameById)}
+            style={hex === null ? undefined : catalogSolidStyle(hex)}
             className={cn(
-                "flex min-w-0 items-center gap-1 rounded-md border px-1 py-0.5 text-[11px] leading-tight",
-                spanning ? "border-border/70 bg-muted/40" : "border-border/60 bg-background/80",
+                "flex min-w-0 items-center gap-1 rounded-md border px-1 py-0.5 text-[11px] font-semibold uppercase leading-tight tracking-wide",
+                hex === null &&
+                    (spanning
+                        ? "border-border/70 bg-muted/40 text-foreground"
+                        : "border-border/60 bg-background/80 text-foreground"),
             )}
         >
-            <CatalogChipDot color={task.status?.color} density="dense" />
+            {hex === null ? <CatalogChipDot density="dense" /> : null}
             <span className="min-w-0 flex-1 truncate">{task.title}</span>
             {spanning ? (
                 <>
-                    <ArrowRight className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    <ArrowRight className="size-3 shrink-0 opacity-70" aria-hidden="true" />
                     {end === undefined ? null : (
                         <span className="sr-only">{`ends ${formatDateLong(end)}`}</span>
                     )}

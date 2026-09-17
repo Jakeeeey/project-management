@@ -18,20 +18,36 @@ import {
 import {
     Form,
     FormControl,
+    FormDescription,
     FormField,
     FormItem,
     FormLabel,
     FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 
-import { TaskFieldLabelSchema } from "../types/task-field.schema";
+import { TaskFieldColorSchema, TaskFieldLabelSchema } from "../types/task-field.schema";
 import type { TaskFieldOption } from "../hooks/useTasks";
 
-/** A choice carries only a label — there is nothing else to collect. */
-const OptionFormSchema = z.object({ label: TaskFieldLabelSchema });
+/** A valid 6-digit hex the native colour input can render before the user picks their own. */
+const FALLBACK_HEX = "#64748b";
 
-type OptionFormValues = z.infer<typeof OptionFormSchema>;
+/**
+ * The editable fields of one choice: its label, an optional colour, and whether it is the column's
+ * default.
+ *
+ * `isDefault` is NOT a per-choice flag. A column owns exactly ONE `default_value` (the id of the
+ * chosen option), so this boolean only records whether the choice being edited is the one that value
+ * names. A per-choice flag alongside it would record the same fact twice and let the two disagree.
+ */
+const OptionFormSchema = z.object({
+    label: TaskFieldLabelSchema,
+    color: TaskFieldColorSchema.nullable(),
+    isDefault: z.boolean(),
+});
+
+export type TaskFieldOptionFormInput = z.infer<typeof OptionFormSchema>;
 
 export interface TaskFieldOptionDialogProps {
     open: boolean;
@@ -40,33 +56,50 @@ export interface TaskFieldOptionDialogProps {
     option: TaskFieldOption | null;
     /** The label of the column this choice belongs to, so the copy can name it. */
     fieldLabel: string;
+    /** Whether this choice is the column's current default, seeding the switch. */
+    isDefault: boolean;
     isSubmitting: boolean;
-    onSubmit: (label: string) => void | Promise<void>;
+    onSubmit: (values: TaskFieldOptionFormInput) => void | Promise<void>;
 }
 
-/** The create/edit dialog for one choice of a `select` column. */
+/**
+ * The create/edit dialog for one choice of a `select` column — label, colour and default.
+ *
+ * The colour is collected here, alongside the label, rather than by a control under the row: a choice
+ * is edited in one place, and the native picker and the hex text field write the same value. The
+ * default switch writes the column's single `default_value`, the same fact the row's star writes.
+ */
 export function TaskFieldOptionDialog({
     open,
     onOpenChange,
     option,
     fieldLabel,
+    isDefault,
     isSubmitting,
     onSubmit,
 }: TaskFieldOptionDialogProps) {
     const isEditing = option !== null;
 
-    const form = useForm<OptionFormValues>({
+    const form = useForm<TaskFieldOptionFormInput>({
         resolver: zodResolver(OptionFormSchema),
-        defaultValues: { label: "" },
+        defaultValues: { label: "", color: null, isDefault: false },
     });
 
     useEffect(() => {
         if (!open) return;
-        form.reset({ label: option?.label ?? "" });
-    }, [open, option, form]);
+        form.reset({
+            label: option?.label ?? "",
+            color: option?.color ?? null,
+            isDefault,
+        });
+    }, [open, option, isDefault, form]);
 
     const handleSubmit = form.handleSubmit(async (values) => {
-        await onSubmit(values.label.trim());
+        await onSubmit({
+            label: values.label.trim(),
+            color: values.color ?? null,
+            isDefault: values.isDefault === true,
+        });
     });
 
     return (
@@ -78,7 +111,7 @@ export function TaskFieldOptionDialog({
                     </DialogTitle>
                     <DialogDescription>
                         {isEditing
-                            ? `Rename this choice of “${fieldLabel}”. Tasks that already picked it follow immediately.`
+                            ? `Change the label, colour or default of this choice of “${fieldLabel}”. Tasks that already picked it follow immediately.`
                             : `Add a choice to “${fieldLabel}”. Anyone editing a task can then pick it.`}
                     </DialogDescription>
                 </DialogHeader>
@@ -98,6 +131,63 @@ export function TaskFieldOptionDialog({
                                             <Input placeholder="e.g. Acme Corp" autoComplete="off" {...formField} />
                                         </FormControl>
                                         <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+
+                            <FormField
+                                control={form.control}
+                                name="color"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Colour</FormLabel>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="color"
+                                                aria-label="Pick a colour for this choice"
+                                                className="h-9 w-12 shrink-0 cursor-pointer rounded-md border bg-transparent p-1"
+                                                value={field.value ?? FALLBACK_HEX}
+                                                onChange={(event) => field.onChange(event.target.value)}
+                                            />
+                                            <FormControl>
+                                                <Input
+                                                    placeholder="#16a34a"
+                                                    autoComplete="off"
+                                                    className="font-mono"
+                                                    value={field.value ?? ""}
+                                                    onChange={(event) => {
+                                                        const next = event.target.value.trim();
+                                                        field.onChange(next === "" ? null : next);
+                                                    }}
+                                                />
+                                            </FormControl>
+                                        </div>
+                                        <FormDescription>
+                                            Optional 6-digit hex, such as #16a34a. Shown as a badge tint.
+                                        </FormDescription>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+
+                            <FormField
+                                control={form.control}
+                                name="isDefault"
+                                render={({ field }) => (
+                                    <FormItem className="flex flex-row items-center justify-between gap-4 rounded-lg border p-3">
+                                        <div className="space-y-0.5">
+                                            <FormLabel>Make this the default choice</FormLabel>
+                                            <FormDescription>
+                                                New tasks that omit this column use this choice.
+                                            </FormDescription>
+                                        </div>
+                                        <FormControl>
+                                            <Switch
+                                                checked={field.value === true}
+                                                onCheckedChange={field.onChange}
+                                                aria-label="Make this the default choice"
+                                            />
+                                        </FormControl>
                                     </FormItem>
                                 )}
                             />

@@ -23,6 +23,8 @@ import {
     type TaskClientRow,
 } from "./task-payload";
 import { TaskFieldService } from "./task-field-service";
+import { TASK_ACTIVITY_FIELD_LABELS, buildActivityChange, catalogLabelOf, type TaskActivityChange } from "./task-activity-delta";
+import { TaskActivityService } from "./task-activity-service";
 import type { CreateTaskInput } from "../types/pm-task.schema";
 
 /**
@@ -199,16 +201,78 @@ export class TaskService {
             throw new TaskServiceError("INTERNAL_FAIL", "The task was created but could not be read back");
         }
 
+        // One batch id for the whole create: the task-level rows, the body's custom answers and the
+        // defaults that land afterwards all read back as one "created" action.
+        const batchId = TaskActivityService.newBatchId();
+        const activity: TaskActivityChange[] = [
+            buildActivityChange({
+                field_key: "title",
+                field_label: TASK_ACTIVITY_FIELD_LABELS.title,
+                old_value: null,
+                new_value: input.title,
+                new_label: input.title,
+            }),
+        ];
+
+        // Every other field that ended up non-null — including the ones the body never supplied, whose
+        // resolved defaults are just as much a part of what the task starts life with. A root task's
+        // `parent_id` and the appended `sort_order` carry no display text of their own.
+        const optionalFields: ReadonlyArray<readonly [string, string, string | null, string | null]> = [
+            ["description", TASK_ACTIVITY_FIELD_LABELS.description, input.description ?? null, input.description ?? null],
+            ["start_date", TASK_ACTIVITY_FIELD_LABELS.start_date, input.start_date ?? null, input.start_date ?? null],
+            ["end_date", TASK_ACTIVITY_FIELD_LABELS.end_date, input.end_date ?? null, input.end_date ?? null],
+            ["parent_id", TASK_ACTIVITY_FIELD_LABELS.parent_id, parentId === null ? null : String(parentId), null],
+        ];
+        for (const [field, fieldLabel, value, display] of optionalFields) {
+            if (value === null) continue;
+            activity.push(
+                buildActivityChange({
+                    field_key: field,
+                    field_label: fieldLabel,
+                    old_value: null,
+                    new_value: value,
+                    new_label: display,
+                }),
+            );
+        }
+
+        activity.push(
+            buildActivityChange({
+                field_key: "status_id",
+                field_label: TASK_ACTIVITY_FIELD_LABELS.status_id,
+                old_value: null,
+                new_value: statusId,
+                new_label: catalogLabelOf(catalogs.statuses, statusId),
+            }),
+            buildActivityChange({
+                field_key: "priority_id",
+                field_label: TASK_ACTIVITY_FIELD_LABELS.priority_id,
+                old_value: null,
+                new_value: priorityId,
+                new_label: catalogLabelOf(catalogs.priorities, priorityId),
+            }),
+            buildActivityChange({
+                field_key: "sort_order",
+                field_label: TASK_ACTIVITY_FIELD_LABELS.sort_order,
+                old_value: null,
+                new_value: sortOrder,
+            }),
+        );
+
+        await TaskActivityService.record(actor, taskId, "created", activity, batchId);
+
         if (resolvedValues.length > 0) {
-            await TaskFieldService.writeValues(actor, taskId, resolvedValues);
+            await TaskFieldService.writeValues(actor, taskId, resolvedValues, { action: "created", batchId });
         }
 
         // Columns the body did not answer inherit their default — see `applyDefaults`, which is
-        // create-only so an edit can never re-apply a default over a deliberately cleared answer.
+        // create-only so an edit can never re-apply a default over a deliberately cleared answer. The
+        // same activity context is threaded through, so a default is attributed to the create itself.
         await TaskFieldService.applyDefaults(
             actor,
             taskId,
             resolvedValues.map((entry) => entry.field_id),
+            { action: "created", batchId },
         );
 
         const row = await readItem<RawTaskRow>("pm_task", taskId);

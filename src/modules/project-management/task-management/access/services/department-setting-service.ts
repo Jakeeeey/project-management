@@ -5,7 +5,7 @@ import type { UpdateDepartmentSettingInput } from "../types/access.schema";
 import { findExistingSettingRow, resolveAllowAllMembersGrant } from "./access-policy";
 
 /**
- * The department-setting service behind the "Allow all members to grant Edit access" toggle.
+ * The department-setting service behind the "Allow all members Edit access" toggle.
  *
  * `pm_task_department_setting` holds one row per department (`uq_pm_dept_setting (department_id)`)
  * and today carries exactly one decision: `allow_all_members_grant`. The service's whole job is to

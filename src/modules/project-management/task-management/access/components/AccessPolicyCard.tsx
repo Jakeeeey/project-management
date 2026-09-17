@@ -44,9 +44,8 @@ export function AccessPolicyCard({ allowAllMembersGrant, isSaving, onChange }: A
                         id="allow-all-members-grant-description"
                         className="text-xs text-muted-foreground"
                     >
-                        When on, every member of your department has Edit access. When off, only you
-                        and the members you grant it to do. A task can also always be edited by whoever
-                        created it.
+                        On: every member can edit tasks. Off: only you and the members you grant. A
+                        task&apos;s creator can always edit it.
                     </p>
                 </div>
 

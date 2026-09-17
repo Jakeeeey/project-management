@@ -280,8 +280,8 @@ export function useAccess(): UseAccessResult {
             runMutation(
                 () => request("PATCH", { allow_all_members_grant: enabled }),
                 enabled
-                    ? "Every department member can now grant Edit access"
-                    : "Only the department head can now grant Edit access",
+                    ? "Every department member can now edit tasks"
+                    : "Only you and the members you grant can now edit tasks",
             ),
         [request, runMutation],
     );

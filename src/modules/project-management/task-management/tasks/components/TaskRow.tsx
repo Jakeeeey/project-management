@@ -1,29 +1,36 @@
 "use client";
 
-import type { CSSProperties, ReactNode, Ref } from "react";
+import { useCallback, type CSSProperties, type ReactNode, type Ref } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { cn, formatDateLong } from "@/lib/utils";
+import { CatalogChip } from "@/modules/project-management/components/CatalogChip";
 import type { TreeNode } from "@/modules/project-management/utils/tree";
 
 import { AssigneeStack, type TaskAssigneeView } from "./AssigneeStack";
 import { parseDateOnly } from "./SingleDatePicker";
 import {
+    TaskCellEditor,
+    type CellEditRequest,
+    type CellMemberOption,
+} from "./TaskCellEditor";
+import {
     TaskPriorityBadge,
     TaskStatusBadge,
     type TaskCatalogRef,
 } from "./TaskRowBadges";
-import type { TaskField, TaskFieldValue } from "../hooks/useTasks";
+import type { TaskCatalogs, TaskField, TaskFieldValue } from "../hooks/useTasks";
 
 /**
  * Everything a single row renders. Structurally satisfies `TreeSourceRow`, so `buildTree` can
  * enrich it with the computed `depth` and `children` the row is rendered from.
  *
  * Status and priority arrive already resolved (or `null` when the referenced catalog row is not
- * live) — the row never looks a label up itself.
+ * live) — the row never looks a label up itself. The ids ride along anyway: the in-place editor
+ * needs them to open the picker on the row's current value.
  */
 export interface TaskRowView {
     id: number;
@@ -32,6 +39,8 @@ export interface TaskRowView {
     title: string;
     start_date: string | null;
     end_date: string | null;
+    status_id: number;
+    priority_id: number;
     status: TaskCatalogRef | null;
     priority: TaskCatalogRef | null;
     assignees: readonly TaskAssigneeView[];
@@ -39,6 +48,31 @@ export interface TaskRowView {
     custom_values: readonly TaskFieldValue[];
     /** The server's per-row edit answer — the only thing an edit affordance may be gated on. */
     can_edit: boolean;
+}
+
+/**
+ * A row's optimistic display patch for the one cell being saved.
+ *
+ * A cell commits in place, so the row must show the new value while the write is in flight — this
+ * is the ONE deliberate exception to the module's "no optimistic patching" rule. The module drops
+ * the patch once its refetch (or its failure) has produced the server's answer, which is what makes
+ * a failed save revert.
+ */
+export interface TaskRowPatch {
+    title?: string;
+    status?: TaskCatalogRef | null;
+    priority?: TaskCatalogRef | null;
+    assignees?: readonly TaskAssigneeView[];
+    start_date?: string | null;
+    end_date?: string | null;
+    custom_values?: readonly TaskFieldValue[];
+}
+
+/** The patch's value for a key, or the row's own when the key is absent (a `null` is a real value). */
+function patched<T>(patch: TaskRowPatch | undefined, key: keyof TaskRowPatch, fallback: T): T {
+    if (patch === undefined) return fallback;
+    const value: unknown = patch[key];
+    return value === undefined ? fallback : (value as T);
 }
 
 /**
@@ -78,9 +112,9 @@ export function formatTaskDateCompact(value: string | null | undefined): string 
 }
 
 /**
- * The start/end pair as one compact label. A one-sided range renders the side that exists and an
- * identical pair collapses to a single date — which is what lets the table carry ONE dates column
- * instead of two full-date columns that each had to truncate.
+ * The start/end pair as one compact label for the read-only views. A one-sided range renders the
+ * side that exists and an identical pair collapses to a single date. The editable task table does
+ * NOT use this: it renders the two sides as separate, independently editable columns.
  */
 export function formatTaskDateRange(
     start: string | null | undefined,
@@ -113,6 +147,39 @@ export function formatTaskFieldValue(field: TaskField, value: string | null | un
     return option?.label ?? "Removed choice";
 }
 
+/** The one display geometry of an editable cell's hit target: full-cell, left-aligned, quiet until hover. */
+const CELL_BUTTON_CLASS =
+    "block w-full min-w-0 rounded px-1 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+
+/** A custom `select` answer as the module's chip: a live choice tints from its own colour. */
+function FieldChoiceChip({ field, value }: { field: TaskField; value: string | null }) {
+    const option =
+        value === null || value === ""
+            ? undefined
+            : field.options.find((candidate) => String(candidate.id) === value);
+
+    if (option === undefined) {
+        return (
+            <CatalogChip
+                value={null}
+                placeholder={value === null || value === "" ? "Not set" : "Removed choice"}
+                density="dense"
+                className="max-w-[140px]"
+                data-slot={`task-field-${field.id}-badge`}
+            />
+        );
+    }
+
+    return (
+        <CatalogChip
+            value={{ label: option.label, color: option.color }}
+            density="dense"
+            className="max-w-[140px]"
+            data-slot={`task-field-${field.id}-badge`}
+        />
+    );
+}
+
 export interface TaskRowProps {
     /** The assembled node — `depth` is the true level and drives both `aria-level` and the gutter. */
     node: TreeNode<TaskRowView>;
@@ -130,7 +197,7 @@ export interface TaskRowProps {
     dragHandle?: ReactNode;
     /** Slot for the row's overflow menu / actions. */
     actions?: ReactNode;
-    /** The department's custom columns, rendered as extra cells after the dates column. */
+    /** The department's custom columns, rendered as extra cells after the due column. */
     fields?: readonly TaskField[];
     /**
      * Forwarded to the underlying `<tr>` so a sortable wrapper (todo 6) can measure and transform
@@ -141,6 +208,22 @@ export interface TaskRowProps {
     rowStyle?: CSSProperties;
     /** Drop-indicator / drag-state classes merged onto the row — the row supplies nothing itself. */
     rowClassName?: string;
+    /** The department's catalogs — the status/priority editors' only source of options. */
+    catalogs?: TaskCatalogs;
+    members?: readonly CellMemberOption[];
+    /**
+     * The single cell currently being edited anywhere in the table (`{ taskId, column }`), or `null`.
+     * Kept on the module so only ONE cell is ever open; a second click replaces it.
+     */
+    editingCell?: { readonly taskId: number; readonly column: string } | null;
+    /** Optimistic display patches, keyed `"<taskId>:<column>"` — empty when nothing is saving. */
+    cellPatches?: ReadonlyMap<string, TaskRowPatch>;
+    /** Opens this row's cell editor. Absent (or `can_edit: false`) renders no edit affordance. */
+    onStartCellEdit?: (taskId: number, column: string) => void;
+    /** Leaves the open editor without writing. */
+    onCancelCellEdit?: () => void;
+    /** Saves one cell edit through the module's existing mutation path. */
+    onCommitCellEdit?: (taskId: number, column: string, request: CellEditRequest) => void;
 }
 
 /**
@@ -150,6 +233,11 @@ export interface TaskRowProps {
  * via an aria-hidden spacer so titles stay aligned across a level. Every text-bearing cell wraps
  * its value in a `max-w-* truncate` span (plus `title`) so a long value can neither push its
  * neighbours nor force the table wider than its own horizontal scroll.
+ *
+ * When the server says the row `can_edit`, each data cell becomes an editable cell: clicking it
+ * swaps the display for the column's own picker (see `TaskCellEditor`), and the row shows the new
+ * value optimistically while the module saves it. The expand chevron and the drag handle live in a
+ * different cell and are plain controls — clicking either never opens an editor.
  */
 export function TaskRow({
     node,
@@ -164,13 +252,57 @@ export function TaskRow({
     rowRef,
     rowStyle,
     rowClassName,
+    catalogs,
+    editingCell = null,
+    cellPatches,
+    onStartCellEdit,
+    onCancelCellEdit,
+    onCommitCellEdit,
 }: TaskRowProps) {
     const indentDepth = Math.min(node.depth, MAX_INDENT_DEPTH);
     const subtaskCount = node.children.length;
     const subtaskLabel = `${subtaskCount} sub-task${subtaskCount === 1 ? "" : "s"}`;
     const expandLabel = isExpanded ? `Collapse ${node.title}` : `Expand ${node.title}`;
-    const rangeText = formatTaskDateRange(node.start_date, node.end_date);
-    const rangeTitle = `Start: ${formatTaskDate(node.start_date)} · Due: ${formatTaskDate(node.end_date)}`;
+
+    const patchFor = useCallback(
+        (column: string): TaskRowPatch | undefined => cellPatches?.get(`${node.id}:${column}`),
+        [cellPatches, node.id],
+    );
+
+    const title = patched(patchFor("title"), "title", node.title);
+    const status = patched(patchFor("status"), "status", node.status);
+    const priority = patched(patchFor("priority"), "priority", node.priority);
+    const assignees = patched(patchFor("assignees"), "assignees", node.assignees);
+    const startDate = patched(patchFor("start"), "start_date", node.start_date);
+    const endDate = patched(patchFor("due"), "end_date", node.end_date);
+
+    // An edit affordance only exists when the row is editable AND the module wired the handlers —
+    // a read-only row (or one rendered from fixtures) stays exactly as it was before.
+    const editable =
+        node.can_edit &&
+        onStartCellEdit !== undefined &&
+        onCancelCellEdit !== undefined &&
+        onCommitCellEdit !== undefined;
+
+    const isCellEditing = useCallback(
+        (column: string): boolean =>
+            editable &&
+            editingCell !== null &&
+            editingCell.taskId === node.id &&
+            editingCell.column === column,
+        [editable, editingCell, node.id],
+    );
+
+    const startEdit = useCallback(
+        (column: string): void => onStartCellEdit?.(node.id, column),
+        [onStartCellEdit, node.id],
+    );
+    const cancelEdit = useCallback((): void => onCancelCellEdit?.(), [onCancelCellEdit]);
+    const commitEdit = useCallback(
+        (column: string, request: CellEditRequest): void =>
+            onCommitCellEdit?.(node.id, column, request),
+        [onCommitCellEdit, node.id],
+    );
 
     return (
         <TableRow
@@ -215,9 +347,32 @@ export function TaskRow({
 
             <TableCell className="max-w-[360px]">
                 <div className="flex items-center gap-1.5" style={{ paddingLeft: indentDepth * INDENT_STEP_PX }}>
-                    <span className="block max-w-[320px] truncate font-medium" title={node.title}>
-                        {node.title}
-                    </span>
+                    {editable && isCellEditing("title") ? (
+                        <div className="min-w-0 flex-1">
+                            <TaskCellEditor
+                                spec={{ kind: "title", value: title }}
+                                label="Task title"
+                                taskTitle={title}
+                                onCommit={(request) => commitEdit("title", request)}
+                                onCancel={cancelEdit}
+                            />
+                        </div>
+                    ) : editable ? (
+                        <button
+                            type="button"
+                            aria-label={`Edit title for ${title}`}
+                            title={`Edit title for ${title}`}
+                            data-slot="task-cell-edit"
+                            className={cn(CELL_BUTTON_CLASS, "min-w-0 font-medium")}
+                            onClick={() => startEdit("title")}
+                        >
+                            <span className="block max-w-[320px] truncate">{title}</span>
+                        </button>
+                    ) : (
+                        <span className="block max-w-[320px] truncate font-medium" title={title}>
+                            {title}
+                        </span>
+                    )}
                     {subtaskCount > 0 ? (
                         <Badge
                             variant="secondary"
@@ -232,33 +387,196 @@ export function TaskRow({
                 </div>
             </TableCell>
 
+            {/*
+             * The assignees cell is DISPLAY ONLY: it shows the compact avatar stack. Clicking it
+             * requests the assignees edit, which the module answers with the centered assignees
+             * dialog — never an inline picker in this 160px column (a wrapping chip field here is
+             * exactly what made the row tall and clumped before).
+             */}
             <TableCell className="max-w-[160px]">
-                <TaskStatusBadge status={node.status} />
+                {editable ? (
+                    <button
+                        type="button"
+                        aria-label={`Edit assignees for ${title}`}
+                        title={`Edit assignees for ${title}`}
+                        data-slot="task-cell-edit"
+                        className={cn(CELL_BUTTON_CLASS, "cursor-pointer")}
+                        onClick={() => startEdit("assignees")}
+                    >
+                        <AssigneeStack assignees={assignees} />
+                    </button>
+                ) : (
+                    <AssigneeStack assignees={assignees} />
+                )}
             </TableCell>
 
             <TableCell className="max-w-[160px]">
-                <TaskPriorityBadge priority={node.priority} />
+                {editable && isCellEditing("start") ? (
+                    <TaskCellEditor
+                        spec={{ kind: "date", field: "start", value: startDate }}
+                        label="Start date"
+                        taskTitle={title}
+                        onCommit={(request) => commitEdit("start", request)}
+                        onCancel={cancelEdit}
+                    />
+                ) : editable ? (
+                    <button
+                        type="button"
+                        aria-label={`Edit start date for ${title}`}
+                        title={`Edit start date for ${title}`}
+                        data-slot="task-cell-edit"
+                        className={CELL_BUTTON_CLASS}
+                        onClick={() => startEdit("start")}
+                    >
+                        <span className="block truncate text-muted-foreground">
+                            {formatTaskDate(startDate)}
+                        </span>
+                    </button>
+                ) : (
+                    <span
+                        className="block truncate text-muted-foreground"
+                        title={`Start: ${formatTaskDate(startDate)}`}
+                    >
+                        {formatTaskDate(startDate)}
+                    </span>
+                )}
             </TableCell>
 
-            <TableCell className="max-w-[180px]">
-                <AssigneeStack assignees={node.assignees} />
+            <TableCell className="max-w-[160px]">
+                {editable && isCellEditing("due") ? (
+                    <TaskCellEditor
+                        spec={{ kind: "date", field: "end", value: endDate }}
+                        label="Due date"
+                        taskTitle={title}
+                        onCommit={(request) => commitEdit("due", request)}
+                        onCancel={cancelEdit}
+                    />
+                ) : editable ? (
+                    <button
+                        type="button"
+                        aria-label={`Edit due date for ${title}`}
+                        title={`Edit due date for ${title}`}
+                        data-slot="task-cell-edit"
+                        className={CELL_BUTTON_CLASS}
+                        onClick={() => startEdit("due")}
+                    >
+                        <span className="block truncate text-muted-foreground">
+                            {formatTaskDate(endDate)}
+                        </span>
+                    </button>
+                ) : (
+                    <span
+                        className="block truncate text-muted-foreground"
+                        title={`Due: ${formatTaskDate(endDate)}`}
+                    >
+                        {formatTaskDate(endDate)}
+                    </span>
+                )}
             </TableCell>
 
-            <TableCell className="max-w-[190px]">
-                <span className="block truncate text-muted-foreground" title={rangeTitle}>
-                    {rangeText}
-                </span>
+            <TableCell className="max-w-[140px]">
+                {editable && isCellEditing("priority") ? (
+                    <TaskCellEditor
+                        spec={{
+                            kind: "catalog",
+                            target: "priority",
+                            options: catalogs?.priorities ?? [],
+                            value: node.priority_id,
+                        }}
+                        label="Priority"
+                        taskTitle={title}
+                        onCommit={(request) => commitEdit("priority", request)}
+                        onCancel={cancelEdit}
+                    />
+                ) : editable ? (
+                    <button
+                        type="button"
+                        aria-label={`Edit priority for ${title}`}
+                        title={`Edit priority for ${title}`}
+                        data-slot="task-cell-edit"
+                        className={CELL_BUTTON_CLASS}
+                        onClick={() => startEdit("priority")}
+                    >
+                        <TaskPriorityBadge priority={priority} />
+                    </button>
+                ) : (
+                    <TaskPriorityBadge priority={priority} />
+                )}
+            </TableCell>
+
+            <TableCell className="max-w-[140px]">
+                {editable && isCellEditing("status") ? (
+                    <TaskCellEditor
+                        spec={{
+                            kind: "catalog",
+                            target: "status",
+                            options: catalogs?.statuses ?? [],
+                            value: node.status_id,
+                        }}
+                        label="Status"
+                        taskTitle={title}
+                        onCommit={(request) => commitEdit("status", request)}
+                        onCancel={cancelEdit}
+                    />
+                ) : editable ? (
+                    <button
+                        type="button"
+                        aria-label={`Edit status for ${title}`}
+                        title={`Edit status for ${title}`}
+                        data-slot="task-cell-edit"
+                        className={CELL_BUTTON_CLASS}
+                        onClick={() => startEdit("status")}
+                    >
+                        <TaskStatusBadge status={status} />
+                    </button>
+                ) : (
+                    <TaskStatusBadge status={status} />
+                )}
             </TableCell>
 
             {fields.map((field) => {
+                const column = `field-${field.id}`;
                 const answer =
-                    node.custom_values.find((entry) => entry.field_id === field.id)?.value ?? null;
+                    patched(patchFor(column), "custom_values", node.custom_values).find(
+                        (entry) => entry.field_id === field.id,
+                    )?.value ?? null;
                 const text = formatTaskFieldValue(field, answer);
+                const isChoice = field.field_type === "select";
+
                 return (
-                    <TableCell key={field.id} className="max-w-[170px]">
-                        <span className="block truncate text-muted-foreground" title={text}>
-                            {text}
-                        </span>
+                    <TableCell key={field.id} className="max-w-[160px]">
+                        {editable && isCellEditing(column) ? (
+                            <TaskCellEditor
+                                spec={{ kind: "field", field, value: answer }}
+                                label={field.label}
+                                taskTitle={title}
+                                onCommit={(request) => commitEdit(column, request)}
+                                onCancel={cancelEdit}
+                            />
+                        ) : editable ? (
+                            <button
+                                type="button"
+                                aria-label={`Edit ${field.label} for ${title}`}
+                                title={`Edit ${field.label} for ${title}`}
+                                data-slot="task-cell-edit"
+                                className={CELL_BUTTON_CLASS}
+                                onClick={() => startEdit(column)}
+                            >
+                                {isChoice ? (
+                                    <FieldChoiceChip field={field} value={answer} />
+                                ) : (
+                                    <span className="block truncate text-muted-foreground" title={text}>
+                                        {text}
+                                    </span>
+                                )}
+                            </button>
+                        ) : isChoice ? (
+                            <FieldChoiceChip field={field} value={answer} />
+                        ) : (
+                            <span className="block truncate text-muted-foreground" title={text}>
+                                {text}
+                            </span>
+                        )}
                     </TableCell>
                 );
             })}

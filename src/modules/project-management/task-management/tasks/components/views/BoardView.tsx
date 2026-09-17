@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { LayoutGrid, RotateCcw, TriangleAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -104,18 +104,36 @@ interface BoardColumnProps {
     memberNameById: ReadonlyMap<number, string>;
 }
 
+/**
+ * How many cards a column paints before offering a "Show more".
+ *
+ * The column's own scroll region is what stops the PAGE from growing with the largest status, but a
+ * single status can still own hundreds of rows, and painting every one of them up front would put
+ * hundreds of card nodes in the DOM for a column nobody has scrolled yet. Twenty is roughly two
+ * viewport-heights of cards, so the first screen is complete and the remainder stays one click away
+ * — never silently dropped, only not built until asked for. This mirrors the pagination precedent in
+ * `TaskFieldsSection` (whose page cap keeps the settings section's height independent of its rows).
+ */
+const INITIAL_VISIBLE_CARDS = 20;
+
 /** One status column: its catalog label, its card count, and its cards (or the empty line). */
 function BoardColumn({ status, cards, tasksById, memberNameById }: BoardColumnProps) {
+    const [showAllCards, setShowAllCards] = useState(false);
     const countLabel = `${cards.length} task${cards.length === 1 ? "" : "s"}`;
+    const hiddenCount = cards.length - INITIAL_VISIBLE_CARDS;
+    const visibleCards = showAllCards ? cards : cards.slice(0, INITIAL_VISIBLE_CARDS);
 
     return (
         <section
             data-slot="task-board-column"
             data-status-id={status.id}
             aria-label={status.label}
-            className="flex w-72 shrink-0 flex-col gap-3 rounded-2xl border border-border/50 bg-muted/30 p-3"
+            // `max-h-[70vh]` caps the column to a viewport-relative height, so the board is a fixed
+            // frame on a laptop and on a large monitor alike; the row keeps its default
+            // `items-stretch`, so every column still matches the tallest one, capped.
+            className="flex max-h-[70vh] w-72 shrink-0 flex-col gap-3 rounded-2xl border border-border/50 bg-muted/30 p-3"
         >
-            <header className="flex items-center justify-between gap-2">
+            <header className="flex shrink-0 items-center justify-between gap-2">
                 <h3 className="flex min-w-0 items-center gap-2">
                     <CatalogChipDot color={status.color} density="comfortable" />
                     <span className="truncate text-sm font-semibold" title={status.label}>
@@ -138,8 +156,14 @@ function BoardColumn({ status, cards, tasksById, memberNameById }: BoardColumnPr
                     Nothing here
                 </p>
             ) : (
-                <div className="flex flex-col gap-3">
-                    {cards.map((task) => (
+                <div
+                    data-slot="task-board-card-list"
+                    // `min-h-0` is what lets a flex child actually shrink and scroll; without it the
+                    // list refuses to go below its content height and the column blows past its cap.
+                    // The header sits OUTSIDE this box, so it never scrolls away with the cards.
+                    className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain"
+                >
+                    {visibleCards.map((task) => (
                         <BoardCard
                             key={task.id}
                             task={task}
@@ -151,6 +175,18 @@ function BoardColumn({ status, cards, tasksById, memberNameById }: BoardColumnPr
                             memberNameById={memberNameById}
                         />
                     ))}
+
+                    {hiddenCount > 0 && !showAllCards ? (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            data-slot="task-board-show-more"
+                            onClick={() => setShowAllCards(true)}
+                        >
+                            Show {hiddenCount} more
+                        </Button>
+                    ) : null}
                 </div>
             )}
         </section>
