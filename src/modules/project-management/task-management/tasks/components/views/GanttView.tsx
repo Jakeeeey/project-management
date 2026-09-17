@@ -175,24 +175,42 @@ const GANTT_THEME_CSS = `${GANTT_ICON_FONT_CSS}
 `;
 
 /**
- * The current-day marker, applied by the `highlightTime` callback to today's day-scale cell.
+ * The current-day marker, applied by the `highlightTime` callback to today's day columns.
  *
  * `highlightTime` returns a CLASS NAME, not a style, so the name is inert unless a rule for it
  * actually reaches the chart. It is declared here — and prefixed with `.pm-task-gantt` — for the
  * same reason the theme block is: the `<style>` tag is global, so the wrapper scope keeps the rule
  * inside this view's subtree and prevents a leak or a collision anywhere else.
  *
- * The vendor emits the class onto a `.wx-cell` of the sticky day scale, and no vendor rule paints a
- * plain `.wx-cell` background, so this declaration is the one that shows. The tint uses `--primary`
- * to stay inside the app's palette and off the bar status colours (which live on the bars, not the
- * scale). The inset top/bottom edges turn the cell into a clear column marker without touching
- * the bars or the grid, and `--foreground` on the tint stays legible in the dark theme.
+ * The vendor emits the class in TWO places, both fed from the same callback:
+ *
+ * 1. On the `.wx-cell` of the sticky day scale (the day number row). No vendor rule paints a plain
+ *    `.wx-cell` background, so the tint below is the one that shows — this is the marker in the
+ *    header strip.
+ * 2. On a full-height column div inside the vendor's `.wx-gantt-holidays` overlay. That overlay is
+ *    where a shaded weekend column is normally drawn, and it is rendered *before* the bars, so the
+ *    tint sits behind them. The catch: the vendor's own `wx-weekend` class carries the geometry
+ *    (`position:absolute; height:100%`); a bare custom class carries none, so its column div
+ *    collapses to zero height. The second rule supplies that geometry, which is what turns today's
+ *    column into a real full-height tint rather than a header-only cell.
+ *
+ * The tint uses `--primary` to stay inside the app's palette and off the bar status colours (which
+ * live on the bars, not the scale). `--foreground` on the tint stays legible in the dark theme.
  */
 const GANTT_TODAY_CSS = `.pm-task-gantt .${GANTT_TODAY_CLASS} {
-    background-color: hsl(var(--primary) / 0.25);
+    background-color: hsl(var(--primary) / 0.32);
     color: hsl(var(--foreground));
     box-shadow: inset 0 2px 0 hsl(var(--primary)), inset 0 -2px 0 hsl(var(--primary));
     font-weight: 600;
+}
+.pm-task-gantt .wx-gantt-holidays > .${GANTT_TODAY_CLASS} {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    height: 100%;
+    background-color: hsl(var(--primary) / 0.4);
+    box-shadow: inset 1px 0 0 hsl(var(--primary)), inset -1px 0 0 hsl(var(--primary));
+    pointer-events: none;
 }`;
 
 interface GanttErrorBoundaryProps {

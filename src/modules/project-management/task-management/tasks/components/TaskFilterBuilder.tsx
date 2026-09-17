@@ -71,6 +71,30 @@ import type { TaskField } from "../hooks/useTasks";
  * row's value, because an option id from one column is meaningless in another.
  */
 
+/**
+ * The pointer-events repair for the base-ui combobox popups this builder renders inside the Radix
+ * filter modal.
+ *
+ * `TaskCombobox` composes `@/components/ui/combobox`, whose popup is portaled straight to `<body>`
+ * (base-ui's default). A modal Radix `Dialog` sets `document.body { pointer-events: none }` while it
+ * is open, so the page behind the overlay cannot be clicked, and it re-enables only its OWN portal
+ * content with `pointer-events: auto` (see `[data-slot="dialog-content"]`). The combobox popup is a
+ * SIBLING of that portal, not a descendant, so the popup — and every option in it — inherits
+ * `pointer-events: none`. The list still renders and animates, but no option can be clicked: the
+ * pointerdown falls through to the dialog beneath and merely dismisses the popup, which is exactly
+ * the reported "cannot select a value" (the option list is populated, yet a click does nothing).
+ *
+ * Radix's own portals are modal-aware and re-enable themselves — which is why the operator control
+ * (Radix `Select`) works while the field and value comboboxes do not. base-ui's portal is not
+ * modal-aware, and neither the protected `@/components/ui/combobox` primitive nor `TaskCombobox`
+ * may be changed here, so the popup is re-enabled from the one component that knows it lives inside
+ * the modal. The `:has()` guard keeps the rule inert unless this builder is actually mounted, so no
+ * combobox anywhere else in the app is affected.
+ */
+const FILTER_COMBOBOX_PORTAL_CSS = `body:has([data-slot="task-filter-builder"]) [data-slot="combobox-content"] {
+    pointer-events: auto;
+}`;
+
 /** A choice option a value control renders; `TaskCatalogOption` / `TaskFieldOption` satisfy it. */
 export interface FilterBuilderOption {
     readonly id: number;
@@ -322,22 +346,31 @@ function FilterClauseRow({
     };
 
     return (
+        /*
+         * ONE clause = ONE row. A 4-column grid (not a wrapping flex) gives every control a
+         * predictable share and makes wrapping impossible at ANY width: the first three columns are
+         * `minmax(0, …)` flexible tracks (they shrink and their text truncates) and the last is an
+         * `auto` track that hugs the remove button. `min-w-0` on each flexible child lets a long
+         * option label truncate inside its control instead of widening the row or overflowing the
+         * modal. At narrow widths the row stays a single row and the controls shrink — it never falls
+         * back to the old broken two-line wrap.
+         */
         <div
             data-slot="task-filter-row"
-            className="flex flex-wrap items-center gap-2"
+            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_auto] items-center gap-2"
         >
             <TaskCombobox
                 ariaLabel="Filter field"
                 placeholder="Select field"
                 searchPlaceholder="Search fields..."
-                className="w-full sm:w-44"
+                className="w-full min-w-0"
                 options={fieldOptions}
                 value={clause.fieldKey}
                 onValueChange={changeField}
             />
 
             <Select value={clause.operator} onValueChange={(next) => onChange({ ...clause, operator: toOperator(next) })}>
-                <SelectTrigger className="w-full sm:w-36" aria-label="Filter operator">
+                <SelectTrigger className="w-full min-w-0" aria-label="Filter operator">
                     <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -349,7 +382,7 @@ function FilterClauseRow({
                 </SelectContent>
             </Select>
 
-            <div className="w-full sm:w-48">
+            <div className="w-full min-w-0">
                 <FilterValueControl
                     clause={clause}
                     fields={fields}
@@ -368,7 +401,7 @@ function FilterClauseRow({
                 aria-label="Remove filter"
                 title="Remove filter"
                 data-slot="task-filter-remove"
-                className="shrink-0 text-muted-foreground hover:text-destructive"
+                className="shrink-0 justify-self-end text-muted-foreground hover:text-destructive"
                 onClick={onRemove}
             >
                 <Trash2 className="size-4" aria-hidden="true" />
@@ -414,6 +447,8 @@ export function TaskFilterBuilder({
 
     return (
         <div data-slot="task-filter-builder" className="space-y-3">
+            <style>{FILTER_COMBOBOX_PORTAL_CSS}</style>
+
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-1">
                     <Tooltip>
