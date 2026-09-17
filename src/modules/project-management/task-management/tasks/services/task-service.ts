@@ -125,7 +125,7 @@ export class TaskService {
         const [source, catalogs, fields, values] = await Promise.all([
             TaskService.readDepartmentTasks(actor),
             TaskConfigService.listCatalog(actor),
-            TaskFieldService.listFields(actor),
+            TaskFieldService.listEnabledFields(actor),
             TaskFieldService.listValues(actor),
         ]);
         const shaping = buildShaping(catalogs, permissions);
@@ -202,6 +202,14 @@ export class TaskService {
         if (resolvedValues.length > 0) {
             await TaskFieldService.writeValues(actor, taskId, resolvedValues);
         }
+
+        // Columns the body did not answer inherit their default — see `applyDefaults`, which is
+        // create-only so an edit can never re-apply a default over a deliberately cleared answer.
+        await TaskFieldService.applyDefaults(
+            actor,
+            taskId,
+            resolvedValues.map((entry) => entry.field_id),
+        );
 
         const row = await readItem<RawTaskRow>("pm_task", taskId);
         if (row === null) {

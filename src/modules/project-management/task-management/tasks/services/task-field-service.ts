@@ -19,6 +19,7 @@ import {
     TaskFieldTypeSchema,
     type CreateTaskFieldInput,
     type CreateTaskFieldOptionInput,
+    type TaskFieldType,
     type TaskFieldValueInput,
     type UpdateTaskFieldInput,
     type UpdateTaskFieldOptionInput,
@@ -56,8 +57,20 @@ export class TaskFieldError extends Error {
 }
 
 /** A custom column plus its live choices — the shape both the builder and the task list read. */
-export interface TaskFieldClientRow extends ScopedFieldRow {
-    readonly options: readonly ScopedFieldOptionRow[];
+export interface TaskFieldClientRow extends Omit<ScopedFieldRow, "is_enabled" | "default_value"> {
+    /**
+     * Normalised, so no consumer has to know about the pre-DDL shape: a missing `is_enabled` column
+     * reads as enabled (today's behaviour), never as disabled.
+     */
+    readonly is_enabled: boolean;
+    /** The column's default answer, or `null`. A missing column reads as "no default". */
+    readonly default_value: string | null;
+    readonly options: readonly TaskFieldOptionClientRow[];
+}
+
+/** A choice with its colour normalised, so a missing `color` column reads as "no colour". */
+export interface TaskFieldOptionClientRow extends Omit<ScopedFieldOptionRow, "color"> {
+    readonly color: string | null;
 }
 
 /** One task's answer, as the task payload carries it. */
@@ -79,6 +92,27 @@ function sortByOrderThenId<T extends { readonly sort_order: unknown; readonly id
     return [...rows].sort((left, right) => Number(left.sort_order) - Number(right.sort_order) || left.id - right.id);
 }
 
+/**
+ * A `TINYINT(1)` flag that reads as ENABLED when the column is absent.
+ *
+ * `is_enabled` ships in a change of its own, so a deployment can be running this code before the
+ * `ALTER TABLE`. A missing column must therefore mean "enabled" — today's behaviour — and NOT
+ * "disabled", which would hide every existing custom column the moment this code deployed.
+ */
+function readEnabled(value: unknown): boolean {
+    return value === undefined || isTrueFlag(value);
+}
+
+/** A stored TEXT that reads as `null` when absent or blank; a missing pre-DDL column is `null`. */
+function readTextOrNull(value: unknown): string | null {
+    return typeof value === "string" && value !== "" ? value : null;
+}
+
+/** A hex colour from the wire — validated here so a stored bad value cannot reach an inline style. */
+function toHexOrNull(value: unknown): string | null {
+    return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value : null;
+}
+
 export class TaskFieldService {
     /** Every live column of the department with its live choices, ordered by `(sort_order, id)`. */
     static async listFields(actor: ScopedActor): Promise<TaskFieldClientRow[]> {
@@ -89,8 +123,23 @@ export class TaskFieldService {
 
         return fields.map((field) => ({
             ...field,
-            options: options.filter((option) => option.field_id === field.id),
+            is_enabled: readEnabled(field.is_enabled),
+            default_value: readTextOrNull(field.default_value),
+            options: options
+                .filter((option) => option.field_id === field.id)
+                .map((option) => ({ ...option, color: toHexOrNull(option.color) })),
         }));
+    }
+
+    /**
+     * The ENFORCED columns only — what the task list renders and the task form offers.
+     *
+     * The builder reads `listFields` instead, because it must still show a disabled column so it can
+     * be switched back on. A disabled column keeps every stored answer; it simply stops being a
+     * column anyone sees.
+     */
+    static async listEnabledFields(actor: ScopedActor): Promise<TaskFieldClientRow[]> {
+        return (await TaskFieldService.listFields(actor)).filter((field) => field.is_enabled);
     }
 
     /** Every live answer of the department, for the task list to attach to its rows. */
@@ -138,11 +187,14 @@ export class TaskFieldService {
         }
 
         const now = phNow();
+        const defaultValue = TaskFieldService.normaliseDefault(input.field_type, input.default_value, input.label, []);
         await createItem<unknown>("pm_task_field", {
             department_id: actor.departmentId,
             label: input.label,
             field_type: input.field_type,
             sort_order: input.sort_order ?? 0,
+            is_enabled: input.is_enabled === false ? 0 : 1,
+            default_value: defaultValue,
             is_deleted: 0,
             created_at: now,
             created_by: actor.userId,
@@ -151,6 +203,42 @@ export class TaskFieldService {
         });
 
         return TaskFieldService.readCreatedField(actor, input.label);
+    }
+
+    /**
+     * Validates a column's default answer against its own type, or `null` for "no default".
+     *
+     * It reuses `normaliseFieldValue` — the same codec a task answer goes through — so a default can
+     * never be something the column would refuse on a task; the two paths cannot drift. A `select`
+     * default must additionally name a LIVE choice of that same column, which is what stops a default
+     * from dangling after the choice it named is removed. The caller passes the options it has read.
+     */
+    private static normaliseDefault(
+        type: TaskFieldType,
+        raw: string | null | undefined,
+        fieldLabel: string,
+        options: readonly { readonly id: number }[],
+    ): string | null {
+        if (raw === null || raw === undefined) return null;
+
+        let value: string | null;
+        try {
+            value = normaliseFieldValue(type, raw);
+        } catch (error) {
+            if (error instanceof TaskFieldValueError) {
+                throw new TaskFieldError("VALIDATION_FAILED", `"${fieldLabel}" default: ${error.message}`);
+            }
+            throw error;
+        }
+        if (value === null) return null;
+
+        if (type === "select" && !options.some((option) => String(option.id) === value)) {
+            throw new TaskFieldError(
+                "VALIDATION_FAILED",
+                `"${fieldLabel}" default must be one of its own choices`,
+            );
+        }
+        return value;
     }
 
     /** Renames or reorders one live column. The type is never patchable — see the schema's note. */
@@ -172,9 +260,29 @@ export class TaskFieldService {
             }
         }
 
-        const changes: { label?: string; sort_order?: number } = {};
+        const changes: {
+            label?: string;
+            sort_order?: number;
+            is_enabled?: number;
+            default_value?: string | null;
+        } = {};
         if (input.label !== undefined) changes.label = input.label;
         if (input.sort_order !== undefined) changes.sort_order = input.sort_order;
+        if (input.is_enabled !== undefined) changes.is_enabled = input.is_enabled ? 1 : 0;
+
+        if (input.default_value !== undefined) {
+            const type = TaskFieldTypeSchema.safeParse(target.field_type);
+            if (!type.success) {
+                throw new TaskFieldError("INTERNAL_FAIL", `The column "${target.label}" has an unknown type`);
+            }
+            const current = await TaskFieldService.readOptionsOf(actor, target.id);
+            changes.default_value = TaskFieldService.normaliseDefault(
+                type.data,
+                input.default_value,
+                target.label,
+                current,
+            );
+        }
 
         const now = phNow();
         await updateItem<unknown>("pm_task_field", target.id, {
@@ -183,12 +291,17 @@ export class TaskFieldService {
             updated_by: actor.userId,
         });
 
+        const options = await TaskFieldService.readOptionsOf(actor, target.id);
         return {
             ...target,
-            ...changes,
+            label: changes.label ?? target.label,
+            sort_order: changes.sort_order ?? target.sort_order,
+            is_enabled: changes.is_enabled === undefined ? readEnabled(target.is_enabled) : changes.is_enabled === 1,
+            default_value:
+                changes.default_value === undefined ? readTextOrNull(target.default_value) : changes.default_value,
             updated_at: now,
             updated_by: actor.userId,
-            options: await TaskFieldService.readOptionsOf(actor, target.id),
+            options: options.map((option) => ({ ...option, color: toHexOrNull(option.color) })),
         };
     }
 
@@ -221,7 +334,15 @@ export class TaskFieldService {
             );
         }
 
-        return { ...target, is_deleted: 1, updated_at: now, updated_by: actor.userId, options: [] };
+        return {
+            ...target,
+            is_enabled: readEnabled(target.is_enabled),
+            default_value: readTextOrNull(target.default_value),
+            is_deleted: 1,
+            updated_at: now,
+            updated_by: actor.userId,
+            options: [],
+        };
     }
 
     /** Adds a choice to a `select` column. A column of any other type has no choices to offer. */
@@ -241,6 +362,7 @@ export class TaskFieldService {
             field_id: field.id,
             department_id: actor.departmentId,
             label: input.label,
+            color: input.color ?? null,
             sort_order: input.sort_order ?? 0,
             is_deleted: 0,
             created_at: now,
@@ -252,7 +374,7 @@ export class TaskFieldService {
         return TaskFieldService.readCreatedOption(actor, field.id, input.label);
     }
 
-    /** Renames or reorders one live choice. A choice never moves to another column. */
+    /** Renames, recolours or reorders one live choice. A choice never moves to another column. */
     static async updateOption(
         actor: ScopedActor,
         id: string | number,
@@ -271,9 +393,10 @@ export class TaskFieldService {
             }
         }
 
-        const changes: { label?: string; sort_order?: number } = {};
+        const changes: { label?: string; sort_order?: number; color?: string | null } = {};
         if (input.label !== undefined) changes.label = input.label;
         if (input.sort_order !== undefined) changes.sort_order = input.sort_order;
+        if (input.color !== undefined) changes.color = input.color;
 
         const now = phNow();
         await updateItem<unknown>("pm_task_field_option", target.id, {
@@ -299,7 +422,7 @@ export class TaskFieldService {
             updated_by: actor.userId,
         });
 
-        return { ...target, is_deleted: 1, updated_at: now, updated_by: actor.userId };
+        return { ...target, color: toHexOrNull(target.color), is_deleted: 1, updated_at: now, updated_by: actor.userId };
     }
 
     /**
@@ -426,6 +549,33 @@ export class TaskFieldService {
         }
     }
 
+    /**
+     * Writes each enabled column's default onto a NEWLY created task, for the columns the create body
+     * left unanswered.
+     *
+     * Three deliberate restrictions:
+     * - **Only on create.** An update never re-applies defaults, so editing a task can never silently
+     *   overwrite an answer someone deliberately cleared.
+     * - **Only enabled columns**, so a column nobody sees does not quietly populate new tasks.
+     * - **The caller's answer always wins** — a supplied column is skipped, even if it was sent as
+     *   `null` to clear it. A column with no default (`null`) is skipped too, rather than written as a
+     *   blank row, so this cannot manufacture empty answers.
+     */
+    static async applyDefaults(
+        actor: ScopedActor,
+        taskId: number,
+        suppliedFieldIds: readonly number[],
+    ): Promise<void> {
+        const fields = await TaskFieldService.listEnabledFields(actor);
+        const supplied = new Set(suppliedFieldIds);
+
+        const defaults: ResolvedFieldValue[] = fields
+            .filter((field) => !supplied.has(field.id) && field.default_value !== null)
+            .map((field) => ({ field_id: field.id, value: field.default_value }));
+
+        await TaskFieldService.writeValues(actor, taskId, defaults);
+    }
+
     /** The department's live columns, ordered. Every column read funnels through here. */
     private static async readLiveFields(actor: ScopedActor): Promise<ScopedFieldRow[]> {
         const rows = await TaskFieldService.readRowsOrEmpty(() =>
@@ -536,7 +686,12 @@ export class TaskFieldService {
         if (row === undefined) {
             throw new TaskFieldError("INTERNAL_FAIL", "The custom column was created but could not be read back");
         }
-        return { ...row, options: [] };
+        return {
+            ...row,
+            is_enabled: readEnabled(row.is_enabled),
+            default_value: readTextOrNull(row.default_value),
+            options: [],
+        };
     }
 
     /** Reads a just-created choice back by its label, which is unique within its column. */

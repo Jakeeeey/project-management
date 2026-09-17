@@ -97,6 +97,16 @@ export interface ScopedFieldRow {
     readonly created_by: number | null;
     readonly updated_at: string | null;
     readonly updated_by: number | null;
+    /**
+     * `TINYINT(1) NOT NULL DEFAULT 1`, and `default_value` a nullable TEXT.
+     *
+     * Both are `unknown` and OPTIONAL on purpose: the columns arrive in a change of their own, so a
+     * deployment can be running this code before the `ALTER TABLE`. A missing column is therefore a
+     * real shape to handle, and `unknown` forces every reader through the same normalisation instead
+     * of trusting a type the database may not yet satisfy.
+     */
+    readonly is_enabled?: unknown;
+    readonly default_value?: unknown;
 }
 
 /** A live `pm_task_field_option` row as the scoped loader returns it — one choice of a select column. */
@@ -111,6 +121,8 @@ export interface ScopedFieldOptionRow {
     readonly created_by: number | null;
     readonly updated_at: string | null;
     readonly updated_by: number | null;
+    /** `VARCHAR(32)` hex or absent; optional for the same pre-DDL reason as `ScopedFieldRow.is_enabled`. */
+    readonly color?: unknown;
 }
 
 /** A live `pm_task_field_value` row as the scoped loader returns it — one task's answer. */

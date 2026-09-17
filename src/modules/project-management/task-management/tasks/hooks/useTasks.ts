@@ -90,6 +90,8 @@ export type TaskFieldType = "text" | "number" | "date" | "select";
 export interface TaskFieldOption {
     readonly id: number;
     readonly label: string;
+    /** Stored 6-digit hex, or `null` — rendered as an inline style, never a class. */
+    readonly color: string | null;
     readonly sort_order: number;
 }
 
@@ -99,6 +101,10 @@ export interface TaskField {
     readonly label: string;
     readonly field_type: TaskFieldType;
     readonly sort_order: number;
+    /** When false the column is hidden from the task list and form, but keeps every stored answer. */
+    readonly is_enabled: boolean;
+    /** The answer a NEW task inherits, or `null` for none. A Choice column holds the option id. */
+    readonly default_value: string | null;
     readonly options: readonly TaskFieldOption[];
 }
 
@@ -310,6 +316,7 @@ function toFieldOptions(raw: unknown): TaskFieldOption[] {
         options.push({
             id,
             label: typeof entry.label === "string" ? entry.label : "",
+            color: toNullableString(entry.color),
             sort_order: toNumber(entry.sort_order),
         });
     }
@@ -330,6 +337,10 @@ export function parseTaskFields(raw: unknown): TaskField[] {
             label: typeof entry.label === "string" ? entry.label : "",
             field_type: toFieldType(entry.field_type),
             sort_order: toNumber(entry.sort_order),
+            // An absent flag means ENABLED: the column ships in a change of its own, so a payload
+            // from before that DDL must not read as "every column is disabled".
+            is_enabled: entry.is_enabled === undefined ? true : readFlag(entry.is_enabled),
+            default_value: toNullableString(entry.default_value),
             options: toFieldOptions(entry.options),
         });
     }

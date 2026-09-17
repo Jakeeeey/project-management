@@ -52,8 +52,11 @@ export interface UseTaskFieldsResult {
     readonly createField: (input: TaskFieldFormInput) => Promise<boolean>;
     readonly renameField: (id: number, label: string) => Promise<boolean>;
     readonly deleteField: (id: number, label: string) => Promise<boolean>;
-    readonly createOption: (fieldId: number, label: string) => Promise<boolean>;
+    readonly setEnabled: (fieldId: number, enabled: boolean) => Promise<boolean>;
+    readonly setDefaultValue: (fieldId: number, value: string | null) => Promise<boolean>;
+    readonly createOption: (fieldId: number, label: string, color: string | null) => Promise<boolean>;
     readonly renameOption: (optionId: number, label: string) => Promise<boolean>;
+    readonly setOptionColor: (optionId: number, color: string | null) => Promise<boolean>;
     readonly deleteOption: (optionId: number, label: string) => Promise<boolean>;
 }
 
@@ -190,14 +193,34 @@ export function useTaskFields(): UseTaskFieldsResult {
         [request, runMutation],
     );
 
+    const setEnabled = useCallback(
+        async (fieldId: number, enabled: boolean): Promise<boolean> => {
+            const label = fields.find((candidate) => candidate.id === fieldId)?.label ?? "Column";
+            return runMutation(
+                () => request("PATCH", { kind: "field", id: fieldId, is_enabled: enabled }),
+                enabled ? `${label} shown` : `${label} hidden`,
+            );
+        },
+        [fields, request, runMutation],
+    );
+
+    const setDefaultValue = useCallback(
+        async (fieldId: number, value: string | null): Promise<boolean> =>
+            runMutation(
+                () => request("PATCH", { kind: "field", id: fieldId, default_value: value }),
+                "Default updated",
+            ),
+        [request, runMutation],
+    );
+
     const createOption = useCallback(
-        async (fieldId: number, label: string): Promise<boolean> => {
+        async (fieldId: number, label: string, color: string | null): Promise<boolean> => {
             const field = fields.find((candidate) => candidate.id === fieldId);
             const sortOrder =
                 (field?.options.reduce((highest, option) => Math.max(highest, option.sort_order), -1) ?? -1) + 1;
 
             return runMutation(
-                () => request("POST", { kind: "option", field_id: fieldId, label, sort_order: sortOrder }),
+                () => request("POST", { kind: "option", field_id: fieldId, label, color, sort_order: sortOrder }),
                 `${label} added as a choice`,
             );
         },
@@ -207,6 +230,12 @@ export function useTaskFields(): UseTaskFieldsResult {
     const renameOption = useCallback(
         async (optionId: number, label: string): Promise<boolean> =>
             runMutation(() => request("PATCH", { kind: "option", id: optionId, label }), `${label} updated`),
+        [request, runMutation],
+    );
+
+    const setOptionColor = useCallback(
+        async (optionId: number, color: string | null): Promise<boolean> =>
+            runMutation(() => request("PATCH", { kind: "option", id: optionId, color }), "Colour updated"),
         [request, runMutation],
     );
 
@@ -230,8 +259,11 @@ export function useTaskFields(): UseTaskFieldsResult {
         createField,
         renameField,
         deleteField,
+        setEnabled,
+        setDefaultValue,
         createOption,
         renameOption,
+        setOptionColor,
         deleteOption,
     };
 }

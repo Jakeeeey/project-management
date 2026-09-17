@@ -111,7 +111,7 @@ export class TaskItemService {
                 limit: -1,
             }),
             TaskFieldService.listValuesFor(actor, task.id),
-            TaskFieldService.listFields(actor),
+            TaskFieldService.listEnabledFields(actor),
         ]);
 
         return toClientRow(

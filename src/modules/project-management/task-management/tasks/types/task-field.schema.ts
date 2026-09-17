@@ -15,6 +15,14 @@ import { z } from "zod";
  * - No `field_type` on the update schema: changing a column's type would strand every answer already
  *   stored under it (a `text` answer is not a `select` option id), so the type is immutable after
  *   creation. Changing it means adding a new column and removing the old one.
+ *
+ * Two rules worth stating because they are not obvious from the shapes:
+ * - **`default_value` is ONE value per column, not a flag per choice.** A Choice column defaults to
+ *   one of its options, and the id of that option is what `default_value` holds; a text, number or
+ *   date column holds its literal. A per-choice `is_default` flag alongside this would record the
+ *   same fact twice and let the two disagree, so there is deliberately no such flag.
+ * - **`is_enabled` is not `is_deleted`.** Disabling hides a column from the task list and the task
+ *   form while keeping every stored answer, so it can be switched back on; removing retires it.
  */
 
 export const TaskFieldTypeSchema = z.enum(["text", "number", "date", "select"]);
@@ -28,14 +36,31 @@ export const TaskFieldLabelSchema = z
     .min(1, "Label is required")
     .max(100, "Label must be 100 characters or fewer");
 
+/** A 6-digit hex colour (`#16a34a`), rendered as an inline style — never a Tailwind class. */
+export const TaskFieldColorSchema = z
+    .string()
+    .regex(/^#[0-9a-f]{6}$/i, "Colour must be a 6-digit hex value such as #16a34a");
+
 /** Both tables store `sort_order INT NOT NULL DEFAULT 0`; every list orders by `(sort_order, id)`. */
 const SortOrderSchema = z.number().int().min(0, "Sort order must be zero or greater");
 
 /** Any `pm_task_field` / `pm_task_field_option` key in JS number range. */
 const IdentifierSchema = z.number().int().positive();
 
+/**
+ * The two state columns a column carries, both optional so a PATCH can send either alone.
+ *
+ * `default_value` is `null` for "no default" — which is genuinely different from `undefined`, meaning
+ * "leave the stored default alone". That distinction is what lets the form clear a default without
+ * the update path reading a missing key as a clear.
+ */
+const FieldStateSchema = z.object({
+    is_enabled: z.boolean().optional(),
+    default_value: z.string().max(2000, "Default must be 2000 characters or fewer").nullable().optional(),
+});
+
 /** POST body for a new custom column. `sort_order` defaults to 0 server-side when omitted. */
-export const CreateTaskFieldSchema = z.object({
+export const CreateTaskFieldSchema = FieldStateSchema.extend({
     label: TaskFieldLabelSchema,
     field_type: TaskFieldTypeSchema,
     sort_order: SortOrderSchema.optional(),
@@ -48,6 +73,7 @@ export const UpdateTaskFieldSchema = CreateTaskFieldSchema.partial().omit({ fiel
 export const CreateTaskFieldOptionSchema = z.object({
     field_id: IdentifierSchema,
     label: TaskFieldLabelSchema,
+    color: TaskFieldColorSchema.nullable().optional(),
     sort_order: SortOrderSchema.optional(),
 });
 
@@ -55,6 +81,7 @@ export const CreateTaskFieldOptionSchema = z.object({
 export const UpdateTaskFieldOptionSchema = z.object({
     id: IdentifierSchema,
     label: TaskFieldLabelSchema.optional(),
+    color: TaskFieldColorSchema.nullable().optional(),
     sort_order: SortOrderSchema.optional(),
 });
 
