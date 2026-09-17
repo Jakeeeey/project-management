@@ -197,7 +197,7 @@ export interface TaskRowProps {
     dragHandle?: ReactNode;
     /** Slot for the row's overflow menu / actions. */
     actions?: ReactNode;
-    /** The department's custom columns, rendered as extra cells after the due column. */
+    /** The department's custom columns, rendered as extra cells after the status column. */
     fields?: readonly TaskField[];
     /**
      * Forwarded to the underlying `<tr>` so a sortable wrapper (todo 6) can measure and transform

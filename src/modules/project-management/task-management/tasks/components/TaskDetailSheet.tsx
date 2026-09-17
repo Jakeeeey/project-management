@@ -28,7 +28,8 @@ import { AssigneeStack } from "./AssigneeStack";
 import { AttachmentList } from "./AttachmentList";
 import { AttachmentUploader } from "./AttachmentUploader";
 import { TaskActivityTimeline } from "./TaskActivityTimeline";
-import { formatTaskDate, formatTaskFieldValue } from "./TaskRow";
+import { isVisuallyEmptyHtml } from "./description-html";
+import { formatTaskDate } from "./TaskRow";
 import { TaskPriorityBadge, TaskStatusBadge } from "./TaskRowBadges";
 import type { TaskBreadcrumb } from "./TaskFormDialog";
 
@@ -92,7 +93,6 @@ export function TaskDetailSheet({
     parentTrail,
     childCount,
     memberNameById,
-    fields,
     capabilities,
     isSubmitting,
     onEdit,
@@ -220,40 +220,27 @@ export function TaskDetailSheet({
 
                                 <div className="space-y-1">
                                     <p className="text-xs font-medium text-muted-foreground">Description</p>
-                                    {task.description === null ? (
+                                    {isVisuallyEmptyHtml(task.description) ? (
                                         <p className="text-sm text-muted-foreground">No description.</p>
                                     ) : (
-                                        <p className="max-h-[240px] overflow-y-auto whitespace-pre-wrap break-words text-sm">
-                                            {task.description}
-                                        </p>
+                                        <div
+                                            data-slot="task-detail-description"
+                                            className={[
+                                                "max-h-[240px] overflow-y-auto text-sm leading-relaxed break-words",
+                                                "[&_p]:mb-2 [&_p:last-child]:mb-0",
+                                                "[&_strong]:font-semibold [&_em]:italic",
+                                                "[&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5",
+                                                "[&_ol]:mb-2 [&_ol]:list-decimal [&_ol]:pl-5",
+                                                "[&_li]:mb-0.5",
+                                                "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2",
+                                                "[&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold",
+                                                "[&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold",
+                                                "[&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold",
+                                            ].join(" ")}
+                                            dangerouslySetInnerHTML={{ __html: task.description ?? "" }}
+                                        />
                                     )}
                                 </div>
-
-                                {fields.length > 0 ? (
-                                    <div data-slot="task-detail-custom-fields" className="space-y-2">
-                                        <p className="text-xs font-medium text-muted-foreground">Custom fields</p>
-                                        <dl className="grid gap-2 sm:grid-cols-2">
-                                            {fields.map((field) => {
-                                                const answer =
-                                                    task.custom_values.find((entry) => entry.field_id === field.id)
-                                                        ?.value ?? null;
-                                                return (
-                                                    <div
-                                                        key={field.id}
-                                                        className="space-y-0.5 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
-                                                    >
-                                                        <dt className="text-xs font-medium text-muted-foreground">
-                                                            {field.label}
-                                                        </dt>
-                                                        <dd className="break-words text-sm">
-                                                            {formatTaskFieldValue(field, answer)}
-                                                        </dd>
-                                                    </div>
-                                                );
-                                            })}
-                                        </dl>
-                                    </div>
-                                ) : null}
 
                                 <div data-slot="task-detail-attachments" className="space-y-2">
                                     <p className="text-xs font-medium text-muted-foreground">Attachments</p>

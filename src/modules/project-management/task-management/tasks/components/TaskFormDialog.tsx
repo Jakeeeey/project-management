@@ -25,7 +25,6 @@ import {
     FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { MemberAccessItem } from "@/modules/project-management/task-management/access/hooks/useAccess";
 import {
@@ -39,6 +38,8 @@ import type { CreateTaskInput, UpdateTaskInput } from "../types/pm-task.schema";
 import { AssigneeDialog } from "./AssigneeDialog";
 import { AssigneeStack } from "./AssigneeStack";
 import { DATE_RANGE_ERROR_MESSAGE, TaskDateRange, isValidDateRange } from "./TaskDateRange";
+import { TaskDescriptionEditor } from "./TaskDescriptionEditor";
+import { descriptionToStorage } from "./description-html";
 
 /**
  * The create/edit dialog for a task or a sub-task.
@@ -221,7 +222,7 @@ export function TaskFormDialog({
     const handleSubmit = form.handleSubmit(async (values) => {
         const baseFields = {
             title: values.title.trim(),
-            description: values.description?.trim() ? values.description.trim() : null,
+            description: descriptionToStorage(values.description),
             status_id: values.status_id,
             priority_id: values.priority_id,
             start_date: values.start_date,
@@ -336,6 +337,13 @@ export function TaskFormDialog({
                                 )}
                             />
 
+                            {/*
+                             * Rich text (Quill). `TaskDescriptionEditor` owns the client-only editor and
+                             * normalises a visually-empty document to `null` before it reaches the form,
+                             * so an empty editor can never store an HTML shell; submit applies the same
+                             * helper as the final storage boundary. `FormControl` still injects the label
+                             * id/aria, which the editor forwards onto Quill's root (see that component).
+                             */}
                             <FormField
                                 control={form.control}
                                 name="description"
@@ -343,17 +351,11 @@ export function TaskFormDialog({
                                     <FormItem>
                                         <FormLabel>Description</FormLabel>
                                         <FormControl>
-                                            <Textarea
-                                                rows={4}
+                                            <TaskDescriptionEditor
+                                                value={field.value}
+                                                onChange={field.onChange}
+                                                disabled={isSubmitting}
                                                 placeholder="Add any detail the assignees need."
-                                                className="min-h-[120px] resize-none"
-                                                {...field}
-                                                value={field.value ?? ""}
-                                                onChange={(event) =>
-                                                    field.onChange(
-                                                        event.target.value === "" ? null : event.target.value,
-                                                    )
-                                                }
                                             />
                                         </FormControl>
                                         <FormMessage />

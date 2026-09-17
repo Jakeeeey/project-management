@@ -24,6 +24,7 @@ import {
 } from "@/modules/project-management/components/CatalogChip";
 
 import { parseDateOnly } from "../SingleDatePicker";
+import { GANTT_TODAY_CLASS, highlightToday } from "./gantt-today";
 import type { TaskViewProps } from "../../types/task-view";
 import type { TaskListItem } from "../../hooks/useTasks";
 
@@ -172,6 +173,27 @@ const GANTT_THEME_CSS = `${GANTT_ICON_FONT_CSS}
     --wx-sidebar-close-icon: hsl(var(--muted-foreground));
 }
 `;
+
+/**
+ * The current-day marker, applied by the `highlightTime` callback to today's day-scale cell.
+ *
+ * `highlightTime` returns a CLASS NAME, not a style, so the name is inert unless a rule for it
+ * actually reaches the chart. It is declared here — and prefixed with `.pm-task-gantt` — for the
+ * same reason the theme block is: the `<style>` tag is global, so the wrapper scope keeps the rule
+ * inside this view's subtree and prevents a leak or a collision anywhere else.
+ *
+ * The vendor emits the class onto a `.wx-cell` of the sticky day scale, and no vendor rule paints a
+ * plain `.wx-cell` background, so this declaration is the one that shows. The tint uses `--primary`
+ * to stay inside the app's palette and off the bar status colours (which live on the bars, not the
+ * scale). The inset top/bottom edges turn the cell into a clear column marker without touching
+ * the bars or the grid, and `--foreground` on the tint stays legible in the dark theme.
+ */
+const GANTT_TODAY_CSS = `.pm-task-gantt .${GANTT_TODAY_CLASS} {
+    background-color: hsl(var(--primary) / 0.25);
+    color: hsl(var(--foreground));
+    box-shadow: inset 0 2px 0 hsl(var(--primary)), inset 0 -2px 0 hsl(var(--primary));
+    font-weight: 600;
+}`;
 
 interface GanttErrorBoundaryProps {
     children: ReactNode;
@@ -564,7 +586,7 @@ export function GanttView({ items, isLoading, error, onRetry }: TaskViewProps) {
 
     return (
         <section data-slot="task-gantt" aria-label="Task timeline" className="w-full min-w-0 space-y-3">
-            <style>{GANTT_THEME_CSS + barColourRules}</style>
+            <style>{GANTT_THEME_CSS + GANTT_TODAY_CSS + barColourRules}</style>
 
             {/* The library exposes the store action but renders no toolbar of its own, so the month
                 stepper is hosted here. Its buttons use the app's own Lucide icons and are therefore
@@ -573,7 +595,7 @@ export function GanttView({ items, isLoading, error, onRetry }: TaskViewProps) {
                 data-slot="task-gantt-nav"
                 role="group"
                 aria-label="Timeline navigation"
-                className="flex flex-wrap items-center gap-2"
+                className="flex flex-wrap items-center justify-center gap-2"
             >
                 <Button
                     type="button"
@@ -637,6 +659,7 @@ export function GanttView({ items, isLoading, error, onRetry }: TaskViewProps) {
                         start={range.start}
                         end={range.end}
                         cellWidth={GANTT_CELL_WIDTH}
+                        highlightTime={highlightToday}
                         init={handleReady}
                     />
                 </GanttErrorBoundary>

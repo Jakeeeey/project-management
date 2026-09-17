@@ -25,13 +25,12 @@ import { TaskTree } from "./components/TaskTree";
 import { TasksHeaderActions } from "./components/TasksHeaderActions";
 import { TasksToolbar } from "./components/TasksToolbar";
 import {
-    customFieldIdFromKey,
-    isFieldFilterActive,
-    NO_FIELD_FILTER,
-    PRIORITY_FIELD_KEY,
-    STATUS_FIELD_KEY,
-    type FieldFilterClause,
-} from "./components/TaskFieldFilter";
+    anyClauseActive,
+    cloneClausesForApply,
+    rowMatchesClauses,
+    type FilterClause,
+    type SavedTaskFilter,
+} from "./components/task-filter";
 import { TasksViewTabs } from "./components/TasksViewTabs";
 import { BoardView } from "./components/views/BoardView";
 import { CalendarView } from "./components/views/CalendarView";
@@ -42,6 +41,7 @@ import type { CellEditRequest } from "./components/TaskCellEditor";
 import type { TaskRowPatch, TaskRowProps, TaskRowView } from "./components/TaskRow";
 import type { TaskViewProps, TasksViewId } from "./types/task-view";
 import { useAssignees } from "./hooks/useAssignees";
+import { useSavedTaskFilters } from "./hooks/useSavedTaskFilters";
 import {
     useTasks,
     type TaskCatalogOption,
@@ -57,8 +57,8 @@ import type { MoveTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
 /**
  * The Tasks client orchestrator.
  *
- * It owns the page's interaction state — the search box, the three catalog-driven filters, the root
- * page number and the background-refresh flag — and composes the three hooks that carry the data:
+ * It owns the page's interaction state — the search box, the filter-clause array, the root page
+ * number and the background-refresh flag — and composes the hooks that carry the data:
  * `useTasks` (rows, catalogs, capabilities), `useAssignees` (the member directory that names the
  * assignees) and `useTaskTree` (the assembled forest plus expand/collapse state).
  *
@@ -86,83 +86,27 @@ import type { MoveTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
 /** Root tasks per page — the pagination unit is a root task, never a nested row. */
 const PAGE_SIZE = 10;
 
-/** A catalog label is DATA; an option with a blank label still counts as a filter choice. */
-interface TaskFilterState {
-    readonly search: string;
-    readonly statusId: number | null;
-    readonly priorityId: number | null;
-    readonly assigneeId: number | null;
-    /** The "filter by field" clause: a column key plus the value to match. */
-    readonly fieldFilter: FieldFilterClause;
-}
-
 /** Case- and whitespace-insensitive search term, used for the match and the empty copy. */
 function normaliseSearch(value: string): string {
     return value.trim().toLowerCase();
 }
 
 /**
- * Does one row satisfy the "filter by field" clause?
+ * Does one row satisfy the active search and every active clause?
  *
- * The clause is a filter only when the field is picked AND its value is non-blank, so choosing a
- * column alone never drops a row. A custom answer is read as `find(...)?.value ?? null` because a
- * column with NO answer is ABSENT from `custom_values`, not present-with-null.
- *
- * Matching is by the STORED string, which is the same rule the server writes and the row badge
- * resolves: a Choice answer is a single option id, so `String(id) === value` — never a label, which
- * would silently miss a choice whose option was soft-deleted. `text` is a trimmed, case-insensitive
- * substring; `number` compares against `String(Number(value))` (the shape it is stored in); `date`
- * and `select` are exact.
+ * The search term is its own thing — it is not a clause and is never persisted. Clauses combine with
+ * AND, and the per-clause semantics (empty, contains, choice ids, the assignee list) live in
+ * `task-filter.ts`, so this stays the row-level conjunction alone.
  */
-function matchesFieldClause(
-    row: TaskTreeRow,
-    clause: FieldFilterClause,
-    fields: readonly TaskField[],
-): boolean {
-    const { fieldKey, value } = clause;
-    if (fieldKey === null || value === null) return true;
-    const needle = value.trim();
-    if (needle === "") return true;
-
-    if (fieldKey === STATUS_FIELD_KEY) return String(row.status_id) === value;
-    if (fieldKey === PRIORITY_FIELD_KEY) return String(row.priority_id) === value;
-
-    const fieldId = customFieldIdFromKey(fieldKey);
-    if (fieldId === null) return true;
-
-    const stored = row.custom_values.find((entry) => entry.field_id === fieldId)?.value ?? null;
-    if (stored === null || stored === "") return false;
-
-    switch (fields.find((field) => field.id === fieldId)?.field_type) {
-        case "number": {
-            const parsed = Number(needle);
-            return Number.isFinite(parsed) && stored === String(parsed);
-        }
-        case "date":
-        case "select":
-            return stored === value;
-        default:
-            return stored.trim().toLowerCase().includes(needle.toLowerCase());
-    }
-}
-
-/** Does one row satisfy the active search and filters? */
 function rowMatches(
     row: TaskTreeRow,
-    filters: TaskFilterState,
+    search: string,
+    clauses: readonly FilterClause[],
     fields: readonly TaskField[],
 ): boolean {
-    const search = normaliseSearch(filters.search);
-    if (search !== "" && !row.title.toLowerCase().includes(search)) return false;
-    if (filters.statusId !== null && row.status_id !== filters.statusId) return false;
-    if (filters.priorityId !== null && row.priority_id !== filters.priorityId) return false;
-    if (
-        filters.assigneeId !== null &&
-        !row.assignees.some((assignee) => assignee.user_id === filters.assigneeId)
-    ) {
-        return false;
-    }
-    return matchesFieldClause(row, filters.fieldFilter, fields);
+    const term = normaliseSearch(search);
+    if (term !== "" && !row.title.toLowerCase().includes(term)) return false;
+    return rowMatchesClauses(row, clauses, fields);
 }
 
 /**
@@ -174,14 +118,15 @@ function rowMatches(
  */
 function filterTree(
     nodes: readonly TreeNode<TaskTreeRow>[],
-    filters: TaskFilterState,
+    search: string,
+    clauses: readonly FilterClause[],
     fields: readonly TaskField[],
 ): TreeNode<TaskTreeRow>[] {
     const kept: TreeNode<TaskTreeRow>[] = [];
 
     for (const node of nodes) {
-        const children = filterTree(node.children, filters, fields);
-        const isMatch = rowMatches(node, filters, fields);
+        const children = filterTree(node.children, search, clauses, fields);
+        const isMatch = rowMatches(node, search, clauses, fields);
         if (isMatch || children.length > 0) kept.push({ ...node, children });
     }
     return kept;
@@ -425,12 +370,14 @@ export function TasksModule({ userId }: TasksModuleProps) {
         clearError,
     } = useTaskMutations({ onChanged: refresh });
     const { roots, expandedIds, toggleExpand } = useTaskTree(items, memberNameById);
+    const { savedFilters, saveFilter, deleteFilter } = useSavedTaskFilters();
 
     const [search, setSearch] = useState("");
-    const [statusId, setStatusId] = useState<number | null>(null);
-    const [priorityId, setPriorityId] = useState<number | null>(null);
-    const [assigneeId, setAssigneeId] = useState<number | null>(null);
-    const [fieldFilter, setFieldFilter] = useState<FieldFilterClause>(NO_FIELD_FILTER);
+    /**
+     * The active filter clauses, combined with AND. A clause with no field — or a value-taking clause
+     * with no value — is inactive, which is what keeps picking a field from blanking the list.
+     */
+    const [clauses, setClauses] = useState<readonly FilterClause[]>([]);
     const [page, setPage] = useState(1);
 
     const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -497,16 +444,11 @@ export function TasksModule({ userId }: TasksModuleProps) {
         return counts;
     }, [items]);
 
-    const isFiltering =
-        normaliseSearch(search) !== "" ||
-        statusId !== null ||
-        priorityId !== null ||
-        assigneeId !== null ||
-        isFieldFilterActive(fieldFilter);
+    const isFiltering = normaliseSearch(search) !== "" || anyClauseActive(clauses);
 
     const filteredRoots = useMemo(
-        () => filterTree(roots, { search, statusId, priorityId, assigneeId, fieldFilter }, fields),
-        [roots, search, statusId, priorityId, assigneeId, fieldFilter, fields],
+        () => filterTree(roots, search, clauses, fields),
+        [roots, search, clauses, fields],
     );
 
     const autoExpandedIds = useMemo(
@@ -536,32 +478,20 @@ export function TasksModule({ userId }: TasksModuleProps) {
         setPage(1);
     }, []);
 
-    const handleStatusFilterChange = useCallback((value: number | null) => {
-        setStatusId(value);
+    const handleClausesChange = useCallback((next: readonly FilterClause[]) => {
+        setClauses(next);
         setPage(1);
     }, []);
 
-    const handlePriorityFilterChange = useCallback((value: number | null) => {
-        setPriorityId(value);
-        setPage(1);
-    }, []);
-
-    const handleAssigneeFilterChange = useCallback((value: number | null) => {
-        setAssigneeId(value);
-        setPage(1);
-    }, []);
-
-    const handleFieldFilterChange = useCallback((next: FieldFilterClause) => {
-        setFieldFilter(next);
+    /** Applying a saved set restores fresh clause rows, so its ids never collide with the live ones. */
+    const handleApplySavedFilter = useCallback((filter: SavedTaskFilter) => {
+        setClauses(cloneClausesForApply(filter.clauses));
         setPage(1);
     }, []);
 
     const handleClearFilters = useCallback(() => {
         setSearch("");
-        setStatusId(null);
-        setPriorityId(null);
-        setAssigneeId(null);
-        setFieldFilter(NO_FIELD_FILTER);
+        setClauses([]);
         setPage(1);
     }, []);
 
@@ -763,10 +693,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 space-y-1">
                     <h1 className="text-lg font-semibold tracking-tight">Tasks</h1>
-                    <p className="max-w-prose text-sm text-muted-foreground">
-                        Your department&apos;s tasks. Break work into as many sub-tasks as you need, assign
-                        colleagues and track status and due dates.
-                    </p>
                 </div>
 
                 <TasksHeaderActions capabilities={capabilities} onCreateTask={handleCreateTask} />
@@ -817,19 +743,17 @@ export function TasksModule({ userId }: TasksModuleProps) {
             <TasksToolbar
                 searchValue={search}
                 onSearchChange={handleSearchChange}
-                statusFilter={statusId}
-                onStatusFilterChange={handleStatusFilterChange}
-                priorityFilter={priorityId}
-                onPriorityFilterChange={handlePriorityFilterChange}
-                assigneeFilter={assigneeId}
-                onAssigneeFilterChange={handleAssigneeFilterChange}
-                fieldFilter={fieldFilter}
-                onFieldFilterChange={handleFieldFilterChange}
+                clauses={clauses}
+                onClausesChange={handleClausesChange}
                 fields={fields}
                 statuses={catalogs.statuses}
                 priorities={catalogs.priorities}
                 members={members}
                 currentUserId={userId}
+                savedFilters={savedFilters}
+                onSaveFilter={saveFilter}
+                onApplySavedFilter={handleApplySavedFilter}
+                onDeleteSavedFilter={deleteFilter}
                 isFiltering={isFiltering}
                 onClearFilters={handleClearFilters}
                 isRefreshing={isRefreshing}
