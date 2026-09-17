@@ -64,6 +64,8 @@ export interface MemberAccessItem {
     readonly is_granted: boolean;
     readonly grant_id: number | null;
     readonly granted_by: number | null;
+    /** True when this member is the signed-in actor — excluded from the grant picker. */
+    readonly is_self: boolean;
 }
 
 /** The canonical return of this module's only access hook. */
@@ -133,7 +135,7 @@ function fullNameOf(firstName: unknown, lastName: unknown): string {
 }
 
 /** Narrows an arbitrary route payload into the members the UI renders, dropping malformed entries. */
-function toMemberGrantItems(raw: unknown): MemberAccessItem[] {
+function toMemberAccessItems(raw: unknown): MemberAccessItem[] {
     if (!Array.isArray(raw)) return [];
 
     const items: MemberAccessItem[] = [];
@@ -157,6 +159,7 @@ function toMemberGrantItems(raw: unknown): MemberAccessItem[] {
             // A revoke must name the live row, so an id is only carried when a grant actually exists.
             grant_id: isGranted ? grantId : null,
             granted_by: toPositiveInt(entry.granted_by),
+            is_self: readFlag(entry.is_self),
         });
     }
     return items;
@@ -206,7 +209,7 @@ export function useAccess(): UseAccessResult {
             const envelope = await readEnvelope(res);
             if (!res.ok) throw new Error(readMessage(envelope, "Failed to load Edit access"));
 
-            setItems(toMemberGrantItems(envelope.data));
+            setItems(toMemberAccessItems(envelope.data));
             setSetting(toAccessSetting(envelope.setting));
 
             const parsed = CapabilitiesSchema.safeParse(envelope.capabilities);

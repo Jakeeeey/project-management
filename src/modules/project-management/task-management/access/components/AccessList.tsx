@@ -180,7 +180,10 @@ export function AccessList({
     const [pendingRevoke, setPendingRevoke] = useState<MemberAccessItem | null>(null);
 
     const columnCount = canGrant ? BASE_COLUMN_COUNT + 1 : BASE_COLUMN_COUNT;
-    const candidates = items.filter((member) => !member.is_granted);
+    // Nobody grants themselves, so the actor is excluded from the picker: `is_self` comes from the
+    // server (the roster still lists them, because they are a member). The service refuses a
+    // self-grant regardless — this only keeps a moot choice out of the UI.
+    const candidates = items.filter((member) => !member.is_granted && !member.is_self);
     const showError = error !== null && error !== "";
     const isEmpty = !isLoading && !showError && items.length === 0;
 

@@ -88,6 +88,11 @@ export interface MemberAccessRow {
     readonly grant_id: number | null;
     /** The user id recorded when the grant was issued (provenance), or `null`. */
     readonly granted_by: number | null;
+    /**
+     * True when this row is the actor themselves. The roster still lists them — they are a member —
+     * but the grant picker excludes them, because nobody grants themselves access.
+     */
+    readonly is_self: boolean;
 }
 
 export class AccessService {

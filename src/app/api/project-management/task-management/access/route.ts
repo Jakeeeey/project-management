@@ -120,6 +120,9 @@ function failureResponse(scope: string, error: unknown): NextResponse {
         if (error.code === "NOT_FOUND") {
             return NextResponse.json({ success: false, message: error.message }, { status: 404 });
         }
+        if (error.code === "VALIDATION_FAILED") {
+            return NextResponse.json({ success: false, message: error.message }, { status: 400 });
+        }
         console.error(`[access ${scope}] grant operation failed:`, error);
         return NextResponse.json(
             { success: false, message: "The grant operation could not be completed. Please try again later." },
