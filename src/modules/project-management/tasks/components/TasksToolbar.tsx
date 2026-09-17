@@ -182,7 +182,7 @@ export function TasksToolbar({
                         variant="ghost"
                         size="sm"
                         onClick={onClearFilters}
-                        className="min-h-11 sm:min-h-0"
+                        className="min-h-11 md:min-h-0"
                     >
                         <X className="size-4" aria-hidden="true" />
                         Clear
@@ -199,7 +199,7 @@ export function TasksToolbar({
                     disabled={isRefreshing}
                     aria-label="Refresh tasks"
                     title="Refresh tasks"
-                    className="min-h-11 sm:min-h-0"
+                    className="min-h-11 md:min-h-0"
                 >
                     {isRefreshing ? (
                         <Spinner className="size-4" />
@@ -210,7 +210,7 @@ export function TasksToolbar({
                 </Button>
 
                 {canConfigure ? (
-                    <Button asChild variant="outline" size="sm" className="min-h-11 sm:min-h-0">
+                    <Button asChild variant="outline" size="sm" className="min-h-11 md:min-h-0">
                         <Link href="/project-management/settings">
                             <Settings2 className="size-4" aria-hidden="true" />
                             <span className="hidden sm:inline">Statuses and priorities</span>
@@ -219,7 +219,7 @@ export function TasksToolbar({
                 ) : null}
 
                 {canGrant ? (
-                    <Button asChild variant="outline" size="sm" className="min-h-11 sm:min-h-0">
+                    <Button asChild variant="outline" size="sm" className="min-h-11 md:min-h-0">
                         <Link href="/project-management/assignment-grants">
                             <ShieldCheck className="size-4" aria-hidden="true" />
                             <span className="hidden sm:inline">Manage assigners</span>
@@ -228,7 +228,7 @@ export function TasksToolbar({
                 ) : null}
 
                 {canCreate ? (
-                    <Button type="button" size="sm" onClick={onCreateTask} className="min-h-11 sm:min-h-0">
+                    <Button type="button" size="sm" onClick={onCreateTask} className="min-h-11 md:min-h-0">
                         <Plus className="size-4" aria-hidden="true" />
                         New task
                     </Button>

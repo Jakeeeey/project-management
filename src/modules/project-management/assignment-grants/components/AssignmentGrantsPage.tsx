@@ -29,7 +29,7 @@ export function AssignmentGrantsPage() {
     return (
         <section
             data-slot="assignment-grants-page"
-            className="mx-auto w-full max-w-5xl space-y-4 px-4 py-6"
+            className="mx-auto w-full max-w-5xl scroll-pt-16 space-y-4 px-4 py-6 md:scroll-pt-20"
         >
             <div className="space-y-1">
                 <h1 className="text-lg font-semibold tracking-tight">Assignment grants</h1>

@@ -77,7 +77,7 @@ export function CatalogList({
                     size="sm"
                     onClick={onAdd}
                     disabled={isSubmitting}
-                    className="shrink-0 gap-1.5"
+                    className="min-h-11 shrink-0 gap-1.5 md:min-h-0"
                 >
                     <Plus className="size-4" aria-hidden="true" />
                     Add {label.toLowerCase()}

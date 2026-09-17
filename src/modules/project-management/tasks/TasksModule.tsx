@@ -445,7 +445,10 @@ export function TasksModule({ userId }: TasksModuleProps) {
         : "No tasks yet. Create the first task to get started.";
 
     return (
-        <section data-slot="tasks-module" className="mx-auto w-full max-w-7xl space-y-4 px-4 py-6">
+        <section
+            data-slot="tasks-module"
+            className="mx-auto w-full max-w-7xl scroll-pt-16 space-y-4 px-4 py-6 md:scroll-pt-20"
+        >
             <div className="space-y-1">
                 <h1 className="text-lg font-semibold tracking-tight">Tasks</h1>
                 <p className="text-sm text-muted-foreground">

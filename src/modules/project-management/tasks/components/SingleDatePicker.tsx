@@ -147,6 +147,7 @@ export function SingleDatePicker({
                     variant="ghost"
                     size="icon-xs"
                     aria-label={`Clear ${ariaLabel}`}
+                    title={`Clear ${ariaLabel}`}
                     data-slot="single-date-picker-clear"
                     className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     onClick={() => onChange(null)}

@@ -128,8 +128,8 @@ export function MoveToParentDialog({
 
     return (
         <Dialog open={open} onOpenChange={handleOpenChange}>
-            <DialogContent className="sm:max-w-lg">
-                <DialogHeader>
+            <DialogContent className="flex max-h-[85vh] w-[95vw] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-[500px]">
+                <DialogHeader className="border-b px-6 pt-6 pb-4">
                     <DialogTitle>Move “{activeLabel}” to another parent</DialogTitle>
                     <DialogDescription>
                         Search for a destination task, choose where it should sit among that
@@ -137,7 +137,7 @@ export function MoveToParentDialog({
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-4">
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
                     <div className="space-y-2">
                         <span className="text-sm font-medium">Destination parent</span>
                         <Command className="rounded-md border">
@@ -146,7 +146,10 @@ export function MoveToParentDialog({
                                 aria-label="Search destination parent"
                                 autoFocus
                             />
-                            <CommandList>
+                            <CommandList
+                                className="max-h-64 overflow-y-auto overscroll-contain"
+                                onWheel={(event) => event.stopPropagation()}
+                            >
                                 <CommandEmpty>No matching task.</CommandEmpty>
                                 <CommandGroup heading="Destinations">
                                     <CommandItem
@@ -216,7 +219,7 @@ export function MoveToParentDialog({
                     </div>
                 </div>
 
-                <DialogFooter>
+                <DialogFooter className="justify-end border-t bg-muted/20 px-6 py-4">
                     <Button
                         type="button"
                         variant="outline"
@@ -229,6 +232,7 @@ export function MoveToParentDialog({
                         type="button"
                         onClick={handleSubmit}
                         disabled={selection === null || isSubmitting}
+                        className="min-h-11 md:min-h-0"
                     >
                         {isSubmitting ? "Moving…" : "Move here"}
                     </Button>

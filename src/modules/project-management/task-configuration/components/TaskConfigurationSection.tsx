@@ -94,7 +94,10 @@ export function TaskConfigurationSection() {
     };
 
     return (
-        <section data-slot="task-configuration-section" className="mx-auto w-full max-w-3xl px-4 pb-10">
+        <section
+            data-slot="task-configuration-section"
+            className="mx-auto w-full max-w-3xl scroll-pt-16 px-4 pb-10 md:scroll-pt-20"
+        >
             <Card>
                 <CardHeader>
                     <CardTitle>Task configuration</CardTitle>
@@ -186,6 +189,7 @@ export function TaskConfigurationSection() {
                                 void refresh();
                             }}
                             disabled={isLoading || isSubmitting}
+                            className="min-h-11 md:min-h-0"
                         >
                             Refresh
                         </Button>
@@ -225,11 +229,11 @@ export function TaskConfigurationSection() {
                     <AlertDialogFooter>
                         <AlertDialogCancel disabled={isSubmitting}>Cancel</AlertDialogCancel>
                         <AlertDialogAction
+                            variant="destructive"
                             disabled={isSubmitting}
                             onClick={() => {
                                 void handleConfirmDelete();
                             }}
-                            className="bg-destructive text-white hover:bg-destructive/90"
                         >
                             Remove {pendingDelete === null ? "" : kindLabel(pendingDelete.kind).toLowerCase()}
                         </AlertDialogAction>
