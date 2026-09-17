@@ -43,7 +43,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type { MemberGrantItem } from "@/modules/project-management/task-management/access/hooks/useAssignmentGrants";
+import type { MemberAccessItem } from "@/modules/project-management/task-management/access/hooks/useAccess";
 import { CatalogChipDot } from "@/modules/project-management/components/CatalogChip";
 import type { Capabilities } from "@/modules/project-management/types/capabilities";
 
@@ -140,7 +140,7 @@ export interface TaskFormDialogProps {
     /** The department's live catalogs — the selects' only source of options. */
     readonly catalogs: TaskCatalogs;
     /** The department's live members — the assign picker's only source of options. */
-    readonly members: readonly MemberGrantItem[];
+    readonly members: readonly MemberAccessItem[];
     /**
      * The department's custom columns. Each renders its own editor; the values live in local state
      * rather than the Zod schema because the set of columns is dynamic, and the server owns the

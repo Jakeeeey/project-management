@@ -24,13 +24,13 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-import type { MemberGrantItem } from "../hooks/useAssignmentGrants";
+import type { MemberAccessItem } from "../hooks/useAccess";
 
-export interface GrantAccessDialogProps {
+export interface AccessGrantDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     /** Members who do NOT currently hold a grant — the only valid grant targets. */
-    candidates: readonly MemberGrantItem[];
+    candidates: readonly MemberAccessItem[];
     /** True while the grant request is in flight — gates both footer buttons. */
     isSubmitting: boolean;
     /** Emits the chosen member's `user_id`; the caller performs the grant and closes on success. */
@@ -38,7 +38,7 @@ export interface GrantAccessDialogProps {
 }
 
 /**
- * The accessible, searchable path for granting assigner rights.
+ * The accessible, searchable path for granting Edit access.
  *
  * Granted members are removed from the picker (`candidates` arrives already filtered), so the list
  * only ever offers a legal target — there is no way to build a request the route would reject.
@@ -53,13 +53,13 @@ export interface GrantAccessDialogProps {
  * comes before Grant, and Grant is disabled for the whole in-flight window and until a member is
  * chosen.
  */
-export function GrantAccessDialog({
+export function AccessGrantDialog({
     open,
     onOpenChange,
     candidates,
     isSubmitting,
     onSubmit,
-}: GrantAccessDialogProps) {
+}: AccessGrantDialogProps) {
     const [pickerOpen, setPickerOpen] = useState(false);
     const [selectedId, setSelectedId] = useState<number | null>(null);
 
@@ -83,17 +83,18 @@ export function GrantAccessDialog({
         <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogContent className="w-[95vw] gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-[500px]">
                 <DialogHeader className="border-b px-6 pt-6 pb-4">
-                    <DialogTitle className="line-clamp-1">Grant assigner rights</DialogTitle>
+                    <DialogTitle className="line-clamp-1">Give Edit access</DialogTitle>
                     <DialogDescription>
-                        Choose a department member who should be able to assign tasks and edit the status
-                        and priority catalog. You can revoke this later.
+                        Choose a department member who should have Edit access to this department&apos;s
+                        tasks — including assigning people, setting status and priority, and changing
+                        dates and custom fields. You can revoke this later.
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="max-h-[60vh] space-y-2 overflow-y-auto px-6 py-4">
                     {candidates.length === 0 ? (
                         <p className="text-sm text-muted-foreground">
-                            Every member of this department already has assigner rights.
+                            Every member of this department already has Edit access.
                         </p>
                     ) : (
                         <>
@@ -197,7 +198,7 @@ export function GrantAccessDialog({
                         ) : (
                             <>
                                 <UserPlus className="size-4" aria-hidden="true" />
-                                Grant access
+                                Grant Edit access
                             </>
                         )}
                     </Button>

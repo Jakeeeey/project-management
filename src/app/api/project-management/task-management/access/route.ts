@@ -8,36 +8,36 @@ import {
     getPermissionContext,
 } from "@/modules/project-management/services/permission-service";
 import {
-    GrantAssignerSchema,
-    RevokeAssignerSchema,
+    GrantAccessSchema,
+    RevokeAccessSchema,
     UpdateDepartmentSettingSchema,
-} from "@/modules/project-management/task-management/access/types/grant.schema";
-import { GrantError, GrantService } from "@/modules/project-management/task-management/access/services/grant-service";
+} from "@/modules/project-management/task-management/access/types/access.schema";
+import { AccessError, AccessService } from "@/modules/project-management/task-management/access/services/access-service";
 import { DepartmentSettingService } from "@/modules/project-management/task-management/access/services/department-setting-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * The assignment-grants route — the department's policy of *who may assign*, and *who may grant*.
+ * The access route — the department's Edit-access policy and the roster of who holds it.
  *
  * Contract:
  * - `GET` -> 200 `{ success, data, setting, capabilities }` where `data` is the department's live
- *   members (`GrantService.listMembers`), each carrying `is_granted`, `grant_id` and `granted_by`;
+ *   members (`AccessService.listMembers`), each carrying `is_granted`, `grant_id` and `granted_by`;
  *   `setting` is the resolved `{ allow_all_members_grant }` policy (an absent setting row means ON);
  *   and `capabilities` is the coarse session answer (the `Capabilities` block the Tasks and
- *   Task-Configuration routes also return). The Assignment Grants page gates its grant trigger on
+ *   Task-Configuration routes also return). The Access page gates its grant trigger on
  *   `capabilities.canGrant` and mounts the policy switch only on
  *   `capabilities.canManageDepartmentSetting`. Every member may read. A session with no department
  *   is 403; no session is 401.
- * - `POST` body `GrantAssignerSchema` (`{ user_id }`) -> 200 `{ success, data: row }`. `assertCanGrant`
+ * - `POST` body `GrantAccessSchema` (`{ user_id }`) -> 200 `{ success, data: row }`. `assertCanGrant`
  *   runs first — the head, or ANY member while the department's `allow_all_members_grant` policy is
  *   ON (its default) — then the service requires the target to be a live member of the actor's own
  *   department and runs REVIVE-OR-INSERT: `uq_pm_assigner (department_id, user_id)` exists and
  *   ignores `is_deleted`, so a blind INSERT after a revoke raises a duplicate-key error. 200 rather
  *   than 201 deliberately: the operation may revive an existing row, so there is no single "created"
  *   answer.
- * - `DELETE` body `RevokeAssignerSchema` (`{ id }`) -> 200 `{ success, data: row }` with
+ * - `DELETE` body `RevokeAccessSchema` (`{ id }`) -> 200 `{ success, data: row }` with
  *   `is_deleted: 1` (soft delete only, so the next grant can revive it). `assertCanGrant` runs first,
  *   then the grant row is loaded inside the service scoped by `department_id = actor.departmentId`;
  *   a miss — including another department's row — is a 404, never a 403, so a foreign grant is never
@@ -116,7 +116,7 @@ function failureResponse(scope: string, error: unknown): NextResponse {
     if (error instanceof PermissionError) {
         return NextResponse.json({ success: false, message: error.message }, { status: 403 });
     }
-    if (error instanceof GrantError) {
+    if (error instanceof AccessError) {
         if (error.code === "NOT_FOUND") {
             return NextResponse.json({ success: false, message: error.message }, { status: 404 });
         }
@@ -140,7 +140,7 @@ export async function GET(): Promise<NextResponse> {
         const { actor } = resolution;
 
         const [members, permissions, setting] = await Promise.all([
-            GrantService.listMembers(actor),
+            AccessService.listMembers(actor),
             getPermissionContext(actor),
             DepartmentSettingService.getSetting(actor),
         ]);
@@ -182,10 +182,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
         await assertCanGrant(actor);
 
-        const body = await parseBody(req, GrantAssignerSchema);
+        const body = await parseBody(req, GrantAccessSchema);
         if (!body.ok) return body.response;
 
-        const row = await GrantService.grant(actor, body.data);
+        const row = await AccessService.grant(actor, body.data);
         return NextResponse.json({ success: true, data: row });
     } catch (error) {
         return failureResponse("POST", error);
@@ -200,10 +200,10 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
 
         await assertCanGrant(actor);
 
-        const body = await parseBody(req, RevokeAssignerSchema);
+        const body = await parseBody(req, RevokeAccessSchema);
         if (!body.ok) return body.response;
 
-        const row = await GrantService.revoke(actor, body.data.id);
+        const row = await AccessService.revoke(actor, body.data.id);
         return NextResponse.json({ success: true, data: row });
     } catch (error) {
         return failureResponse("DELETE", error);

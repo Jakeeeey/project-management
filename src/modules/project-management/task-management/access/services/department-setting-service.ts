@@ -1,11 +1,11 @@
 import { DirectusRequestError, createItem, readItems, updateItem } from "@/modules/project-management/services/directus-client";
 import type { ScopedActor } from "@/modules/project-management/services/actor-service";
 import { phNow } from "@/modules/project-management/utils/ph-time";
-import type { UpdateDepartmentSettingInput } from "../types/grant.schema";
-import { findExistingSettingRow, resolveAllowAllMembersGrant } from "./grant-policy";
+import type { UpdateDepartmentSettingInput } from "../types/access.schema";
+import { findExistingSettingRow, resolveAllowAllMembersGrant } from "./access-policy";
 
 /**
- * The department-setting service behind the "Allow all members to grant assigner rights" toggle.
+ * The department-setting service behind the "Allow all members to grant Edit access" toggle.
  *
  * `pm_task_department_setting` holds one row per department (`uq_pm_dept_setting (department_id)`)
  * and today carries exactly one decision: `allow_all_members_grant`. The service's whole job is to
@@ -30,7 +30,7 @@ const SETTING_COLLECTION = "pm_task_department_setting";
 
 /**
  * A `pm_task_department_setting` row as this service reads it. The flag stays `unknown` because a
- * `TINYINT(1)` arrives in several run-time shapes — see `isTrueFlag` in `./grant-policy`.
+ * `TINYINT(1)` arrives in several run-time shapes — see `isTrueFlag` in `./access-policy`.
  */
 export interface ScopedSettingRow {
     readonly id: number;

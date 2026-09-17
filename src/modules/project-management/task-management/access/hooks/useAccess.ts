@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { CapabilitiesSchema, type Capabilities } from "@/modules/project-management/types/capabilities";
 
 /**
- * The client hook behind the Assignment Grants page.
+ * The client hook behind the Access page.
  *
  * One route, one shape: every call goes to `/api/project-management/task-management/access` with only
  * `Content-Type: application/json` on the write paths — never an `Authorization` header, because
@@ -30,7 +30,7 @@ import { CapabilitiesSchema, type Capabilities } from "@/modules/project-managem
  * is no single "created" answer. `res.ok` is therefore the whole success test.
  *
  * Errors surface twice on purpose: a toast for the moment, and the persistent `error` state the list
- * renders in an alert. Server messages arrive as `CODE: message` (the `GrantError` shape) and the
+ * renders in an alert. Server messages arrive as `CODE: message` (the `AccessError` shape) and the
  * code prefix is stripped before a human ever sees it.
  */
 
@@ -43,21 +43,21 @@ const UPPERCASE_CODE_PREFIX = /^[A-Z][A-Z0-9_]*:\s*/;
 type HttpMethod = "POST" | "PATCH" | "DELETE";
 
 /**
- * The department's assignment-grant policy, exactly as the route's `setting` field delivers it.
+ * The department's access policy, exactly as the route's `setting` field delivers it.
  * `allow_all_members_grant` is ON by default, including for a department that has no setting row.
  */
-export interface GrantSetting {
+export interface AccessSetting {
     readonly allow_all_members_grant: boolean;
 }
 
 /**
- * One row of the grant list: a live department member plus their active-grant state, exactly as the
+ * One row of the access list: a live department member plus their active-access state, exactly as the
  * route's `data` array delivers it.
  *
- * `grant_id` is the value a revoke names (the `pm_task_assigner` row id, never the user id);
+ * `grant_id` is the value a revoke names (the `pm_task_access` row id, never the user id);
  * `granted_by` is provenance — the user id recorded when the grant was issued, or `null`.
  */
-export interface MemberGrantItem {
+export interface MemberAccessItem {
     readonly user_id: number;
     readonly full_name: string;
     readonly user_email: string | null;
@@ -66,10 +66,10 @@ export interface MemberGrantItem {
     readonly granted_by: number | null;
 }
 
-/** The canonical return of this module's only grants hook. */
-export interface UseAssignmentGrantsResult {
-    /** The department's live members with their grant state — the canonical `items` collection. */
-    readonly items: MemberGrantItem[];
+/** The canonical return of this module's only access hook. */
+export interface UseAccessResult {
+    /** The department's live members with their access state — the canonical `items` collection. */
+    readonly items: MemberAccessItem[];
     readonly isLoading: boolean;
     /** True while a grant or revoke is in flight. */
     readonly isSubmitting: boolean;
@@ -77,10 +77,11 @@ export interface UseAssignmentGrantsResult {
     /** Server-resolved capabilities; `null` until the first successful load. */
     readonly capabilities: Capabilities | null;
     /**
-     * The department's assignment-grant policy as the route resolved it; `null` until the first
-     * successful load. ON means every member may grant and revoke assigner rights.
+     * The department's access policy as the route resolved it; `null` until the first
+     * successful load. ON means every member HAS Edit access; OFF leaves it to the head and the members
+ * granted individually.
      */
-    readonly setting: GrantSetting | null;
+    readonly setting: AccessSetting | null;
     /**
      * Member display names keyed by user id, so `granted_by` (a bare user id on the wire) can be
      * shown as the name of the member who issued the grant without a second request. A granter who
@@ -89,7 +90,7 @@ export interface UseAssignmentGrantsResult {
     readonly memberNameById: ReadonlyMap<number, string>;
     /** The fetcher alias, standardized on `refresh`. */
     readonly refresh: () => Promise<void>;
-    /** Grants assigner rights; resets the roster from the server on success. */
+    /** Grants Edit access; resets the roster from the server on success. */
     readonly grant: (userId: number, label: string) => Promise<boolean>;
     /** Revokes a grant by its grant-row id; resets the roster from the server on success. */
     readonly revoke: (grantId: number, label: string) => Promise<boolean>;
@@ -132,10 +133,10 @@ function fullNameOf(firstName: unknown, lastName: unknown): string {
 }
 
 /** Narrows an arbitrary route payload into the members the UI renders, dropping malformed entries. */
-function toMemberGrantItems(raw: unknown): MemberGrantItem[] {
+function toMemberGrantItems(raw: unknown): MemberAccessItem[] {
     if (!Array.isArray(raw)) return [];
 
-    const items: MemberGrantItem[] = [];
+    const items: MemberAccessItem[] = [];
     for (const entry of raw) {
         if (!isRecord(entry)) continue;
 
@@ -162,7 +163,7 @@ function toMemberGrantItems(raw: unknown): MemberGrantItem[] {
 }
 
 /** Narrows the route's sibling `setting` field; `null` when it is absent or malformed. */
-function toGrantSetting(raw: unknown): GrantSetting | null {
+function toAccessSetting(raw: unknown): AccessSetting | null {
     if (!isRecord(raw)) return null;
     return { allow_all_members_grant: readFlag(raw.allow_all_members_grant) };
 }
@@ -181,7 +182,7 @@ async function readEnvelope(res: Response): Promise<Record<string, unknown>> {
 }
 
 /**
- * Loads the department's members with their grant state and the actor's server-resolved capabilities.
+ * Loads the department's members with their access state and the actor's server-resolved capabilities.
  *
  * The hook fetches once on mount and again after every mutation. `memberNameById` is derived from
  * `items` so the provenance column needs no second request and no `services/` import (which a client
@@ -190,10 +191,10 @@ async function readEnvelope(res: Response): Promise<Record<string, unknown>> {
  * @returns the canonical `{ items, isLoading, isSubmitting, error, capabilities, memberNameById,
  *          refresh, grant, revoke }` surface.
  */
-export function useAssignmentGrants(): UseAssignmentGrantsResult {
-    const [items, setItems] = useState<MemberGrantItem[]>([]);
+export function useAccess(): UseAccessResult {
+    const [items, setItems] = useState<MemberAccessItem[]>([]);
     const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
-    const [setting, setSetting] = useState<GrantSetting | null>(null);
+    const [setting, setSetting] = useState<AccessSetting | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -203,10 +204,10 @@ export function useAssignmentGrants(): UseAssignmentGrantsResult {
         try {
             const res = await fetch(ENDPOINT, { cache: "no-store" });
             const envelope = await readEnvelope(res);
-            if (!res.ok) throw new Error(readMessage(envelope, "Failed to load the assignment grants"));
+            if (!res.ok) throw new Error(readMessage(envelope, "Failed to load Edit access"));
 
             setItems(toMemberGrantItems(envelope.data));
-            setSetting(toGrantSetting(envelope.setting));
+            setSetting(toAccessSetting(envelope.setting));
 
             const parsed = CapabilitiesSchema.safeParse(envelope.capabilities);
             setCapabilities(parsed.success ? parsed.data : null);
@@ -214,7 +215,7 @@ export function useAssignmentGrants(): UseAssignmentGrantsResult {
         } catch (err: unknown) {
             const message = stripCode(err instanceof Error ? err.message : "An unknown error occurred");
             setError(message);
-            toast.error("Assignment grants unavailable", { description: message });
+            toast.error("Edit access unavailable", { description: message });
         } finally {
             if (showLoading) setIsLoading(false);
         }
@@ -250,7 +251,7 @@ export function useAssignmentGrants(): UseAssignmentGrantsResult {
             } catch (err: unknown) {
                 const message = stripCode(err instanceof Error ? err.message : "An unknown error occurred");
                 setError(message);
-                toast.error("Assignment grants", { description: message });
+                toast.error("Edit access", { description: message });
                 return false;
             } finally {
                 setIsSubmitting(false);
@@ -261,13 +262,13 @@ export function useAssignmentGrants(): UseAssignmentGrantsResult {
 
     const grant = useCallback(
         async (userId: number, label: string): Promise<boolean> =>
-            runMutation(() => request("POST", { user_id: userId }), `${label} can now assign tasks`),
+            runMutation(() => request("POST", { user_id: userId }), `${label} can now edit tasks`),
         [request, runMutation],
     );
 
     const revoke = useCallback(
         async (grantId: number, label: string): Promise<boolean> =>
-            runMutation(() => request("DELETE", { id: grantId }), `${label} can no longer assign tasks`),
+            runMutation(() => request("DELETE", { id: grantId }), `${label} can no longer edit tasks`),
         [request, runMutation],
     );
 
@@ -276,8 +277,8 @@ export function useAssignmentGrants(): UseAssignmentGrantsResult {
             runMutation(
                 () => request("PATCH", { allow_all_members_grant: enabled }),
                 enabled
-                    ? "Every department member can now grant assigner rights"
-                    : "Only the department head can now grant assigner rights",
+                    ? "Every department member can now grant Edit access"
+                    : "Only the department head can now grant Edit access",
             ),
         [request, runMutation],
     );

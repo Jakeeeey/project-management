@@ -1,21 +1,21 @@
 /**
- * The pure core of the assignment-grant policy.
+ * The pure core of the access policy.
  *
- * `pm_task_assigner` carries `UNIQUE (department_id, user_id)`, and that key ignores `is_deleted`.
+ * `pm_task_access` carries `UNIQUE (department_id, user_id)`, and that key ignores `is_deleted`.
  * Two consequences decide every write, and both are total functions here so they can be asserted
  * without a database:
  *
  * - every re-grant path MUST revive the existing row rather than insert another one, or the INSERT
- *   raises a duplicate-key error — `findExistingGrantRow` is that revive-or-insert decision, searched
+ *   raises a duplicate-key error — `findExistingAccessRow` is that revive-or-insert decision, searched
  *   over live AND soft-deleted rows;
  * - the member list's "active grant" state reads LIVE rows only, so a revoked row reads as "not
  *   granted" while the row itself survives, exactly so the next grant can revive it —
- *   `grantStateByUserId` / `mergeMemberGrantState` are that join.
+ *   `accessStateByUserId` / `mergeMemberAccessState` are that join.
  *
  * `isTrueFlag` reads a `TINYINT(1)` in every shape this Directus instance answers with. That is not
  * defensive decoration: the live `user.is_deleted` column answers as the Node-Buffer JSON shape
  * `{ type: "Buffer", data: [0] }`, so a predicate that understood only numbers would quietly list
- * soft-deleted members. `pm_task_assigner.is_deleted` is written by this module and answers as a
+ * soft-deleted members. `pm_task_access.is_deleted` is written by this module and answers as a
  * plain number, but it is read through the same total function.
  *
  * The department's `allow_all_members_grant` policy is resolved here too: `resolveAllowAllMembersGrant`
@@ -28,26 +28,26 @@
  */
 
 /**
- * The minimum a `pm_task_assigner` row must expose to be judged. `unknown` on the runtime-shaped
+ * The minimum a `pm_task_access` row must expose to be judged. `unknown` on the runtime-shaped
  * fields on purpose: a row coming from Directus is shaped at runtime (a flag can be a number, a
  * string, a boolean or a Buffer), and the predicates must stay total for every shape.
  */
-export interface GrantRow {
+export interface AccessRow {
     readonly id: number;
     readonly user_id: unknown;
     readonly is_deleted: unknown;
     readonly granted_by?: unknown;
 }
 
-/** The minimum a department member row must expose to be joined with its grant state. */
-export interface GrantMemberRow {
+/** The minimum a department member row must expose to be joined with its access state. */
+export interface AccessMemberRow {
     readonly user_id: unknown;
     readonly is_deleted: unknown;
 }
 
-/** A member's active-grant state — one row of the grant list. */
-export interface MemberGrantState {
-    /** A LIVE `pm_task_assigner` row exists for this member in this department. */
+/** A member's active-access state — one row of the access list. */
+export interface MemberAccessState {
+    /** A LIVE `pm_task_access` row exists for this member in this department. */
     readonly is_granted: boolean;
     /** The live grant row's id (the value a revoke names), or `null` when not granted. */
     readonly grant_id: number | null;
@@ -56,15 +56,15 @@ export interface MemberGrantState {
 }
 
 /** The coded failure kinds the grant service throws. Routes map NOT_FOUND to 404, else 500. */
-export type GrantErrorCode = "NOT_FOUND" | "INTERNAL_FAIL";
+export type AccessErrorCode = "NOT_FOUND" | "VALIDATION_FAILED" | "INTERNAL_FAIL";
 
-/** A grant-policy refusal, carrying the `CODE: message` shape conventions section 13 pins. */
-export class GrantError extends Error {
-    readonly code: GrantErrorCode;
+/** A access-policy refusal, carrying the `CODE: message` shape conventions section 13 pins. */
+export class AccessError extends Error {
+    readonly code: AccessErrorCode;
 
-    constructor(code: GrantErrorCode, message: string) {
+    constructor(code: AccessErrorCode, message: string) {
         super(`${code}: ${message}`);
-        this.name = "GrantError";
+        this.name = "AccessError";
         this.code = code;
     }
 }
@@ -127,7 +127,7 @@ export function toPositiveInt(value: unknown): number | null {
 }
 
 /** The live (not soft-deleted) grant rows of the given set. */
-export function liveGrantRows<T extends GrantRow>(rows: readonly T[]): T[] {
+export function liveAccessRows<T extends AccessRow>(rows: readonly T[]): T[] {
     return rows.filter((row) => !isTrueFlag(row.is_deleted));
 }
 
@@ -139,7 +139,7 @@ export function liveGrantRows<T extends GrantRow>(rows: readonly T[]): T[] {
  * the unique key already owns; if duplicates ever slipped past it, the lowest id wins so the
  * decision stays deterministic.
  */
-export function findExistingGrantRow<T extends GrantRow>(rows: readonly T[], userId: number): T | null {
+export function findExistingAccessRow<T extends AccessRow>(rows: readonly T[], userId: number): T | null {
     let match: T | null = null;
     for (const row of rows) {
         if (toPositiveInt(row.user_id) !== userId) continue;
@@ -149,20 +149,20 @@ export function findExistingGrantRow<T extends GrantRow>(rows: readonly T[], use
 }
 
 /** The state of a member with no live grant row. */
-export const UNGRANTED_STATE: MemberGrantState = {
+export const UNGRANTED_STATE: MemberAccessState = {
     is_granted: false,
     grant_id: null,
     granted_by: null,
 };
 
 /**
- * The active-grant state per member id, LIVE rows only: a revoked (soft-deleted) row reads as "not
- * granted" here while staying findable by `findExistingGrantRow` for the revive path. A malformed
+ * The active-access state per member id, LIVE rows only: a revoked (soft-deleted) row reads as "not
+ * granted" here while staying findable by `findExistingAccessRow` for the revive path. A malformed
  * row id or user id is skipped rather than guessed at.
  */
-export function grantStateByUserId(rows: readonly GrantRow[]): Map<number, MemberGrantState> {
-    const states = new Map<number, MemberGrantState>();
-    const live = [...liveGrantRows(rows)].sort((a, b) => a.id - b.id);
+export function accessStateByUserId(rows: readonly AccessRow[]): Map<number, MemberAccessState> {
+    const states = new Map<number, MemberAccessState>();
+    const live = [...liveAccessRows(rows)].sort((a, b) => a.id - b.id);
 
     for (const row of live) {
         const userId = toPositiveInt(row.user_id);
@@ -177,7 +177,7 @@ export function grantStateByUserId(rows: readonly GrantRow[]): Map<number, Membe
 }
 
 /**
- * The default a department's assignment-grant policy resolves to when no setting row exists yet:
+ * The default a department's access policy resolves to when no setting row exists yet:
  * ON, so every department — existing ones included — starts with granting open to all members and
  * needs no backfill or migration. `pm_task_department_setting` carries `DEFAULT 1` too, so the
  * stored default and the resolved default agree.
@@ -220,17 +220,17 @@ export function findExistingSettingRow<T extends { readonly id: number }>(rows: 
 
 /**
  * Joins the department's member rows with the department's grant rows: every returned member carries
- * its active-grant state, and a soft-deleted member is dropped entirely. A grant row for a user who
+ * its active-access state, and a soft-deleted member is dropped entirely. A grant row for a user who
  * is not among the members contributes nothing, so the list can never surface an outsider — the
  * department filter on both queries is what keeps another department's users out; this join is what
  * keeps the state honest.
  */
-export function mergeMemberGrantState<M extends GrantMemberRow>(
+export function mergeMemberAccessState<M extends AccessMemberRow>(
     members: readonly M[],
-    grants: readonly GrantRow[],
-): Array<M & MemberGrantState> {
-    const states = grantStateByUserId(grants);
-    const merged: Array<M & MemberGrantState> = [];
+    grants: readonly AccessRow[],
+): Array<M & MemberAccessState> {
+    const states = accessStateByUserId(grants);
+    const merged: Array<M & MemberAccessState> = [];
 
     for (const member of members) {
         if (isTrueFlag(member.is_deleted)) continue;

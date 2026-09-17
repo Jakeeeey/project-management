@@ -27,13 +27,14 @@ export const dynamic = "force-dynamic";
  * - `GET` -> 200 `{ success, data: row }` — the same wire row the list route returns: stored
  *   columns, live nested assignees/attachments, status/priority labels resolved from live catalog
  *   rows (unresolved -> `null`), and the server-computed `can_delete`.
- * - `PATCH` body `UpdateTaskSchema` -> 200 `{ success, data: row }`. `assertCanEdit` runs first
- *   (every member may edit); only changed fields plus `updated_at` / `updated_by` are written; a
+ * - `PATCH` body `UpdateTaskSchema` -> 200 `{ success, data: row }`. `assertCanEdit(actor, task)` runs
+ *   first and is ROW-AWARE — head or granted access, else the task's creator — matching the row's
+ *   `can_edit` flag exactly; only changed fields plus `updated_at` / `updated_by` are written; a
  *   supplied `status_id` / `priority_id` must be a live catalog row of the actor's department (400
  *   otherwise, and not re-validated when unchanged); `end_date >= start_date` is checked on the
  *   merged pair. `parent_id` cannot be patched — re-parenting belongs to the move route.
  * - `DELETE` -> 200 `{ success, data: { id, deleted_ids } }`. `assertCanDelete(actor, task)` is
- *   row-aware (head or granted assigner, else the task's creator — the exact predicate behind the
+ *   row-aware (head or granted member, else the task's creator — the exact predicate behind the
  *   row's `can_delete`), then the whole subtree is soft-deleted leaf-first: best-effort, never
  *   claimed atomic, and a partial failure is a 500 rather than a success.
  *
@@ -174,7 +175,7 @@ export async function PATCH(
         const task = await loadTaskScoped(actor, id);
         if (task === null) return notFound("Task not found");
 
-        await assertCanEdit(actor);
+        await assertCanEdit(actor, task);
 
         const body = await parseBody(req, UpdateTaskSchema);
         if (!body.ok) return body.response;

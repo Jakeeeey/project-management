@@ -442,17 +442,19 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 >
                     <Eye className="size-4" aria-hidden="true" />
                 </Button>
-                <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={moveLabel}
-                    title={moveLabel}
-                    data-slot="task-row-move"
-                    onClick={() => setMovingTaskId(node.id)}
-                >
-                    <CornerDownRight className="size-4" aria-hidden="true" />
-                </Button>
+                {node.can_edit ? (
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={moveLabel}
+                        title={moveLabel}
+                        data-slot="task-row-move"
+                        onClick={() => setMovingTaskId(node.id)}
+                    >
+                        <CornerDownRight className="size-4" aria-hidden="true" />
+                    </Button>
+                ) : null}
             </div>
         );
     }, []);

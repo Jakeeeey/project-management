@@ -39,10 +39,12 @@ import type { TaskBreadcrumb } from "./TaskFormDialog";
  * carries the three actions the actor is actually allowed to take.
  *
  * Permission gating is deliberately uneven, matching the Permission Matrix:
- * - Edit and Add sub-task follow the server's `capabilities` (`canEdit` / `canCreate`).
+ * - Add sub-task follows the server's coarse `capabilities.canCreate`.
+ * - Edit follows the ROW's own server-computed **`can_edit`** — head, granted access, or this task's
+ *   creator — never the session-level `capabilities.canEdit`, which is only the coarse answer.
  * - Delete follows the ROW's own server-computed **`can_delete`** — never a session flag and never a
  *   `created_by === currentUserId` comparison, because the server already resolved headship, the
- *   assigner grant and the creator exception into that one boolean.
+ *   access grant and the creator exception into that one boolean.
  *
  * Assignments are NOT edited here: the assign picker lives in the form dialog behind
  * `capabilities.canAssign`, so this surface never offers an assignment a plain member cannot make.
@@ -121,8 +123,8 @@ export function TaskDetailSheet({
         [task, memberNameById],
     );
 
-    const canEdit = capabilities?.canEdit === true;
     const canCreate = capabilities?.canCreate === true;
+    const canEdit = task?.can_edit === true;
     const canDelete = task?.can_delete === true;
 
     const handleDelete = async (): Promise<void> => {

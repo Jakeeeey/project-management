@@ -28,23 +28,34 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
-import type { MemberGrantItem } from "../hooks/useAssignmentGrants";
-import { GrantAccessDialog } from "./GrantAccessDialog";
+import type { MemberAccessItem } from "../hooks/useAccess";
+import { AccessGrantDialog } from "./AccessGrantDialog";
 
 /**
  * The three columns every viewer gets: member, access state, and the grant's provenance. The
- * actions column is appended ONLY when the actor may grant, so a non-head never has the grant
- * control in the DOM — not hidden, not disabled.
+ * actions column is appended ONLY when the actor may grant (`canGrant`), so a member who cannot
+ * grant never has the control in the DOM — not hidden, not disabled.
+ *
+ * `canGrant` is policy-dependent: while "Allow all members Edit access" is ON, every member may
+ * grant — but the whole card is then muted and `inert` (see `policyOpen`), because a per-member
+ * grant is moot once the policy already gives everybody access.
  */
 const BASE_COLUMN_COUNT = 3;
 
-export interface GrantListProps {
-    items: readonly MemberGrantItem[];
+export interface AccessListProps {
+    items: readonly MemberAccessItem[];
     isLoading: boolean;
     isSubmitting: boolean;
     error: string | null;
     /** Server-resolved `capabilities.canGrant` — read from the route, never derived on the client. */
     canGrant: boolean;
+    /**
+     * True while the department's "Allow all members Edit access" policy is ON. Every member then
+     * already holds Edit access, so the whole per-member control is moot: the card is muted and
+     * taken out of interaction rather than removed, so the roster stays readable while making it
+     * unmistakable that there is nothing to grant here.
+     */
+    policyOpen: boolean;
     /** Member names by user id, so `granted_by` can be shown as a person rather than a number. */
     memberNameById: ReadonlyMap<number, string>;
     onGrant: (userId: number, label: string) => Promise<boolean>;
@@ -67,7 +78,7 @@ function initialsOf(name: string): string {
  * empty cell, because "no grant" is a legitimate state worth naming.
  */
 function provenanceLabel(
-    member: MemberGrantItem,
+    member: MemberAccessItem,
     memberNameById: ReadonlyMap<number, string>,
 ): string {
     if (!member.is_granted) return "Not granted";
@@ -75,13 +86,19 @@ function provenanceLabel(
     return memberNameById.get(member.granted_by) ?? `User #${member.granted_by}`;
 }
 
-/** The access-state pill, shared by the wide table row and the narrow-viewport card. */
-function GrantStateBadge({ isGranted }: { isGranted: boolean }) {
-    if (isGranted) {
+/**
+ * The access-state pill, shared by the wide table row and the narrow-viewport card.
+ *
+ * It reads EFFECTIVE access, not the grant row: while the department policy is ON every member has
+ * Edit access whether or not a grant exists, so rendering the raw grant state would tell the head
+ * "Cannot edit" about people who can. The caller ORs the policy in.
+ */
+function AccessStateBadge({ hasEdit }: { hasEdit: boolean }) {
+    if (hasEdit) {
         return (
             <Badge variant="secondary" className="max-w-full truncate" data-slot="grant-state">
                 <ShieldCheck aria-hidden="true" />
-                Can assign
+                Can edit
             </Badge>
         );
     }
@@ -92,22 +109,22 @@ function GrantStateBadge({ isGranted }: { isGranted: boolean }) {
             className="max-w-full truncate text-muted-foreground"
             data-slot="grant-state"
         >
-            Cannot assign
+            Cannot edit
         </Badge>
     );
 }
 
 interface RevokeButtonProps {
-    member: MemberGrantItem;
+    member: MemberAccessItem;
     isSubmitting: boolean;
-    onRevoke: (member: MemberGrantItem) => void;
+    onRevoke: (member: MemberAccessItem) => void;
     /** The card surface passes `min-h-11` so the touch target reaches 44px; the table does not. */
     className?: string;
 }
 
 /** The ONE row action, shared by both surfaces so the card fallback cannot drift from the table. */
 function RevokeButton({ member, isSubmitting, onRevoke, className }: RevokeButtonProps) {
-    const label = `Revoke assigner rights from ${member.full_name}`;
+    const label = `Revoke Edit access from ${member.full_name}`;
 
     return (
         <Button
@@ -127,9 +144,9 @@ function RevokeButton({ member, isSubmitting, onRevoke, className }: RevokeButto
 }
 
 /**
- * The Assignment Grants roster.
+ * The Access roster.
  *
- * Renders the department's live members with their grant state and, when the server said
+ * Renders the department's live members with their access state and, when the server said
  * `capabilities.canGrant`, the actions that change it. `canGrant` is a prop read straight off the
  * route payload: the component never inspects a session, a role or a user id — which is why a
  * non-head's page simply has no grant trigger to find.
@@ -143,23 +160,24 @@ function RevokeButton({ member, isSubmitting, onRevoke, className }: RevokeButto
  * a department with no members, and a persistent destructive alert for a failed load (the toast is
  * an addition, never the only surface).
  *
- * Granting goes through `GrantAccessDialog` (a searchable, capped member picker) and revoking through
+ * Granting goes through `AccessGrantDialog` (a searchable, capped member picker) and revoking through
  * a confirm, so both writes are deliberate. Only the live grant row's id is ever used to revoke, and
  * that id comes from the route's per-member `grant_id`.
  */
-export function GrantList({
+export function AccessList({
     items,
     isLoading,
     isSubmitting,
     error,
     canGrant,
+    policyOpen,
     memberNameById,
     onGrant,
     onRevoke,
     onRefresh,
-}: GrantListProps) {
+}: AccessListProps) {
     const [isGrantDialogOpen, setIsGrantDialogOpen] = useState(false);
-    const [pendingRevoke, setPendingRevoke] = useState<MemberGrantItem | null>(null);
+    const [pendingRevoke, setPendingRevoke] = useState<MemberAccessItem | null>(null);
 
     const columnCount = canGrant ? BASE_COLUMN_COUNT + 1 : BASE_COLUMN_COUNT;
     const candidates = items.filter((member) => !member.is_granted);
@@ -180,15 +198,29 @@ export function GrantList({
 
     return (
         <div
-            data-slot="grant-list"
-            className="overflow-hidden rounded-2xl border border-border/50 bg-card shadow-sm"
+            data-slot="access-list"
+            data-policy-open={policyOpen}
+            aria-disabled={policyOpen}
+            inert={policyOpen}
+            className={cn(
+                "overflow-hidden rounded-2xl border border-border/50 bg-card shadow-sm",
+                policyOpen && "pointer-events-none opacity-50 select-none",
+            )}
         >
             <div className="flex flex-col gap-3 border-b bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                     <h2 className="text-sm font-medium">Department members</h2>
                     <p className="text-xs text-muted-foreground">
-                        Everyone in your department and whether they can assign tasks to others.
-                    </p>
+                                Everyone in your department and whether they have Edit access
+                                — including assigning people, setting status and priority, and changing
+                                dates and custom fields.
+                            </p>
+                            {policyOpen ? (
+                                <p className="text-xs text-muted-foreground">
+                                    Every member already has Edit access, so there is nothing to grant
+                                    individually. Turn the switch off to grant it member by member.
+                                </p>
+                            ) : null}
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">
@@ -212,8 +244,8 @@ export function GrantList({
                             disabled={isSubmitting || candidates.length === 0}
                             title={
                                 candidates.length === 0
-                                    ? "Every member already has assigner rights"
-                                    : "Grant assigner rights to a member"
+                            ? "Every member already has Edit access"
+                            : "Grant Edit access to a member"
                             }
                             className="min-h-11 md:min-h-0"
                         >
@@ -228,7 +260,7 @@ export function GrantList({
                 <div className="px-4 py-3">
                     <Alert variant="destructive">
                         <AlertTriangle className="size-4" aria-hidden="true" />
-                        <AlertTitle>Assignment grants error</AlertTitle>
+                        <AlertTitle>Access error</AlertTitle>
                         <AlertDescription>{error}</AlertDescription>
                     </Alert>
                 </div>
@@ -237,7 +269,7 @@ export function GrantList({
             {/* Narrow viewports: the same roster, fields and action as a stacked card list. */}
             <div className="xl:hidden">
                 {isLoading ? (
-                    <ul data-slot="grant-list-card-skeleton" className="divide-y divide-border">
+                    <ul data-slot="access-list-card-skeleton" className="divide-y divide-border">
                         {Array.from({ length: 4 }).map((_, row) => (
                             <li key={`grant-card-skeleton-${row}`} className="space-y-2 p-4">
                                 <div className="flex items-center gap-3">
@@ -267,7 +299,7 @@ export function GrantList({
                         </p>
                     </div>
                 ) : (
-                    <ul data-slot="grant-list-card" className="divide-y divide-border">
+                    <ul data-slot="access-list-card" className="divide-y divide-border">
                         {items.map((member) => (
                             <li key={member.user_id} className="space-y-2 p-4">
                                 <div className="flex items-start gap-3">
@@ -289,7 +321,7 @@ export function GrantList({
                                             </p>
                                         ) : null}
                                     </div>
-                                    <GrantStateBadge isGranted={member.is_granted} />
+                                    <AccessStateBadge hasEdit={member.is_granted || policyOpen} />
                                 </div>
 
                                 <p className="break-words text-xs text-muted-foreground">
@@ -334,7 +366,7 @@ export function GrantList({
                     <TableBody>
                         {isLoading ? (
                             Array.from({ length: 4 }).map((_, row) => (
-                                <TableRow key={`grant-skeleton-${row}`} data-slot="grant-list-skeleton">
+                                <TableRow key={`grant-skeleton-${row}`} data-slot="access-list-skeleton">
                                     {/* One cell per entry in `BASE_COLUMN_COUNT`, plus the gated actions cell. */}
                                     <TableCell>
                                         <div className="flex items-center gap-3">
@@ -359,7 +391,7 @@ export function GrantList({
                                 </TableRow>
                             ))
                         ) : showError ? (
-                            <TableRow data-slot="grant-list-error">
+                            <TableRow data-slot="access-list-error">
                                 <TableCell colSpan={columnCount} className="h-32 text-center">
                                     <p className="text-sm text-muted-foreground">
                                         The member list could not be loaded.
@@ -367,7 +399,7 @@ export function GrantList({
                                 </TableCell>
                             </TableRow>
                         ) : isEmpty ? (
-                            <TableRow data-slot="grant-list-empty">
+                            <TableRow data-slot="access-list-empty">
                                 <TableCell colSpan={columnCount} className="h-48 text-center">
                                     <div className="flex flex-col items-center justify-center gap-2">
                                         <Users
@@ -386,7 +418,7 @@ export function GrantList({
                             </TableRow>
                         ) : (
                             items.map((member) => (
-                                <TableRow key={member.user_id} data-slot="grant-list-row">
+                                <TableRow key={member.user_id} data-slot="access-list-row">
                                     <TableCell>
                                         <div className="flex items-center gap-3">
                                             <Avatar
@@ -419,7 +451,7 @@ export function GrantList({
                                     </TableCell>
 
                                     <TableCell>
-                                        <GrantStateBadge isGranted={member.is_granted} />
+                                        <AccessStateBadge hasEdit={member.is_granted || policyOpen} />
                                     </TableCell>
 
                                     <TableCell>
@@ -457,7 +489,7 @@ export function GrantList({
             </div>
 
             {canGrant ? (
-                <GrantAccessDialog
+                <AccessGrantDialog
                     open={isGrantDialogOpen}
                     onOpenChange={setIsGrantDialogOpen}
                     candidates={candidates}
@@ -474,11 +506,11 @@ export function GrantList({
             >
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>Revoke assigner rights?</AlertDialogTitle>
+                        <AlertDialogTitle>Revoke Edit access?</AlertDialogTitle>
                         <AlertDialogDescription>
                             {pendingRevoke === null
                                 ? ""
-                                : `${pendingRevoke.full_name} will no longer be able to assign tasks to others or edit the status and priority catalog. Everything else stays, and this can be granted again later.`}
+                                : `${pendingRevoke.full_name} will lose Edit access to this department's tasks — including assigning people, setting status and priority, and changing dates and custom fields. Everything else stays, and they can still work on tasks they created. This can be granted again later.`}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

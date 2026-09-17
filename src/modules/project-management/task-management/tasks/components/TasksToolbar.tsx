@@ -23,7 +23,7 @@ import { CatalogChipDot } from "@/modules/project-management/components/CatalogC
  * The page-level ACTIONS deliberately do not live here. They belong beside the page title (see
  * `TasksHeaderActions`), which is what keeps this bar a single, readable row of list controls
  * instead of eight competing ones. Filter options are DATA: statuses and priorities come from the
- * department's catalogs and members from the grants directory, so nothing here hardcodes a status,
+ * department's catalogs and members from the access directory, so nothing here hardcodes a status,
  * priority or person.
  *
  * Every control is the primitive's DEFAULT size (`h-9`), so the search field, the three selects and
@@ -41,7 +41,7 @@ export interface TasksToolbarCatalogOption {
     readonly color: string | null;
 }
 
-/** The member option shape the toolbar renders; a `MemberGrantItem` satisfies it structurally. */
+/** The member option shape the toolbar renders; a `MemberAccessItem` satisfies it structurally. */
 export interface TasksToolbarMember {
     readonly user_id: number;
     readonly full_name: string;

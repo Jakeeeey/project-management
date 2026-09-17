@@ -35,7 +35,7 @@ export const dynamic = "force-dynamic";
  * - `DELETE` body `{ kind, id }` -> 200 `{ success, data: row }` with `is_deleted: 1` (soft delete only).
  *
  * Every handler resolves the actor first (401 without a session, 403 with a null department), every
- * write requires `assertCanConfigure` (head or granted assigner — never a role string), and every
+ * write requires `assertCanConfigure` (head or granted member — never a role string), and every
  * named row is loaded through `loadConfigScoped(actor, kind, id)` inside the service, where a miss
  * becomes 404 so another department's row is never confirmed. `department_id` and all audit columns
  * are injected server-side from the actor; the Zod schemas strip unknown keys, so a body carrying

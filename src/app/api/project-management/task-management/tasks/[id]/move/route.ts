@@ -145,7 +145,7 @@ export async function PATCH(
         const body = await parseBody(req, MoveTaskSchema);
         if (!body.ok) return body.response;
 
-        await assertCanMove(actor);
+        await assertCanMove(actor, task);
 
         const permissions = await getPermissionContext(actor);
         const row = await TaskMoveService.moveTask(actor, permissions, task, body.data);

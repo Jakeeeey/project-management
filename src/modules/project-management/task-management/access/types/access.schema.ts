@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * The grant and revoke contracts for the assignment-grants module.
+ * The grant and revoke contracts for the access module.
  *
  * Two payloads, two identifiers, deliberately distinct:
  * - a GRANT names the member (`user_id`) whose row should become active;
@@ -17,18 +17,18 @@ import { z } from "zod";
  * `assertCanGrant` against the actor's resolved department row, never by a client-supplied flag.
  */
 
-/** POST body: the department member to grant assigner rights to. */
-export const GrantAssignerSchema = z.object({
+/** POST body: the department member to grant Edit access to. */
+export const GrantAccessSchema = z.object({
     user_id: z.number().int().positive(),
 });
 
-/** DELETE body: the `pm_task_assigner` row to soft-delete. */
-export const RevokeAssignerSchema = z.object({
+/** DELETE body: the `pm_task_access` row to soft-delete. */
+export const RevokeAccessSchema = z.object({
     id: z.number().int().positive(),
 });
 
 /**
- * PATCH body: the department-wide assignment-grant policy. Only the flag travels — `department_id`
+ * PATCH body: the department-wide access policy. Only the flag travels — `department_id`
  * and every audit column are injected server-side from the actor, and Zod strips unknown keys, so a
  * body attempting to carry them is ignored rather than honoured. `z.boolean()` is deliberate: this
  * is a policy decision, and `"1"`/`"0"`-style strings are not accepted for it.
@@ -37,6 +37,6 @@ export const UpdateDepartmentSettingSchema = z.object({
     allow_all_members_grant: z.boolean(),
 });
 
-export type GrantAssignerInput = z.infer<typeof GrantAssignerSchema>;
-export type RevokeAssignerInput = z.infer<typeof RevokeAssignerSchema>;
+export type GrantAccessInput = z.infer<typeof GrantAccessSchema>;
+export type RevokeAccessInput = z.infer<typeof RevokeAccessSchema>;
 export type UpdateDepartmentSettingInput = z.infer<typeof UpdateDepartmentSettingSchema>;

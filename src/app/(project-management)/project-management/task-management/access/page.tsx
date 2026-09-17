@@ -14,14 +14,14 @@ import { cookies } from "next/headers";
 import type { Metadata } from "next";
 
 import { COOKIE_NAME, decodeJwtPayload, type JwtPayload } from "@/lib/auth-utils";
-import { AssignmentGrantsPage } from "@/modules/project-management/task-management/access/components/AssignmentGrantsPage";
+import { AccessPage } from "@/modules/project-management/task-management/access/components/AccessPage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-    title: "Assignment Grants | Project Management",
-    description: "Grant department members the right to assign tasks.",
+    title: "Access | Project Management",
+    description: "Manage who may edit this department's tasks.",
 };
 
 /**
@@ -56,7 +56,7 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
 }
 
 /**
- * The Assignment Grants route page.
+ * The Access route page.
  *
  * A thin server shell matching the sibling pm pages: the pm layout is a fixed-height frame where
  * only `<main>` scrolls, so this renders the app header (SidebarTrigger, Separator, Breadcrumb,
@@ -92,7 +92,7 @@ export default async function Page() {
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Assignment Grants
+                                        Access
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -106,7 +106,7 @@ export default async function Page() {
             </header>
 
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4">
-                <AssignmentGrantsPage />
+                <AccessPage />
             </main>
         </div>
     );

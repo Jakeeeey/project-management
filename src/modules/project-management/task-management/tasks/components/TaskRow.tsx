@@ -37,6 +37,8 @@ export interface TaskRowView {
     assignees: readonly TaskAssigneeView[];
     /** This task's answers for the department's custom columns; a column with no answer is absent. */
     custom_values: readonly TaskFieldValue[];
+    /** The server's per-row edit answer — the only thing an edit affordance may be gated on. */
+    can_edit: boolean;
 }
 
 /**

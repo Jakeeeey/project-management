@@ -126,6 +126,9 @@ export interface TaskListItem {
     readonly priority_id: number;
     readonly status: TaskCatalogRef | null;
     readonly priority: TaskCatalogRef | null;
+    /** The server's per-row edit answer: head, granted access, or this task's creator. */
+    readonly can_edit: boolean;
+    /** The server's per-row delete answer: head, granted access, or this task's creator. */
     readonly can_delete: boolean;
     readonly assignees: readonly TaskAssigneeRef[];
     readonly attachments: readonly TaskAttachmentRef[];
@@ -369,6 +372,7 @@ function toTaskListItems(raw: unknown): TaskListItem[] {
             priority_id: toNumber(entry.priority_id),
             status: toCatalogRef(entry.status_label, entry.status_color),
             priority: toCatalogRef(entry.priority_label, entry.priority_color),
+            can_edit: readFlag(entry.can_edit),
             can_delete: readFlag(entry.can_delete),
             assignees: toAssigneeRefs(entry.assignees),
             attachments: toAttachmentRefs(entry.attachments),

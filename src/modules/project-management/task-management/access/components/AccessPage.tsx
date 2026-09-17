@@ -1,11 +1,11 @@
 "use client";
 
-import { useAssignmentGrants } from "../hooks/useAssignmentGrants";
-import { GrantList } from "./GrantList";
-import { GrantPolicyCard } from "./GrantPolicyCard";
+import { useAccess } from "../hooks/useAccess";
+import { AccessList } from "./AccessList";
+import { AccessPolicyCard } from "./AccessPolicyCard";
 
 /**
- * The Assignment Grants client orchestrator.
+ * The Access client orchestrator.
  *
  * It owns exactly two gates, both read from the route's server-resolved `capabilities` (never
  * derived here): `canGrant` decides whether the grant/revoke controls exist at all, and
@@ -15,9 +15,9 @@ import { GrantPolicyCard } from "./GrantPolicyCard";
  * policy that lets them — and the switch is not rendered into the DOM for them at all.
  *
  * The switch is held back until `setting` has loaded, so it never renders a policy the server has
- * not confirmed; the roster is handed straight to `GrantList`.
+ * not confirmed; the roster is handed straight to `AccessList`.
  */
-export function AssignmentGrantsPage() {
+export function AccessPage() {
     const {
         items,
         isLoading,
@@ -30,10 +30,12 @@ export function AssignmentGrantsPage() {
         grant,
         revoke,
         setAllowAllMembersGrant,
-    } = useAssignmentGrants();
+    } = useAccess();
 
     const canGrant = capabilities?.canGrant === true;
     const canManageSetting = capabilities?.canManageDepartmentSetting === true;
+    /** The "Allow all members Edit access" policy — while ON, per-member granting is moot. */
+    const policyOpen = setting?.allow_all_members_grant === true;
 
     return (
         <section
@@ -41,16 +43,17 @@ export function AssignmentGrantsPage() {
             className="mx-auto w-full max-w-5xl scroll-pt-16 space-y-4 px-4 py-6 md:scroll-pt-20"
         >
             <div className="space-y-1">
-                <h1 className="text-lg font-semibold tracking-tight">Assignment grants</h1>
+                <h1 className="text-lg font-semibold tracking-tight">Access</h1>
                 <p className="text-sm text-muted-foreground">
-                    A member with assigner rights can hand out tasks and edit this department&apos;s
-                    status and priority catalog. Your department decides whether the head alone or
-                    every member can grant that right.
+                    Who may edit this department&apos;s tasks. Edit access covers everything a task edit
+                    can change — assigning people, setting status and priority, and changing dates and
+                    custom fields. Your department decides whether the head alone or every member can
+                    grant Edit access.
                 </p>
             </div>
 
             {canManageSetting && setting !== null ? (
-                <GrantPolicyCard
+                <AccessPolicyCard
                     allowAllMembersGrant={setting.allow_all_members_grant}
                     isSaving={isSubmitting}
                     onChange={(enabled) => {
@@ -59,12 +62,13 @@ export function AssignmentGrantsPage() {
                 />
             ) : null}
 
-            <GrantList
+            <AccessList
                 items={items}
                 isLoading={isLoading}
                 isSubmitting={isSubmitting}
                 error={error}
                 canGrant={canGrant}
+                policyOpen={policyOpen}
                 memberNameById={memberNameById}
                 onGrant={grant}
                 onRevoke={revoke}

@@ -53,6 +53,9 @@ export interface TaskClientRow {
     readonly assignees: readonly TaskAssigneeRow[];
     readonly attachments: readonly ScopedAttachmentRow[];
     readonly custom_values: readonly TaskFieldValueClientRow[];
+    /** The server's per-row edit answer: head, granted access, or this task's creator. */
+    readonly can_edit: boolean;
+    /** The server's per-row delete answer: head, granted access, or this task's creator. */
     readonly can_delete: boolean;
     readonly status_label: string | null;
     readonly status_color: string | null;
@@ -222,6 +225,7 @@ export function toClientRow(source: TaskRowSource, shaping: RowShaping): TaskCli
             field_id: value.field_id,
             value: value.value,
         })),
+        can_edit: shaping.permissions.canEditThisTask({ created_by: row.created_by }),
         can_delete: shaping.permissions.canDeleteThisTask({ created_by: row.created_by }),
         status_label: status?.label ?? null,
         status_color: status?.color ?? null,

@@ -4,15 +4,15 @@ import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
 import {
-    useAssignmentGrants,
-    type MemberGrantItem,
-} from "@/modules/project-management/task-management/access/hooks/useAssignmentGrants";
+    useAccess,
+    type MemberAccessItem,
+} from "@/modules/project-management/task-management/access/hooks/useAccess";
 
 /**
  * The assignee hook: put a department member on a task, take them off, and expose the member
  * directory the picker needs.
  *
- * The directory is not re-fetched here — it is the **reused** `useAssignmentGrants` hook, whose
+ * The directory is not re-fetched here — it is the **reused** `useAccess` hook, whose
  * `GET /api/project-management/task-management/access` answers with the department's live members and is
  * readable by every member. That reuse is deliberate: the department has exactly one members
  * endpoint, so the tasks module reads it through the module that owns it rather than duplicating its
@@ -49,11 +49,11 @@ export interface UseAssigneesOptions {
 
 /** The canonical return of the assignee hook. */
 export interface UseAssigneesResult {
-    /** The department's live members with their grant state — the assignee picker's options. */
-    readonly members: readonly MemberGrantItem[];
+    /** The department's live members with their access state — the assignee picker's options. */
+    readonly members: readonly MemberAccessItem[];
     /** Display names keyed by user id, so the tree can name an assignee without a second request. */
     readonly memberNameById: ReadonlyMap<number, string>;
-    /** True while the member directory is loading (the reused grants hook owns that request). */
+    /** True while the member directory is loading (the reused access hook owns that request). */
     readonly isLoading: boolean;
     /** True while an assign or unassign is in flight. */
     readonly isSubmitting: boolean;
@@ -97,7 +97,7 @@ async function readEnvelope(res: Response): Promise<Record<string, unknown>> {
  *          unassign }` surface.
  */
 export function useAssignees({ onChanged }: UseAssigneesOptions): UseAssigneesResult {
-    const directory = useAssignmentGrants();
+    const directory = useAccess();
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 

@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
  * or body read — absent, soft-deleted and another department's tasks stay indistinguishable.
  *
  * Contract — both verbs take the SAME body, `AssigneeMutationSchema` = `{ user_id }`:
- * - `POST` -> 200 `{ success, data: row }`. `assertCanAssign` (head or granted assigner, never a
+ * - `POST` -> 200 `{ success, data: row }`. `assertCanAssign` (head or granted member, never a
  *   role string) runs before the body is parsed; the service then requires the target to be a live
  *   member of the actor's own department (404 otherwise) and runs REVIVE-OR-INSERT:
  *   `uq_pm_task_assignee (task_id, user_id)` exists and ignores `is_deleted`, so a re-assign after
