@@ -73,10 +73,13 @@ interface DepartmentTaskRows {
 
 /**
  * Resolves the catalog id a task will store: a supplied id must be a LIVE row of the actor's
- * department, and an omitted one falls back to the kind's effective default. A kind with no live
- * row at all is the documented clear 400, never a foreign-key 500.
+ * department, and an omitted or null one falls back to the kind's effective default. A kind with no
+ * live row at all is the documented clear 400, never a foreign-key 500.
+ *
+ * Exported because the item PATCH path validates a supplied catalog reference with this same rule,
+ * so a create and an update can never disagree about which row is referenceable.
  */
-function resolveCatalogId(
+export function resolveCatalogId(
     rows: readonly ScopedConfigRow[],
     requested: number | null | undefined,
     kind: "status" | "priority",
@@ -99,8 +102,11 @@ function resolveCatalogId(
     return fallback.id;
 }
 
-/** `YYYY-MM-DD` strings compare chronologically as text, so no date parsing is needed. */
-function assertDateOrder(startDate: string | null | undefined, endDate: string | null | undefined): void {
+/**
+ * `YYYY-MM-DD` strings compare chronologically as text, so no date parsing is needed. Exported
+ * because the item PATCH path re-validates the **merged** start/end pair with this same rule.
+ */
+export function assertDateOrder(startDate: string | null | undefined, endDate: string | null | undefined): void {
     if (startDate === null || startDate === undefined || endDate === null || endDate === undefined) return;
     if (endDate < startDate) {
         throw new TaskServiceError("VALIDATION_FAILED", "The end date cannot be earlier than the start date");
@@ -252,8 +258,12 @@ export class TaskService {
      * (not 404) when a single-item read misses — so the department guard sees the real owner, then
      * `assertSameDepartment` refuses a mismatch. Both misses collapse to the same 400 message, so
      * the refusal never confirms whether another department's row exists.
+     *
+     * Shared with the move route's target-parent validation: create and move must never disagree
+     * about which parent is referenceable. The move route additionally rejects a target that is the
+     * moved node itself or one of its descendants — checks that need the tree, so they stay there.
      */
-    private static async resolveParentId(
+    static async resolveParentId(
         actor: ScopedActor,
         parentId: number | null | undefined,
     ): Promise<number | null> {

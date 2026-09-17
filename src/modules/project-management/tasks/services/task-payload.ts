@@ -161,8 +161,11 @@ export function buildShaping(catalogs: CatalogLists, permissions: PermissionCont
  * with an ISO separator. The module's contract is the `YYYY-MM-DD HH:mm:ss` shape the timestamps
  * were written in, and the `T` form is easy to mistake for a UTC conversion, so it is normalised
  * here. The instant is untouched: no zone is applied in either direction.
+ *
+ * Shared with `./assignee-service`, so every timestamp this feature puts on the wire has one
+ * producer.
  */
-function toPhTimestamp(value: unknown): string | null {
+export function toPhTimestamp(value: unknown): string | null {
     return typeof value === "string" ? value.replace("T", " ") : null;
 }
 

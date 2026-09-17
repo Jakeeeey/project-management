@@ -60,7 +60,10 @@ export const MoveTaskSchema = z.object({
         }),
 });
 
-/** POST body for the assignees route. A grant check and a department check still follow on the server. */
+/**
+ * Body for the assignees route, both verbs: `{ user_id }` assigns (revive-or-insert) and unassigns
+ * (soft delete). A grant check and a department check still follow on the server.
+ */
 export const AssigneeMutationSchema = z.object({
     user_id: IdentifierSchema,
 });
