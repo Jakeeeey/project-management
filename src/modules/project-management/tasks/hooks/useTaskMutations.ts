@@ -10,7 +10,7 @@ import type {
 } from "../types/pm-task.schema";
 
 /**
- * The write hook behind the task tree: create, update, delete and move.
+ * The write hook behind the task tree: create, update, delete, move and attach.
  *
  * One strategy, pinned: **refetch after mutate**. Every successful call awaits `onChanged` (the
  * list's `refresh`) before it toasts, and nothing is patched optimistically — the tree can never
@@ -25,11 +25,16 @@ import type {
  * - `DELETE /api/project-management/tasks/<id>` → 200 (soft delete of the whole subtree server-side).
  * - `PATCH /api/project-management/tasks/<id>/move` with `{ parent_id, sibling_ids }` → 200. The move
  *   verb is **PATCH**, not POST.
+ * - `POST /api/project-management/tasks/<id>/attachments` (multipart, field `file`) → **201** with
+ *   Directus's raw `{ data }` — the plan's documented envelope exception. The `Content-Type` header
+ *   is deliberately NOT set, so the browser's generated multipart boundary survives.
+ * - `DELETE /api/project-management/tasks/<id>/attachments?attachmentId=<id>` → 200 (soft delete; the
+ *   Directus file is deliberately left in place).
  *
- * Every write sends `Content-Type: application/json` only — never an `Authorization` header, because
- * the browser already sends the session cookie and the route resolves the actor from it. The body
- * types come from the module's Zod schemas, so `department_id`, the audit columns and `parent_id` on
- * an update can never be sent.
+ * Every JSON write sends `Content-Type: application/json`; the multipart upload sends **no**
+ * `Content-Type` at all. Neither sets an `Authorization` header, because the browser already sends
+ * the session cookie and the route resolves the actor from it. The body types come from the module's
+ * Zod schemas, so `department_id`, the audit columns and `parent_id` on an update can never be sent.
  *
  * Failure copy never exposes technical detail: the service's `CODE: message` prefix is stripped, and
  * a non-JSON/network failure becomes a plain sentence.
@@ -73,6 +78,15 @@ export interface UseTaskMutationsResult {
     readonly deleteTask: (taskId: number, label: string) => Promise<boolean>;
     /** Reorders or re-parents a task with the pinned `{ parent_id, sibling_ids }` payload. */
     readonly moveTask: (taskId: number, payload: MoveTaskInput) => Promise<boolean>;
+    /**
+     * Uploads one file to a task. The request is multipart and carries **no `Content-Type`** — the
+     * browser owns the boundary — and it resolves `true` once the refetch has run.
+     */
+    readonly uploadAttachment: (taskId: number, file: File) => Promise<boolean>;
+    /**
+     * Soft-deletes one attachment link (the Directus file is kept). Resolves `true` on success.
+     */
+    readonly detachAttachment: (taskId: number, attachmentId: number, label: string) => Promise<boolean>;
     /** Clears the persistent error state (e.g. when the dialog closes). */
     readonly clearError: () => void;
 }
@@ -112,7 +126,8 @@ function createdIdOf(envelope: Record<string, unknown> | null): number | null {
  * Wires the module's task writes to their routes.
  *
  * @param options `onChanged` — awaited after every successful write to refetch the list.
- * @returns `{ isSubmitting, error, createTask, updateTask, deleteTask, moveTask, clearError }`.
+ * @returns `{ isSubmitting, error, createTask, updateTask, deleteTask, moveTask, uploadAttachment,
+ *          detachAttachment, clearError }`.
  */
 export function useTaskMutations({ onChanged }: UseTaskMutationsOptions): UseTaskMutationsResult {
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -210,6 +225,47 @@ export function useTaskMutations({ onChanged }: UseTaskMutationsOptions): UseTas
         [request, runMutation],
     );
 
+    const uploadAttachment = useCallback(
+        async (taskId: number, file: File): Promise<boolean> => {
+            const form = new FormData();
+            form.append("file", file);
+
+            const envelope = await runMutation(
+                async () => {
+                    // No headers at all: fetch must generate `multipart/form-data; boundary=...`.
+                    const res = await fetch(`${TASKS_ENDPOINT}/${taskId}/attachments`, {
+                        method: "POST",
+                        body: form,
+                    });
+                    const payload = await readEnvelope(res);
+                    if (!res.ok) throw new Error(readMessage(payload, "The file could not be uploaded"));
+                    return payload;
+                },
+                `${file.name} attached`,
+                "Could not upload the file",
+            );
+            return envelope !== null;
+        },
+        [runMutation],
+    );
+
+    const detachAttachment = useCallback(
+        async (taskId: number, attachmentId: number, label: string): Promise<boolean> => {
+            const envelope = await runMutation(
+                () =>
+                    request(
+                        `${TASKS_ENDPOINT}/${taskId}/attachments?attachmentId=${encodeURIComponent(String(attachmentId))}`,
+                        "DELETE",
+                        undefined,
+                    ),
+                `${label} detached`,
+                "Could not detach the file",
+            );
+            return envelope !== null;
+        },
+        [request, runMutation],
+    );
+
     const clearError = useCallback((): void => {
         setError(null);
     }, []);
@@ -221,6 +277,8 @@ export function useTaskMutations({ onChanged }: UseTaskMutationsOptions): UseTas
         updateTask,
         deleteTask,
         moveTask,
+        uploadAttachment,
+        detachAttachment,
         clearError,
     };
 }

@@ -25,6 +25,8 @@ import type { Capabilities } from "@/modules/project-management/types/capabiliti
 
 import type { TaskListItem } from "../hooks/useTasks";
 import { AssigneeStack } from "./AssigneeStack";
+import { AttachmentList } from "./AttachmentList";
+import { AttachmentUploader } from "./AttachmentUploader";
 import { formatTaskDate } from "./TaskRow";
 import { TaskPriorityBadge, TaskStatusBadge } from "./TaskRowBadges";
 import type { TaskBreadcrumb } from "./TaskFormDialog";
@@ -84,6 +86,10 @@ export interface TaskDetailSheetProps {
     readonly onAddSubtask: () => void;
     /** Soft-deletes this task and its subtree; resolves `false` when the write failed. */
     readonly onDelete: (task: TaskListItem) => Promise<boolean>;
+    /** Uploads one attachment through the module route (multipart; the hook sets no Content-Type). */
+    readonly onUploadAttachment: (taskId: number, file: File) => Promise<boolean>;
+    /** Detaches one attachment link through the module route; the Directus file is kept. */
+    readonly onDetachAttachment: (taskId: number, attachmentId: number, label: string) => Promise<boolean>;
 }
 
 export function TaskDetailSheet({
@@ -98,6 +104,8 @@ export function TaskDetailSheet({
     onEdit,
     onAddSubtask,
     onDelete,
+    onUploadAttachment,
+    onDetachAttachment,
 }: TaskDetailSheetProps) {
     const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -218,6 +226,21 @@ export function TaskDetailSheet({
                                         {task.description}
                                     </p>
                                 )}
+                            </div>
+
+                            <div data-slot="task-detail-attachments" className="space-y-2">
+                                <p className="text-xs font-medium text-muted-foreground">Attachments</p>
+                                <AttachmentUploader
+                                    taskId={task.id}
+                                    onUpload={onUploadAttachment}
+                                    disabled={isSubmitting}
+                                />
+                                <AttachmentList
+                                    taskId={task.id}
+                                    attachments={task.attachments}
+                                    onDetach={onDetachAttachment}
+                                    disabled={isSubmitting}
+                                />
                             </div>
                         </div>
 

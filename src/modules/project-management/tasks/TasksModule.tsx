@@ -203,6 +203,8 @@ export function TasksModule({ userId }: TasksModuleProps) {
         updateTask,
         deleteTask,
         moveTask,
+        uploadAttachment,
+        detachAttachment,
         clearError,
     } = useTaskMutations({ onChanged: refresh });
     const { roots, expandedIds, toggleExpand } = useTaskTree(items, memberNameById);
@@ -641,6 +643,8 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onEdit={handleEditDetail}
                 onAddSubtask={handleAddSubtask}
                 onDelete={handleDeleteTask}
+                onUploadAttachment={uploadAttachment}
+                onDetachAttachment={detachAttachment}
             />
         </section>
     );
