@@ -18,15 +18,13 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
-import {
-    resolveCatalogForeground,
-    resolveCatalogHex,
-} from "../CatalogChip";
+import { assigneeColorFor, assigneeForegroundFor } from "../assignee-color";
+import { CatalogStatusIcon } from "../CatalogStatusIcon";
 
 import { parseDateOnly } from "../SingleDatePicker";
 import { GANTT_TODAY_CLASS, highlightToday } from "./gantt-today";
 import type { TaskViewProps } from "../../types/task-view";
-import type { TaskListItem } from "../../hooks/useTasks";
+import type { TaskCatalogRef, TaskListItem } from "../../hooks/useTasks";
 
 /**
  * The SVAR Gantt chart, loaded lazily **on the client only**.
@@ -70,10 +68,12 @@ const GanttChart = dynamic(
         import("@svar-ui/react-gantt").then((module) => {
             const Gantt = module.Gantt;
             const columns = [
-                ...module.defaultColumns.map((column, index) => ({
-                    ...column,
-                    id: column.id ?? `column-${index}`,
-                })),
+                ...module.defaultColumns.map((column, index) => {
+                    const id = column.id ?? `column-${index}`;
+                    // The `text` column carries the host label cell; the vendor folds it into its own
+                    // tree-row renderer — see `GanttTaskLabelCell`.
+                    return id === "text" ? { ...column, id, cell: GanttTaskLabelCell } : { ...column, id };
+                }),
                 { id: "add-task", header: "", width: 0, hidden: true, sort: false, resize: false },
             ];
             return function ColumnBoundGantt(props: ComponentProps<typeof Gantt>) {
@@ -91,6 +91,57 @@ const GanttChart = dynamic(
         ),
     },
 );
+
+/**
+ * A task as the chart's label-column cell sees it.
+ *
+ * `ITask` carries an index signature, so `statusRef` rides along through the vendor's own
+ * `{ ...task }` spreads and its tree normalisation, and comes back on the `row` the cell slot is
+ * handed.
+ */
+interface GanttTaskRow extends ITask {
+    /** The task's resolved status catalog row, or `null`; the label glyph's only source. */
+    readonly statusRef: TaskCatalogRef | null;
+}
+
+/** The vendor calls a label cell with the row (and column) only — see {@link GanttTaskLabelCell}. */
+interface GanttTaskLabelCellProps {
+    readonly row: GanttTaskRow;
+}
+
+/**
+ * The label column's leading status glyph, rendered immediately before the task name.
+ *
+ * The vendor owns the text column: after normalising `columns` it MOVES a host-provided `cell` to
+ * the column's `_cell` slot and installs its own renderer (`Nn` in `@svar-ui/react-gantt@2.7.3`),
+ * which draws the tree toggle and then calls `_cell` with `{ row, column }`. Setting `cell` on the
+ * `text` column is therefore the vendor's per-row label slot: the glyph lands inside the tree row,
+ * after the toggle and before the name — the same `[status icon][task title]` order the tree uses.
+ *
+ * `statusRef` lives on the task because the vendor hands the cell the ROW only, and a module-scope
+ * component cannot close over a per-render lookup from `items`.
+ *
+ * `tone="status"` is deliberate: the glyph sits on the label background, not on a coloured bar, so
+ * it must ink itself in the status colour. It is decorative (`aria-hidden` inside
+ * `CatalogStatusIcon`): the task's own data already conveys the status, exactly as in the tree.
+ *
+ * A `null` status renders no glyph rather than a placeholder, matching the tree.
+ */
+function GanttTaskLabelCell({ row }: GanttTaskLabelCellProps) {
+    return (
+        <span className="flex min-w-0 items-center gap-1.5">
+            {row.statusRef === null ? null : (
+                <CatalogStatusIcon
+                    icon={row.statusRef.icon}
+                    color={row.statusRef.color}
+                    tone="status"
+                    density="dense"
+                />
+            )}
+            <span className="min-w-0 truncate">{row.text}</span>
+        </span>
+    );
+}
 
 /**
  * The vendor icon font, fetched at runtime.
@@ -427,19 +478,31 @@ function buildRange(items: readonly TaskListItem[]): GanttRange {
 }
 
 /**
- * One CSS rule per task that carries a status colour, keyed to the vendor's own bar variables.
+ * The bar colour for one task, derived from the task's own id.
  *
- * The vendor exposes no per-task colour property (both its bundles contain zero occurrences of
- * `color`; `ITask`'s index signature accepts an extra key but ignores it). What it does expose is the
- * cascade: a task bar is an element carrying `data-task-id` that paints itself with
- * `background-color: var(--wx-gantt-task-color)`. Declaring that variable ON the `[data-task-id]`
- * node therefore beats the single declaration on `.pm-task-gantt`, because a custom property set on
- * the element itself resolves before any inherited value.
+ * The bar is a stable per-task visual differentiator, not a carrier of meaning: a task always has
+ * exactly one id, so this is total with no "none" or "many" case to special-case, and with a finite
+ * palette the colour simply repeats every `ASSIGNEE_COLOR_PALETTE.length` tasks.
  *
- * The colour is keyed to the task's **status** (`pm_task_status.color`, the same stored hex the rest
- * of the module paints through `CatalogChip`), so a bar's colour means the same thing here as it does
- * in the tree. `resolveCatalogForeground` picks near-black or white for the bar's label so text stays
- * legible on every status colour. Tasks without a valid status hex keep the theme's default primary.
+ * It deliberately reuses `assigneeColorFor` — a pure id -> palette mapping — so the bar applies the
+ * IDENTICAL algorithm with no second palette or formula that could drift from it.
+ */
+function barColorFor(item: TaskListItem): string {
+    return assigneeColorFor(item.id);
+}
+
+/**
+ * One CSS rule per task, keyed to the vendor's own bar variables.
+ *
+ * The vendor exposes no per-task colour property (its `ITask` index signature accepts an extra key
+ * but ignores it), but each bar paints itself from `--wx-gantt-task-color` (plus the border/fill/font
+ * companions) on an element carrying `data-task-id`. Declaring those variables ON that element beats
+ * the single chart-wide declaration on `.pm-task-gantt`, because a custom property set on the node
+ * itself resolves before any inherited value — genuinely per-task, not a global tint.
+ *
+ * The fill is `barColorFor(item)` and the bar's own label ink is `assigneeForegroundFor(fill)`, so
+ * text stays legible on light and dark fills alike. Every task gets a rule, so no fallback path
+ * remains that could tint a bar from anything but its own id.
  *
  * Fidelity note: this targets the STABLE `data-task-id` attribute, not the vendor's CSS-module class
  * hash (`.wx-GKbcLEGA`), which changes between releases.
@@ -448,12 +511,9 @@ function buildBarColourCss(items: readonly TaskListItem[]): string {
     const rules: string[] = [];
 
     for (const item of items) {
-        const hex = resolveCatalogHex(item.status?.color);
-        if (hex === null) {
-            continue;
-        }
+        const hex = barColorFor(item);
+        const foreground = assigneeForegroundFor(hex);
 
-        const foreground = resolveCatalogForeground(hex);
         rules.push(
             `.pm-task-gantt [data-task-id="${item.id}"]{` +
                 `--wx-gantt-task-color:${hex};` +
@@ -494,11 +554,12 @@ function buildBarColourCss(items: readonly TaskListItem[]): string {
  */
 export function GanttView({ items, isLoading, error, onRetry }: TaskViewProps) {
     /**
-     * The library's task list, derived in one pass from the department's flat rows. Kept as `ITask[]`
-     * exactly as the component's `tasks` prop expects, and rebuilt only when `items` changes.
+     * The library's task list, derived in one pass from the department's flat rows. Kept as
+     * `GanttTaskRow[]` (an `ITask` plus the label glyph's `statusRef`) so the `cell` slot can read
+     * the status back off the row, and rebuilt only when `items` changes.
      */
     const projection = useMemo(() => {
-        const tasks: ITask[] = [];
+        const tasks: GanttTaskRow[] = [];
         let withoutDates = 0;
         let invertedRange = 0;
 
@@ -524,6 +585,9 @@ export function GanttView({ items, isLoading, error, onRetry }: TaskViewProps) {
                 start,
                 end,
                 type: "task",
+                // The label glyph's source rides on the task: the vendor's cell slot hands the row
+                // back to a module-scope component that cannot close over `items`.
+                statusRef: item.status,
             });
         }
 
