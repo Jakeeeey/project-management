@@ -12,29 +12,13 @@ import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 
 import { cookies } from "next/headers";
 
+import { COOKIE_NAME, decodeJwtPayload } from "@/lib/auth-utils";
+
 // âœ… Wire the module you asked for
-import { SettingsAppearance } from "./settings-appearance";
+import { ConfigureSections } from "@/modules/project-management/task-management/configure/components/ConfigureSections";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const COOKIE_NAME = "vos_access_token";
-
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-    try {
-        const parts = token.split(".");
-        if (parts.length < 2) return null;
-
-        const p = parts[1];
-        const b64 = p.replace(/-/g, "+").replace(/_/g, "/");
-        const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
-
-        const json = Buffer.from(padded, "base64").toString("utf8");
-        return JSON.parse(json);
-    } catch {
-        return null;
-    }
-}
 
 function pickString(obj: Record<string, unknown> | null | undefined, keys: string[]): string {
     for (const k of keys) {
@@ -96,12 +80,12 @@ export default async function Page() {
                         <Breadcrumb>
                             <BreadcrumbList className="min-w-0 overflow-hidden">
                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">ARF</BreadcrumbLink>
+                                    <BreadcrumbLink href="#">Project Management</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Settings
+                                        Configure
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -116,7 +100,7 @@ export default async function Page() {
 
             {/* âœ… Only content scrolls inside RIGHT column */}
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4">
-                <SettingsAppearance />
+                <ConfigureSections />
             </main>
         </div>
     );

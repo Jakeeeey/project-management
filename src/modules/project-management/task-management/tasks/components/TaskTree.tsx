@@ -1,0 +1,624 @@
+"use client";
+
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { ChevronRight, ListTree, RotateCcw, TriangleAlert } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import { flattenVisible, type TreeNode } from "../utils/tree";
+import { useTaskColumnWidths } from "../hooks/useTaskColumnWidths";
+
+import { AssigneeStack } from "./AssigneeStack";
+import { CatalogStatusIcon } from "./CatalogStatusIcon";
+import { ColumnResizeHandle } from "./ColumnResizeHandle";
+import { isResizableTaskColumnKey, minTaskColumnWidth } from "./task-column-widths";
+import {
+    FROZEN_EDGE_CLASS,
+    FROZEN_HEADER_CELL_CLASS,
+    FROZEN_TASK_COLUMN_KEYS,
+    frozenTaskColumnOffsets,
+    isFrozenTaskColumnKey,
+} from "./task-frozen-columns";
+import {
+    INDENT_STEP_PX,
+    MAX_INDENT_DEPTH,
+    TaskRow,
+    formatTaskDate,
+    formatTaskFieldValue,
+    type TaskRowPatch,
+    type TaskRowProps,
+    type TaskRowView,
+} from "./TaskRow";
+import { TaskPriorityBadge, TaskStatusBadge } from "./TaskRowBadges";
+import type { CellEditRequest, CellMemberOption } from "./TaskCellEditor";
+import type { TaskCatalogs, TaskField } from "../hooks/useTasks";
+
+function subtaskLabel(count: number): string {
+    return `${count} sub-task${count === 1 ? "" : "s"}`;
+}
+
+interface TaskTreeColumn {
+    key: string;
+    label: string;
+    /** Column holds no visible title (a control or an actions gutter). */
+    srOnly?: boolean;
+    /**
+     * Overrides the header's default left alignment. The actions gutter is the only right-aligned
+     * column; assignees is centred so its label sits over its centred cell content.
+     */
+    align?: "right" | "center";
+}
+
+/**
+ * The fixed columns, in order — the custom columns and the actions gutter are appended at render
+ * time, so this is only the part that never varies.
+ *
+ * There are no width classes here any more: every column's width is a RUNTIME number applied through
+ * the table's `<colgroup>` (see `task-column-widths.ts` for the defaults and floors). The defaults
+ * are the INITIAL layout only — the page is full-width now, so once the department's columns (custom
+ * columns included) outgrow the viewport the grid scrolls inside its own container instead.
+ *
+ * Order: the expand gutter, then task title, assignees, start, due, priority and status; the
+ * custom columns follow the fixed set and the actions gutter is appended last.
+ */
+const BASE_COLUMNS: readonly TaskTreeColumn[] = [
+    { key: "expand", label: "Expand", srOnly: true },
+    { key: "title", label: "Task" },
+    { key: "assignees", label: "Assignees", align: "center" },
+    { key: "start", label: "Start" },
+    { key: "due", label: "Due" },
+    { key: "priority", label: "Priority" },
+    { key: "status", label: "Status" },
+];
+
+/** The actions gutter is always last, whatever the department has added. */
+const ACTIONS_COLUMN: TaskTreeColumn = {
+    key: "actions",
+    label: "Actions",
+    srOnly: true,
+    align: "right",
+};
+
+/**
+ * The rendered columns: the fixed set, then one per custom column, then the actions gutter.
+ *
+ * A custom column's key is the `field-<id>` form the width store persists, so a resized custom
+ * column is remembered individually rather than sharing the fixed set's widths.
+ */
+function buildColumns(fields: readonly TaskField[]): TaskTreeColumn[] {
+    return [
+        ...BASE_COLUMNS,
+        ...fields.map((field) => ({
+            key: `field-${field.id}`,
+            label: field.label,
+        })),
+        ACTIONS_COLUMN,
+    ];
+}
+
+/**
+ * The table's `min-width` floor. The table is `table-fixed`, so its columns cannot shrink below the
+ * resolved width sum; keeping a floor stops the whole grid from collapsing when every column is
+ * dragged to its minimum, and keeps horizontal scrolling correct as columns grow.
+ */
+const TASK_TABLE_MIN_WIDTH_PX = 1120;
+
+interface SiblingPosition {
+    posInSet: number;
+    setSize: number;
+}
+
+/**
+ * Maps every node to its 1-based position among its siblings and its level's size.
+ *
+ * Taken from the FULL tree, not from the visible projection: `aria-setsize` must not shrink when
+ * a sibling is collapsed. Iterative breadth-first, so an arbitrarily deep tree cannot overflow the
+ * call stack.
+ */
+function computeSiblingPositions(
+    roots: readonly TreeNode<TaskRowView>[],
+): Map<number, SiblingPosition> {
+    const positions = new Map<number, SiblingPosition>();
+    let frontier: TreeNode<TaskRowView>[][] = roots.length > 0 ? [[...roots]] : [];
+
+    while (frontier.length > 0) {
+        const next: TreeNode<TaskRowView>[][] = [];
+        for (const siblings of frontier) {
+            siblings.forEach((node, index) => {
+                positions.set(node.id, { posInSet: index + 1, setSize: siblings.length });
+                if (node.children.length > 0) next.push(node.children);
+            });
+        }
+        frontier = next;
+    }
+
+    return positions;
+}
+
+export interface TaskTreeProps {
+    /**
+     * The department's (already filtered) forest from `buildTree` / `pruneForest` — never a
+     * flattened list. Even when `rows` is supplied this stays the FULL forest: it is what supplies
+     * each rendered row's `children` (the chevron and the subtask-count badge) and the sibling
+     * positions behind `aria-posinset` / `aria-setsize`, so both stay correct when a page boundary
+     * splits a sibling set.
+     */
+    roots: readonly TreeNode<TaskRowView>[];
+    /**
+     * The rows to render, in render order. Omit it and the tree flattens `roots` itself through
+     * `flattenVisible` (the everything-fits case). The pager supplies an explicit page slice here,
+     * because the pager counts ROWS: the rows rendered must be exactly the rows it counted, so the
+     * tree must not re-expand a sliced row and pull in children beyond the page.
+     */
+    rows?: readonly TreeNode<TaskRowView>[];
+    /** Ids whose children are currently shown. */
+    expandedIds: ReadonlySet<number>;
+    onToggleExpand: (id: number) => void;
+    isLoading?: boolean;
+    /** A non-empty string renders the persistent error state (with `onRetry` when supplied). */
+    error?: string | null;
+    onRetry?: () => void;
+    /** One short sentence for the empty state. */
+    emptyMessage?: string;
+    /** Slot for each row's actions menu. */
+    renderActions?: (node: TreeNode<TaskRowView>) => ReactNode;
+    /** The department's custom columns — one extra table column and one extra card field each. */
+    fields?: readonly TaskField[];
+    /**
+     * In-place editing seam. When `onStartCellEdit` is supplied the WIDE table's data cells become
+     * editable; the narrow-viewport card below `xl` stays a read-only projection, because it has no
+     * per-column cell to swap an editor into.
+     */
+    catalogs?: TaskCatalogs;
+    members?: readonly CellMemberOption[];
+    editingCell?: { readonly taskId: number; readonly column: string } | null;
+    cellPatches?: ReadonlyMap<string, TaskRowPatch>;
+    onStartCellEdit?: (taskId: number, column: string) => void;
+    onCancelCellEdit?: () => void;
+    onCommitCellEdit?: (taskId: number, column: string, request: CellEditRequest) => void;
+    className?: string;
+    /** Accessible name of the grid. */
+    "aria-label"?: string;
+}
+
+interface StatePanelProps {
+    icon: ReactNode;
+    message: ReactNode;
+    pulse?: boolean;
+    onRetry?: () => void;
+}
+
+/** The narrow-viewport counterpart of a table state row (below `xl` there is no table to put it in). */
+function StatePanel({ icon, message, pulse = false, onRetry }: StatePanelProps) {
+    return (
+        <div
+            data-slot="task-tree-state-panel"
+            className="flex h-48 flex-col items-center justify-center gap-3 rounded-2xl border border-border/50 bg-card p-6 text-center shadow-sm"
+        >
+            {icon}
+            <p className={cn("text-sm text-muted-foreground", pulse && "animate-pulse")}>{message}</p>
+            {onRetry && (
+                <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+                    <RotateCcw className="size-4" aria-hidden="true" />
+                    Try again
+                </Button>
+            )}
+        </div>
+    );
+}
+
+/**
+ * The task tree's table shell.
+ *
+ * A tree cannot be expressed by the generic shared data table — that table has no expand rows, no
+ * indentation and no `aria-level` — so this composes the raw `Table` primitives directly. It owns
+ * the header, the loading / empty / error states and the horizontal-scroll wrapper, and delegates
+ * each data row to `TaskRow`.
+ *
+ * Wide viewports get the table; below `xl` the same rows render as a stacked card list carrying the
+ * same fields and the same actions, because a 7-column grid is unusable on a phone. Loading, empty
+ * and error states are shown on BOTH surfaces so the narrow view is never blank.
+ *
+ * Purely presentational: rows, expansion state and catalogs arrive as props, so it mounts with
+ * fixtures and no API.
+ */
+export function TaskTree({
+    roots,
+    rows,
+    expandedIds,
+    onToggleExpand,
+    isLoading = false,
+    error = null,
+    onRetry,
+    emptyMessage = "No tasks found.",
+    renderActions,
+    fields = [],
+    catalogs,
+    members,
+    editingCell = null,
+    cellPatches,
+    onStartCellEdit,
+    onCancelCellEdit,
+    onCommitCellEdit,
+    className,
+    "aria-label": ariaLabel = "Task list",
+}: TaskTreeProps) {
+    // The pager's slice is rendered verbatim when given; otherwise the tree flattens the forest
+    // itself. `roots` is still the FULL forest either way, so `positions` stays whole-forest.
+    const visible = useMemo(
+        () => rows ?? flattenVisible(roots, expandedIds),
+        [rows, roots, expandedIds],
+    );
+    const positions = useMemo(() => computeSiblingPositions(roots), [roots]);
+    const columns = useMemo(() => buildColumns(fields), [fields]);
+
+    const { widthFor, setColumnWidth } = useTaskColumnWidths();
+
+    /**
+     * The width each column is showing WHILE it is being dragged, overriding the committed store.
+     * It lives here, not in the hook, so a pointer move re-renders the grid without writing storage;
+     * a release clears the entry and commits the final number through the hook.
+     */
+    const [liveWidths, setLiveWidths] = useState<Readonly<Partial<Record<string, number>>>>({});
+
+    const widthOf = useCallback(
+        (columnKey: string): number => liveWidths[columnKey] ?? widthFor(columnKey),
+        [liveWidths, widthFor],
+    );
+
+    const handleColumnResize = useCallback((columnKey: string, width: number): void => {
+        setLiveWidths((previous) => ({ ...previous, [columnKey]: width }));
+    }, []);
+
+    const handleColumnResizeCommit = useCallback(
+        (columnKey: string, width: number): void => {
+            setLiveWidths((previous) => {
+                if (!(columnKey in previous)) return previous;
+                const next = { ...previous };
+                delete next[columnKey];
+                return next;
+            });
+            setColumnWidth(columnKey, width);
+        },
+        [setColumnWidth],
+    );
+
+    /**
+     * The table's minimum width is the SUM of the resolved widths (with a floor): the table is
+     * `table-fixed`, so this is what keeps a widened column from squeezing its neighbours and what
+     * makes the horizontal scrollbar appear exactly when the grid no longer fits.
+     */
+    const tableMinWidth = useMemo(
+        () => Math.max(TASK_TABLE_MIN_WIDTH_PX, columns.reduce((sum, column) => sum + widthOf(column.key), 0)),
+        [columns, widthOf],
+    );
+
+    /**
+     * The frozen leading columns' offsets, resolved from the SAME `widthOf` the `<colgroup>` uses —
+     * including a live drag width, so the offset moves on the very frame the column does. The
+     * title's `left` is the cumulative width of everything frozen before it, never a literal.
+     */
+    const frozenOffsets = useMemo(() => frozenTaskColumnOffsets(widthOf), [widthOf]);
+    const lastFrozenColumnKey = FROZEN_TASK_COLUMN_KEYS[FROZEN_TASK_COLUMN_KEYS.length - 1];
+
+    const showError = error !== null && error !== "";
+    const isEmpty = !isLoading && !showError && visible.length === 0;
+    const columnCount = columns.length;
+
+    const loadingRow = (
+        <TableRow data-slot="task-tree-loading">
+            <TableCell colSpan={columnCount} className="h-48 text-center">
+                <div className="flex flex-col items-center justify-center gap-3">
+                    <Spinner className="size-6 text-muted-foreground" />
+                    <p className="animate-pulse text-sm text-muted-foreground">Loading tasks…</p>
+                </div>
+            </TableCell>
+        </TableRow>
+    );
+
+    const emptyRow = (
+        <TableRow data-slot="task-tree-empty">
+            <TableCell colSpan={columnCount} className="h-48 text-center">
+                <div className="flex flex-col items-center justify-center gap-2">
+                    <ListTree className="size-8 text-muted-foreground/50" aria-hidden="true" />
+                    <p className="text-sm text-muted-foreground">{emptyMessage}</p>
+                </div>
+            </TableCell>
+        </TableRow>
+    );
+
+    const errorRow = (
+        <TableRow data-slot="task-tree-error">
+            <TableCell colSpan={columnCount} className="h-48 text-center">
+                <div className="flex flex-col items-center justify-center gap-3" role="alert">
+                    <TriangleAlert className="size-8 text-destructive" aria-hidden="true" />
+                    <p className="text-sm text-muted-foreground">{error}</p>
+                    {onRetry && (
+                        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+                            <RotateCcw className="size-4" aria-hidden="true" />
+                            Try again
+                        </Button>
+                    )}
+                </div>
+            </TableCell>
+        </TableRow>
+    );
+
+    return (
+        <div data-slot="task-tree" className={cn("space-y-3", className)}>
+            <div className="xl:hidden">
+                {isLoading ? (
+                    <StatePanel
+                        icon={<Spinner className="size-6 text-muted-foreground" />}
+                        message="Loading tasks…"
+                        pulse
+                    />
+                ) : showError ? (
+                    <StatePanel
+                        icon={<TriangleAlert className="size-8 text-destructive" aria-hidden="true" />}
+                        message={error}
+                        onRetry={onRetry}
+                    />
+                ) : isEmpty ? (
+                    <StatePanel
+                        icon={<ListTree className="size-8 text-muted-foreground/50" aria-hidden="true" />}
+                        message={emptyMessage}
+                    />
+                ) : (
+                    <ul
+                        data-slot="task-tree-cards"
+                        className="divide-y divide-border rounded-2xl border border-border/50 bg-card shadow-sm"
+                    >
+                        {visible.map((node) => {
+                            const position = positions.get(node.id) ?? { posInSet: 1, setSize: 1 };
+                            const hasChildren = node.children.length > 0;
+                            const isExpanded = expandedIds.has(node.id);
+                            const indentDepth = Math.min(node.depth, MAX_INDENT_DEPTH);
+                            const expandLabel = isExpanded ? `Collapse ${node.title}` : `Expand ${node.title}`;
+                            const startText = formatTaskDate(node.start_date);
+                            const endText = formatTaskDate(node.end_date);
+
+                            return (
+                                <li
+                                    key={node.id}
+                                    data-slot="task-tree-card"
+                                    data-task-id={node.id}
+                                    data-depth={node.depth}
+                                    data-indent-depth={indentDepth}
+                                    aria-level={node.depth + 1}
+                                    aria-posinset={position.posInSet}
+                                    aria-setsize={position.setSize}
+                                    className="p-3"
+                                >
+                                    <div
+                                        className="flex items-start gap-2"
+                                        style={{ paddingLeft: indentDepth * INDENT_STEP_PX }}
+                                    >
+                                        {hasChildren ? (
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon-xs"
+                                                aria-label={expandLabel}
+                                                title={expandLabel}
+                                                aria-expanded={isExpanded}
+                                                data-slot="task-tree-expand"
+                                                onClick={() => onToggleExpand(node.id)}
+                                                className="mt-0.5 shrink-0 text-muted-foreground hover:text-foreground"
+                                            >
+                                                <ChevronRight
+                                                    className={cn(
+                                                        "size-3.5 transition-transform",
+                                                        isExpanded && "rotate-90",
+                                                    )}
+                                                    aria-hidden="true"
+                                                />
+                                            </Button>
+                                        ) : (
+                                            /*
+                                             * A leaf reserves the chevron's 24px so its content starts at
+                                             * the same x as a sibling that owns one. In this inline card —
+                                             * unlike the wide table, which holds the chevron in a separate
+                                             * expand column — the missing chevron would exactly cancel the
+                                             * level step and land a depth-1 child on its parent's content.
+                                             */
+                                            <span className="size-6 shrink-0" aria-hidden="true" />
+                                        )}
+
+                                        <div className="min-w-0 flex-1 space-y-1.5">
+                                            <div className="flex items-center gap-1.5">
+                                                {/*
+                                                 * The subtask-count badge leads the card's heading row
+                                                 * (chevron, badge, status glyph, title) so it stays
+                                                 * anchored to the row's identity instead of trailing
+                                                 * the flexible title. Like the wide table it sits in a
+                                                 * reserved fixed-width slot on every row, so a leaf's
+                                                 * status glyph and title share a parent's baseline.
+                                                 */}
+                                                <span className="flex w-6 shrink-0 items-center justify-center">
+                                                    {hasChildren ? (
+                                                        <Badge
+                                                            variant="secondary"
+                                                            data-slot="task-subtask-count"
+                                                            title={subtaskLabel(node.children.length)}
+                                                            className="shrink-0 border-border/60 px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground"
+                                                        >
+                                                            <span aria-hidden="true">{node.children.length}</span>
+                                                            <span className="sr-only">
+                                                                {subtaskLabel(node.children.length)}
+                                                            </span>
+                                                        </Badge>
+                                                    ) : null}
+                                                </span>
+                                                {/*
+                                                 * The card's leading status glyph, mirroring the wide
+                                                 * table: after the subtask badge, before the title.
+                                                 * An unresolved FK draws nothing — the badge strip
+                                                 * below already carries the placeholder.
+                                                 */}
+                                                {node.status !== null ? (
+                                                    <CatalogStatusIcon
+                                                        icon={node.status.icon}
+                                                        color={node.status.color}
+                                                        tone="status"
+                                                        density="dense"
+                                                    />
+                                                ) : null}
+                                                <p
+                                                    className="min-w-0 break-words text-sm font-medium"
+                                                    title={node.title}
+                                                >
+                                                    {node.title}
+                                                </p>
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                                <AssigneeStack assignees={node.assignees} max={2} emptyVariant="icon" />
+                                                <span title={`Start: ${startText}`}>Start: {startText}</span>
+                                                <span title={`Due: ${endText}`}>Due: {endText}</span>
+                                            </div>
+                                            <div
+                                                data-slot="task-row-badges"
+                                                className="flex flex-wrap items-center gap-1.5"
+                                            >
+                                                <TaskPriorityBadge priority={node.priority} />
+                                                <TaskStatusBadge status={node.status} />
+                                            </div>
+                                            {fields.length > 0 ? (
+                                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                                    {fields.map((field) => {
+                                                        const answer =
+                                                            node.custom_values.find(
+                                                                (entry) => entry.field_id === field.id,
+                                                            )?.value ?? null;
+                                                        return (
+                                                            <span key={field.id} className="inline-flex items-center gap-1">
+                                                                <span className="font-medium">{field.label}:</span>
+                                                                <span>{formatTaskFieldValue(field, answer)}</span>
+                                                            </span>
+                                                        );
+                                                    })}
+                                                </div>
+                                            ) : null}
+                                        </div>
+
+                                        {renderActions?.(node)}
+                                    </div>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                )}
+            </div>
+
+            <div className="hidden overflow-x-auto xl:block">
+                <div className="isolate rounded-2xl border border-border/50 bg-card shadow-sm">
+                    {/*
+                     * `table-fixed` makes the `<colgroup>` the single source of column geometry, so
+                     * the header and every body cell share it and cannot drift; the widths are the
+                     * live runtime numbers from `useTaskColumnWidths`.
+                     */}
+                    <Table
+                        role="treegrid"
+                        aria-label={ariaLabel}
+                        className="table-fixed"
+                        style={{ minWidth: tableMinWidth }}
+                    >
+                        <colgroup>
+                            {columns.map((column) => (
+                                <col key={column.key} style={{ width: `${widthOf(column.key)}px` }} />
+                            ))}
+                        </colgroup>
+                        <TableHeader className="bg-muted/30">
+                            <TableRow>
+                                {columns.map((column) => {
+                                    const columnKey = column.key;
+                                    const frozenLeft = isFrozenTaskColumnKey(columnKey)
+                                        ? frozenOffsets[columnKey]
+                                        : undefined;
+                                    return (
+                                        <TableHead
+                                            key={columnKey}
+                                            scope="col"
+                                            style={frozenLeft === undefined ? undefined : { left: frozenLeft }}
+                                            className={cn(
+                                                // `sticky` is a positioned box, so it anchors the resize
+                                                // handle just as the old `relative` did; only a scrolling
+                                                // header cell still needs `relative`.
+                                                frozenLeft === undefined ? "relative" : FROZEN_HEADER_CELL_CLASS,
+                                                frozenLeft !== undefined &&
+                                                    columnKey === lastFrozenColumnKey &&
+                                                    FROZEN_EDGE_CLASS,
+                                                column.align === "right" && "text-right",
+                                                column.align === "center" && "text-center",
+                                            )}
+                                        >
+                                            {column.srOnly ? <span className="sr-only">{column.label}</span> : column.label}
+                                            {/*
+                                             * Only data columns are resizable. The structural gutters
+                                             * (`expand`, `actions`) render no handle — their widths are
+                                             * fixed layout geometry, not a user preference — so they can
+                                             * never be dragged or keyboard-nudged. `isResizableTaskColumnKey`
+                                             * is the single source of truth shared with the width store.
+                                             */}
+                                            {isResizableTaskColumnKey(columnKey) ? (
+                                                <ColumnResizeHandle
+                                                    columnKey={column.key}
+                                                    label={column.label}
+                                                    width={widthOf(column.key)}
+                                                    minWidth={minTaskColumnWidth(column.key)}
+                                                    onResize={handleColumnResize}
+                                                    onResizeCommit={handleColumnResizeCommit}
+                                                />
+                                            ) : null}
+                                        </TableHead>
+                                    );
+                                })}
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {isLoading
+                                ? loadingRow
+                                : showError
+                                  ? errorRow
+                                  : isEmpty
+                                    ? emptyRow
+                                    : visible.map((node) => {
+                                          const position = positions.get(node.id) ?? { posInSet: 1, setSize: 1 };
+                                          const hasChildren = node.children.length > 0;
+                                          const rowProps: TaskRowProps = {
+                                              node,
+                                              posInSet: position.posInSet,
+                                              setSize: position.setSize,
+                                              hasChildren,
+                                              isExpanded: expandedIds.has(node.id),
+                                              onToggleExpand,
+                                              actions: renderActions?.(node),
+                                              frozenColumns: frozenOffsets,
+                                              fields,
+                                              catalogs,
+                                              members,
+                                              editingCell,
+                                              cellPatches,
+                                              onStartCellEdit,
+                                              onCancelCellEdit,
+                                              onCommitCellEdit,
+                                          };
+                                          return <TaskRow key={node.id} {...rowProps} />;
+                                      })}
+                        </TableBody>
+                    </Table>
+                </div>
+            </div>
+        </div>
+    );
+}
