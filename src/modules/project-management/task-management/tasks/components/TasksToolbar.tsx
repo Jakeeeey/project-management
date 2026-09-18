@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronDown, ListFilter, ListTree, RotateCcw, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -34,7 +34,13 @@ import { isClauseActive, type FilterClause, type SavedTaskFilter } from "./task-
 import type { TaskField } from "../hooks/useTasks";
 
 /**
- * The tasks toolbar: the search box, the list controls, and the filter trigger.
+ * The tasks toolbar: the list selector, the search box, the list controls, and the filter trigger.
+ *
+ * The list selector leads the row as a NODE (`listSwitcher`) rather than as list data, so this bar
+ * keeps no opinion about lists: the orchestrator owns the list set, the selection and the handler.
+ * It belongs here because this row already holds the current view's scoping controls, so "which list
+ * am I looking at" sits adjacent to the content it scopes — the page-title row stays heading plus
+ * page actions only.
  *
  * Purely presentational and fully controlled — every value and every handler is a prop, so the
  * orchestrator owns the search term, the clause array, the saved sets and the pagination state and
@@ -66,6 +72,12 @@ export interface TasksToolbarMember {
 }
 
 export interface TasksToolbarProps {
+    /**
+     * The current view's list selector, rendered as the row's left-most control ahead of the search
+     * box. A NODE, not list data — the toolbar never learns what a list is. `null`/omitted (or a
+     * selector with nothing to choose between) simply leaves the search box as the first control.
+     */
+    readonly listSwitcher?: ReactNode;
     readonly searchValue: string;
     readonly onSearchChange: (value: string) => void;
     /** The active filter clauses, in order. */
@@ -102,6 +114,7 @@ export interface TasksToolbarProps {
 }
 
 export function TasksToolbar({
+    listSwitcher,
     searchValue,
     onSearchChange,
     clauses,
@@ -149,6 +162,8 @@ export function TasksToolbar({
     return (
         <div data-slot="tasks-toolbar" className="space-y-3">
             <div className="flex flex-col gap-3 rounded-2xl border border-border/50 bg-card p-3 shadow-sm sm:flex-row sm:items-center">
+                {listSwitcher}
+
                 <div className="relative min-w-0 sm:max-w-md sm:flex-1">
                     <Search
                         className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"

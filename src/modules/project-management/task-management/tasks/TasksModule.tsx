@@ -11,6 +11,7 @@ import { AssigneeDialog } from "./components/AssigneeDialog";
 import { SubtaskCreateDialog } from "./components/SubtaskCreateDialog";
 import { TaskDetailSheet } from "./components/TaskDetailSheet";
 import { TaskFormDialog, type TaskBreadcrumb } from "./components/TaskFormDialog";
+import { TaskListSwitcher } from "./components/TaskListSwitcher";
 import { DEFAULT_TASK_PAGE_SIZE, TaskPagination } from "./components/TaskPagination";
 import { TaskTree } from "./components/TaskTree";
 import { TasksHeaderActions } from "./components/TasksHeaderActions";
@@ -42,8 +43,9 @@ import {
     type TaskListItem,
 } from "./hooks/useTasks";
 import { useTaskMutations } from "./hooks/useTaskMutations";
+import { useTaskLists } from "./hooks/useTaskLists";
 import { useTaskTree, type TaskTreeRow } from "./hooks/useTaskTree";
-import type { UpdateTaskInput } from "./types/pm-task.schema";
+import type { CreateTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
 
 /**
  * The Tasks client orchestrator.
@@ -319,7 +321,30 @@ export interface TasksModuleProps {
 }
 
 export function TasksModule({ userId }: TasksModuleProps) {
-    const { items, catalogs, fields, isLoading, isRefreshing, error, capabilities, refresh } = useTasks();
+    /**
+     * The switcher's source, and the owner of the one-shot default-list bootstrap: a department
+     * whose head never ran the configuration seed still gets its "General" list without the task
+     * read having to know about lists at all.
+     */
+    const { lists } = useTaskLists();
+
+    /** The user's explicit choice. `null` means "not chosen yet" — the default list is used. */
+    const [selectedListId, setSelectedListId] = useState<number | null>(null);
+
+    /**
+     * The list the page actually reads: the user's choice while it is still a LIVE list, otherwise
+     * the department's default (the flagged row, else the first). Deriving the fallback instead of
+     * storing it is what makes a list that a head deleted — or any change to the list set — fall
+     * back to the default rather than stranding the page on an empty, unresolvable read.
+     */
+    const activeListId = useMemo(() => {
+        if (selectedListId !== null && lists.some((list) => list.id === selectedListId)) {
+            return selectedListId;
+        }
+        return (lists.find((list) => list.is_default) ?? lists[0])?.id ?? null;
+    }, [selectedListId, lists]);
+
+    const { items, catalogs, fields, isLoading, isRefreshing, error, capabilities, refresh } = useTasks(activeListId);
     const {
         members,
         memberNameById,
@@ -566,6 +591,28 @@ export function TasksModule({ userId }: TasksModuleProps) {
         setIsCreateOpen(true);
     }, []);
 
+    /**
+     * The switcher's selection seam. The resolved fallback stays derived, never stored, and the page
+     * lands on 1 exactly as it does for a search or filter change — the new list's rows have nothing
+     * to do with the old page index.
+     */
+    const handleSelectList = useCallback((id: number): void => {
+        setSelectedListId(id);
+        setPage(1);
+    }, []);
+
+    /**
+     * The create seam the dialogs call. The list in view is stamped onto every new task, so a task
+     * created while a list is selected lands in THAT list instead of the department default — which
+     * is what keeps the refetch that follows the create showing the task that was just made. An
+     * input that already names a list (none does today) still wins.
+     */
+    const persistCreateTask = useCallback(
+        (input: CreateTaskInput) =>
+            createTask({ ...input, list_id: input.list_id ?? activeListId ?? undefined }),
+        [createTask, activeListId],
+    );
+
     // Each dialog's open state is derived from its subject id, so closing is "forget the subject".
     const handleCreateOpenChange = useCallback(
         (next: boolean): void => {
@@ -732,9 +779,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
             className="w-full scroll-pt-16 space-y-4 px-4 py-6 md:scroll-pt-20"
         >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 space-y-1">
-                    <h1 className="text-lg font-semibold tracking-tight">Tasks</h1>
-                </div>
+                <h1 className="min-w-0 text-lg font-semibold tracking-tight">Tasks</h1>
 
                 <TasksHeaderActions capabilities={capabilities} onCreateTask={handleCreateTask} />
             </div>
@@ -782,6 +827,13 @@ export function TasksModule({ userId }: TasksModuleProps) {
             ) : null}
 
             <TasksToolbar
+                listSwitcher={
+                    <TaskListSwitcher
+                        lists={lists}
+                        selectedId={activeListId}
+                        onSelect={handleSelectList}
+                    />
+                }
                 searchValue={search}
                 onSearchChange={handleSearchChange}
                 clauses={clauses}
@@ -852,7 +904,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 members={members}
                 capabilities={capabilities}
                 isSubmitting={isDialogSubmitting}
-                onCreate={createTask}
+                onCreate={persistCreateTask}
                 onUpdate={updateTask}
                 onAssign={assign}
                 onUnassign={unassign}
@@ -868,7 +920,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 members={members}
                 capabilities={capabilities}
                 isSubmitting={isDialogSubmitting}
-                onCreate={createTask}
+                onCreate={persistCreateTask}
                 onUpdate={updateTask}
                 onAssign={assign}
                 onUnassign={unassign}
@@ -887,7 +939,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 members={members}
                 capabilities={capabilities}
                 isSubmitting={isDialogSubmitting}
-                onCreate={createTask}
+                onCreate={persistCreateTask}
                 onUpdate={updateTask}
                 onAssign={assign}
                 onUnassign={unassign}

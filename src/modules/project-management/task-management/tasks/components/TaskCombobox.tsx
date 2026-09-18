@@ -28,8 +28,11 @@ import { CatalogStatusIcon } from "./CatalogStatusIcon";
  * - A trigger showing the CURRENT value (or the placeholder while nothing is chosen).
  * - A search input INSIDE the popup, so a long catalog/member list is type-to-filter.
  * - A per-option leading icon, rendered by `CatalogStatusIcon` so a status/priority/custom-field
- *   option looks exactly like it does everywhere else. The icon is ALWAYS drawn — an option with no
- *   stored icon falls back to the foundation's default marker rather than leaving the column blank.
+ *   option looks exactly like it does everywhere else. By default the icon is ALWAYS drawn — an
+ *   option with no stored icon falls back to the foundation's default marker rather than leaving
+ *   the column blank — but a row set that is NOT a catalog can opt out with `showStatusIcon={false}`,
+ *   because the fallback marker on a row that has no status reads as an unselected radio, not as
+ *   information.
  * - A visible CLEAR (X) button, rendered only while a value is selected, so "how do I remove a
  *   value" is answered by the control itself rather than by a fake first list row labelled with
  *   the placeholder.
@@ -98,6 +101,16 @@ export interface TaskComboboxProps {
      * hidden with CSS.
      */
     readonly clearable?: boolean;
+    /**
+     * Whether the trigger and every option lead with the stored catalog glyph. Defaults to `true`.
+     *
+     * A catalog row — a status, a priority, a custom-field option — carries its stored icon and
+     * colour as part of its identity, so the glyph belongs there. A row set that is NOT a catalog
+     * (a task list has no status and no stored icon) must set this to `false`: without it the
+     * foundation's fallback marker would put a meaningless circle in front of every name, reading
+     * as an unselected radio. The selected row's check is the only mark such a control needs.
+     */
+    readonly showStatusIcon?: boolean;
 }
 
 /** Labels, colours and icons keyed by option value, so the render pass does not scan the array per row. */
@@ -132,6 +145,7 @@ export function TaskCombobox({
     searchPlaceholder = "Search...",
     emptyMessage = "No matches.",
     clearable = true,
+    showStatusIcon = true,
 }: TaskComboboxProps) {
     const { labels, colors, icons } = React.useMemo(() => indexOptions(options), [options]);
 
@@ -171,8 +185,10 @@ export function TaskCombobox({
                      * The selected value leads with its stored icon — the same glyph the read-only
                      * row chip shows — so opening the editor never changes what the value looks
                      * like. `tone="status"` because the trigger is a bare surface, not a filled pill.
+                     * Skipped entirely when the caller has opted out: a list has no glyph to show,
+                     * and the fallback marker would be a stray circle, not information.
                      */}
-                    {value === null ? null : (
+                    {value === null || !showStatusIcon ? null : (
                         <CatalogStatusIcon
                             icon={icons.get(value)}
                             color={colors.get(value)}
@@ -224,15 +240,19 @@ export function TaskCombobox({
                     {(itemValue: string) => (
                         <ComboboxItem key={itemValue} value={itemValue}>
                             {/*
-                             * The glyph is ALWAYS drawn: an option with no stored icon falls back to
-                             * the foundation's default marker, so the option column stays uniform.
+                             * The glyph is ALWAYS drawn for a catalog: an option with no stored icon
+                             * falls back to the foundation's default marker, so the option column
+                             * stays uniform. A non-catalog row set opts out (`showStatusIcon={false}`)
+                             * so its rows are plain text and the selected check is the only mark.
                              */}
-                            <CatalogStatusIcon
-                                icon={icons.get(itemValue)}
-                                color={colors.get(itemValue)}
-                                tone="status"
-                                density="comfortable"
-                            />
+                            {showStatusIcon ? (
+                                <CatalogStatusIcon
+                                    icon={icons.get(itemValue)}
+                                    color={colors.get(itemValue)}
+                                    tone="status"
+                                    density="comfortable"
+                                />
+                            ) : null}
                             <span className="min-w-0 truncate">
                                 {labels.get(itemValue) ?? itemValue}
                             </span>

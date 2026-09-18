@@ -250,3 +250,23 @@ export async function assertCanConfigure(actor: ScopedActor): Promise<void> {
         );
     }
 }
+
+/**
+ * Creates, renames, reorders or soft-deletes a department's task lists through the lists CRUD
+ * route. HEAD-ONLY, the same authority the department's access policy carries: it reuses the
+ * evaluator's existing head fact (`canManageDepartmentSetting`, i.e. `RoleFacts.isHead`) rather
+ * than the weaker `configure` flag, so neither a granted member nor a member empowered by an open
+ * `allow_all_members_grant` policy can manage the shared list structure.
+ *
+ * The implicit default-list bootstrap (`TaskListService.ensureDefaultList`) is deliberately NOT
+ * gated by this: it inserts one fixed row and makes no decision, so there is nothing privileged to
+ * authorize.
+ */
+export async function assertCanManageLists(actor: ScopedActor): Promise<void> {
+    const permissions = await getPermissionContext(actor);
+    if (!permissions.canManageDepartmentSetting) {
+        throw new PermissionError(
+            "FORBIDDEN: Managing task lists is limited to the department head",
+        );
+    }
+}

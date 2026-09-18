@@ -32,6 +32,12 @@ export const CreateTaskSchema = z.object({
     title: z.string().trim().min(1, "Title is required").max(255, "Title must be 255 characters or fewer"),
     description: z.string().nullable().optional(),
     parent_id: IdentifierSchema.nullable().optional(),
+    /**
+     * The task's list. A root task may name any live list of the actor's department; omitted, it
+     * falls back to the department's default list. A subtask may name only its parent's list —
+     * omitted, it inherits it — so a subtree can never be split across lists.
+     */
+    list_id: IdentifierSchema.nullable().optional(),
     /** Catalog row of the actor's department; `null`/omitted falls back to that kind's default row. */
     status_id: IdentifierSchema.nullable().optional(),
     priority_id: IdentifierSchema.nullable().optional(),
@@ -49,6 +55,10 @@ export const CreateTaskSchema = z.object({
 /**
  * PATCH body for editing a task's fields. Every field is optional (only what changed is written),
  * and `parent_id` is excluded by construction — see `CreateTaskSchema`.
+ *
+ * `list_id` IS accepted here, but only so the service can REJECT a differing value with a clear
+ * 400: a task's list is fixed by its place in the tree, and a plain edit must never be able to
+ * split a subtree across lists.
  */
 export const UpdateTaskSchema = CreateTaskSchema.omit({ parent_id: true }).partial();
 

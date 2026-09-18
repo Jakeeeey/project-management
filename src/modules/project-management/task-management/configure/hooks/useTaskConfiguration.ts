@@ -89,7 +89,12 @@ export interface UseTaskConfigurationResult {
     readonly deleteItem: (kind: CatalogKind, id: number, label: string) => Promise<boolean>;
     readonly setDefault: (kind: CatalogKind, id: number, label: string) => Promise<boolean>;
     readonly moveItem: (kind: CatalogKind, id: number, direction: CatalogMoveDirection) => Promise<boolean>;
-    /** The explicit, idempotent seed action — never implicit on load. */
+    /**
+     * The department's configuration seed, explicit and head-gated — never implicit on load: it
+     * writes a whole fixture (statuses, priorities, columns) and so expresses policy the head must
+     * choose. The one write the app ensures implicitly is the decision-free default task list
+     * (`POST /tasks/bootstrap`): a single fixed row, so the actor chooses nothing.
+     */
     readonly seedDefaults: () => Promise<boolean>;
 }
 

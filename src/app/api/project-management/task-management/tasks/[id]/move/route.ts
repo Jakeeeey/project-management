@@ -29,12 +29,14 @@ export const dynamic = "force-dynamic";
  * 3. `MoveTaskSchema` validates the body, then `assertCanMove` runs (the matrix defines move as
  *    `canEdit`, so this is never an independent gate).
  * 4. The service refuses with 400 when the target parent is missing as a live row, is not in the
- *    actor's department, **is the moved node itself** (`isDescendant` is deliberately strict and
- *    answers `false` for `x` vs `x`, so self-parenting is rejected explicitly or a cycle slips
- *    through), or is a descendant of the moved node; when `sibling_ids` does not contain the moved
- *    node exactly once or contains duplicates; when any entry is not a live row of the actor's
- *    department; or when the list is not exactly the target parent's complete post-move live child
- *    set — the rule that keeps unlisted siblings from holding stale `sort_order` values.
+ *    actor's department, **is in a different task list** than the moved task (a subtask must stay in
+ *    its list, so a cross-list re-parent is rejected rather than copying the subtree), **is the
+ *    moved node itself** (`isDescendant` is deliberately strict and answers `false` for `x` vs `x`,
+ *    so self-parenting is rejected explicitly or a cycle slips through), or is a descendant of the
+ *    moved node; when `sibling_ids` does not contain the moved node exactly once or contains
+ *    duplicates; when any entry is not a live row of the actor's department; or when the list is
+ *    not exactly the target parent's complete post-move live child set — the rule that keeps
+ *    unlisted siblings from holding stale `sort_order` values.
  * 5. One bulk `PATCH pm_task` writes the moved node's new `parent_id` and `sort_order = index` for
  *    **every** sibling in the sent order (never the moved row alone), plus `updated_at` from
  *    `phNow()` and `updated_by` from the actor. The client's cycle guard is UX only: this route is
