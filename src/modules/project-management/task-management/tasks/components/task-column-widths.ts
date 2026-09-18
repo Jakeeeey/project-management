@@ -31,12 +31,16 @@ export type TaskColumnKey =
 
 /**
  * The default widths, seeded from the classes the table hardcoded before widths became dynamic, so
- * the initial layout is IDENTICAL to the pre-resize table: `expand 76`, `title 220`, `assignees 160`,
+ * the initial layout stays identical to the pre-resize table: `title 220`, `assignees 160`,
  * `start 160`, `due 160`, `priority 140`, `status 140`, `actions 72`. Custom columns start at 160 —
  * the `field` entry below, which is also what an override-less custom column resolves to.
+ *
+ * `expand` is the exception: it was 76 because it also held the drag handle. Drag-and-drop has been
+ * removed, so the gutter now carries only the accordion chevron — keeping the old width left ~40px of
+ * dead space between the chevron and the task name, which is why it is now sized to the chevron alone.
  */
 export const DEFAULT_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
-    expand: 76,
+    expand: 40,
     title: 220,
     assignees: 160,
     start: 160,
@@ -55,7 +59,7 @@ export const DEFAULT_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
  * `NON_RESIZABLE_TASK_COLUMN_KEYS` — but it stays here so the record remains total over the union.)
  */
 export const MIN_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
-    expand: 68,
+    expand: 32,
     title: 160,
     assignees: 120,
     start: 120,
@@ -67,9 +71,10 @@ export const MIN_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
 };
 
 /**
- * The structural gutters whose width is NOT a user preference: the `expand` control gutter (drag
- * handle + accordion chevron) and the `actions` icon gutter. Their widths are pinned by the table's
- * own geometry — `expand` is the leading frozen column, so its 76px is the baseline every following
+ * The structural gutters whose width is NOT a user preference: the `expand` control gutter (the
+ * accordion chevron, now that drag-and-drop is gone) and the `actions` icon gutter. Their widths are
+ * pinned by the table's own geometry — `expand` is the leading frozen column, so its width is the
+ * baseline every following
  * column's frozen offset is derived from — and nothing in the row reads a "wider gutter" as a
  * preference. Letting them be dragged would silently shift the frozen block and the indentation
  * baseline for no benefit, so they are fixed.

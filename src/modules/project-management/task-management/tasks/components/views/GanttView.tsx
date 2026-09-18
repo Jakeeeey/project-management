@@ -492,6 +492,20 @@ function barColorFor(item: TaskListItem): string {
 }
 
 /**
+ * How much of a bar's palette colour survives into its fill and border: 75%, the requested
+ * translucency.
+ *
+ * The softness is applied to the COLOUR — `color-mix(…, transparent)` — and never as `opacity` on the
+ * bar element. Element opacity would also fade the bar's label, whose ink `assigneeForegroundFor`
+ * picks as a WCAG contrast decision; a softened glyph would undermine that and hurt legibility on
+ * light fills. Mixing the colour itself fades the paint only and leaves the label at full contrast.
+ *
+ * `color-mix` is the house pattern this module already uses (see `CatalogChip`'s `DOT_HALO`); a hex
+ * literal with a computed alpha is deliberately avoided so the palette stays the single colour source.
+ */
+const BAR_FILL_KEEP = 75;
+
+/**
  * One CSS rule per task, keyed to the vendor's own bar variables.
  *
  * The vendor exposes no per-task colour property (its `ITask` index signature accepts an extra key
@@ -500,9 +514,14 @@ function barColorFor(item: TaskListItem): string {
  * the single chart-wide declaration on `.pm-task-gantt`, because a custom property set on the node
  * itself resolves before any inherited value — genuinely per-task, not a global tint.
  *
- * The fill is `barColorFor(item)` and the bar's own label ink is `assigneeForegroundFor(fill)`, so
- * text stays legible on light and dark fills alike. Every task gets a rule, so no fallback path
- * remains that could tint a bar from anything but its own id.
+ * The fill is `barColorFor(item)` mixed toward `transparent` (see {@link BAR_FILL_KEEP}), so bars read
+ * as slightly softened rather than fully saturated. The border carries the SAME mix as the fill, so
+ * the whole bar — edge included — softens together; a full-opacity border against a translucent fill
+ * would trace the bar as a saturated ring, i.e. look like a rendering artefact rather than a
+ * deliberately softened edge. The label ink stays `assigneeForegroundFor(hex)` — full-contrast ink
+ * derived from the UN-mixed colour — because the text is the readable element and must not be
+ * softened. Every task gets a rule, so no fallback path remains that could tint a bar from anything
+ * but its own id.
  *
  * Fidelity note: this targets the STABLE `data-task-id` attribute, not the vendor's CSS-module class
  * hash (`.wx-GKbcLEGA`), which changes between releases.
@@ -512,13 +531,14 @@ function buildBarColourCss(items: readonly TaskListItem[]): string {
 
     for (const item of items) {
         const hex = barColorFor(item);
+        const fill = `color-mix(in srgb, ${hex} ${BAR_FILL_KEEP}%, transparent)`;
         const foreground = assigneeForegroundFor(hex);
 
         rules.push(
             `.pm-task-gantt [data-task-id="${item.id}"]{` +
-                `--wx-gantt-task-color:${hex};` +
-                `--wx-gantt-task-fill-color:${hex};` +
-                `--wx-gantt-task-border:1px solid ${hex};` +
+                `--wx-gantt-task-color:${fill};` +
+                `--wx-gantt-task-fill-color:${fill};` +
+                `--wx-gantt-task-border:1px solid ${fill};` +
                 `--wx-gantt-task-font-color:${foreground};` +
                 `}`,
         );

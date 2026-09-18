@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { ChevronRight, ListTree, RotateCcw, TriangleAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -146,8 +146,21 @@ function computeSiblingPositions(
 }
 
 export interface TaskTreeProps {
-    /** The department's forest from `buildTree` — never a flattened list. */
+    /**
+     * The department's (already filtered) forest from `buildTree` / `pruneForest` — never a
+     * flattened list. Even when `rows` is supplied this stays the FULL forest: it is what supplies
+     * each rendered row's `children` (the chevron and the subtask-count badge) and the sibling
+     * positions behind `aria-posinset` / `aria-setsize`, so both stay correct when a page boundary
+     * splits a sibling set.
+     */
     roots: readonly TreeNode<TaskRowView>[];
+    /**
+     * The rows to render, in render order. Omit it and the tree flattens `roots` itself through
+     * `flattenVisible` (the everything-fits case). The pager supplies an explicit page slice here,
+     * because the pager counts ROWS: the rows rendered must be exactly the rows it counted, so the
+     * tree must not re-expand a sliced row and pull in children beyond the page.
+     */
+    rows?: readonly TreeNode<TaskRowView>[];
     /** Ids whose children are currently shown. */
     expandedIds: ReadonlySet<number>;
     onToggleExpand: (id: number) => void;
@@ -157,15 +170,8 @@ export interface TaskTreeProps {
     onRetry?: () => void;
     /** One short sentence for the empty state. */
     emptyMessage?: string;
-    /** Slot for the dnd-kit handle cell content (todo 6). */
-    renderDragHandle?: (node: TreeNode<TaskRowView>) => ReactNode;
     /** Slot for each row's actions menu. */
     renderActions?: (node: TreeNode<TaskRowView>) => ReactNode;
-    /**
-     * Overrides how a data row is rendered. Defaults to `TaskRow`. Todo 6 passes a wrapper that
-     * renders `TaskRow` inside its sortable shell; the tree keeps owning the aria/computed props.
-     */
-    renderRow?: (props: TaskRowProps) => ReactNode;
     /** The department's custom columns — one extra table column and one extra card field each. */
     fields?: readonly TaskField[];
     /**
@@ -217,7 +223,7 @@ function StatePanel({ icon, message, pulse = false, onRetry }: StatePanelProps) 
  * A tree cannot be expressed by the generic shared data table — that table has no expand rows, no
  * indentation and no `aria-level` — so this composes the raw `Table` primitives directly. It owns
  * the header, the loading / empty / error states and the horizontal-scroll wrapper, and delegates
- * each data row to `TaskRow` (or the caller's `renderRow`).
+ * each data row to `TaskRow`.
  *
  * Wide viewports get the table; below `xl` the same rows render as a stacked card list carrying the
  * same fields and the same actions, because a 7-column grid is unusable on a phone. Loading, empty
@@ -228,15 +234,14 @@ function StatePanel({ icon, message, pulse = false, onRetry }: StatePanelProps) 
  */
 export function TaskTree({
     roots,
+    rows,
     expandedIds,
     onToggleExpand,
     isLoading = false,
     error = null,
     onRetry,
     emptyMessage = "No tasks found.",
-    renderDragHandle,
     renderActions,
-    renderRow,
     fields = [],
     catalogs,
     members,
@@ -248,7 +253,12 @@ export function TaskTree({
     className,
     "aria-label": ariaLabel = "Task list",
 }: TaskTreeProps) {
-    const visible = useMemo(() => flattenVisible(roots, expandedIds), [roots, expandedIds]);
+    // The pager's slice is rendered verbatim when given; otherwise the tree flattens the forest
+    // itself. `roots` is still the FULL forest either way, so `positions` stays whole-forest.
+    const visible = useMemo(
+        () => rows ?? flattenVisible(roots, expandedIds),
+        [rows, roots, expandedIds],
+    );
     const positions = useMemo(() => computeSiblingPositions(roots), [roots]);
     const columns = useMemo(() => buildColumns(fields), [fields]);
 
@@ -592,7 +602,6 @@ export function TaskTree({
                                               hasChildren,
                                               isExpanded: expandedIds.has(node.id),
                                               onToggleExpand,
-                                              dragHandle: renderDragHandle?.(node),
                                               actions: renderActions?.(node),
                                               frozenColumns: frozenOffsets,
                                               fields,
@@ -604,10 +613,7 @@ export function TaskTree({
                                               onCancelCellEdit,
                                               onCommitCellEdit,
                                           };
-                                          const rendered = renderRow
-                                              ? renderRow(rowProps)
-                                              : <TaskRow {...rowProps} />;
-                                          return <Fragment key={node.id}>{rendered}</Fragment>;
+                                          return <TaskRow key={node.id} {...rowProps} />;
                                       })}
                         </TableBody>
                     </Table>

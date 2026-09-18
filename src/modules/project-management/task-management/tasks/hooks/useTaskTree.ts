@@ -30,8 +30,8 @@ export interface TaskTreeAssignee {
 }
 
 /**
- * A task row as the tree renders it. Structurally satisfies `TaskRowView`, so `TaskTree` and the
- * drag-and-drop engine accept these nodes without a second mapping step.
+ * A task row as the tree renders it. Structurally satisfies `TaskRowView`, so `TaskTree` accepts
+ * these nodes without a second mapping step.
  */
 export interface TaskTreeRow extends Omit<TaskListItem, "assignees"> {
     readonly assignees: readonly TaskTreeAssignee[];
@@ -39,7 +39,7 @@ export interface TaskTreeRow extends Omit<TaskListItem, "assignees"> {
 
 /** The canonical return of the tree hook. */
 export interface UseTaskTreeResult {
-    /** The assembled forest — what `TaskTree` and `TreeDndProvider` take as `roots`. */
+    /** The assembled forest — what `TaskTree` takes as `roots`. */
     readonly roots: TreeNode<TaskTreeRow>[];
     /** The pre-order projection of the expanded subtrees, in render order. */
     readonly visible: TreeNode<TaskTreeRow>[];

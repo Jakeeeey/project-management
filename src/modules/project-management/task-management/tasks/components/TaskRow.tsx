@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, type CSSProperties, type ReactNode, type Ref } from "react";
+import { useCallback, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -210,11 +210,6 @@ export interface TaskRowProps {
     hasChildren: boolean;
     isExpanded: boolean;
     onToggleExpand: (id: number) => void;
-    /**
-     * Slot for the dnd-kit handle (todo 6). Kept as a prop so the row itself stays presentational
-     * and never imports drag machinery — a row rendered without it is still a valid row.
-     */
-    dragHandle?: ReactNode;
     /** Slot for the row's overflow menu / actions. */
     actions?: ReactNode;
     /**
@@ -225,15 +220,6 @@ export interface TaskRowProps {
     frozenColumns?: FrozenTaskColumnOffsets;
     /** The department's custom columns, rendered as extra cells after the status column. */
     fields?: readonly TaskField[];
-    /**
-     * Forwarded to the underlying `<tr>` so a sortable wrapper (todo 6) can measure and transform
-     * the row. Absent for a plain render, which keeps the row presentational.
-     */
-    rowRef?: Ref<HTMLTableRowElement>;
-    /** Inline transform/transition from `useSortable`; empty for a plain render. */
-    rowStyle?: CSSProperties;
-    /** Drop-indicator / drag-state classes merged onto the row — the row supplies nothing itself. */
-    rowClassName?: string;
     /** The department's catalogs — the status/priority editors' only source of options. */
     catalogs?: TaskCatalogs;
     members?: readonly CellMemberOption[];
@@ -263,8 +249,8 @@ export interface TaskRowProps {
  *
  * When the server says the row `can_edit`, each data cell becomes an editable cell: clicking it
  * swaps the display for the column's own picker (see `TaskCellEditor`), and the row shows the new
- * value optimistically while the module saves it. The expand chevron and the drag handle live in a
- * different cell and are plain controls — clicking either never opens an editor.
+ * value optimistically while the module saves it. The expand chevron lives in a
+ * different cell and is a plain control — clicking it never opens an editor.
  */
 export function TaskRow({
     node,
@@ -273,13 +259,9 @@ export function TaskRow({
     hasChildren,
     isExpanded,
     onToggleExpand,
-    dragHandle,
     actions,
     frozenColumns,
     fields = [],
-    rowRef,
-    rowStyle,
-    rowClassName,
     catalogs,
     editingCell = null,
     cellPatches,
@@ -336,8 +318,6 @@ export function TaskRow({
 
     return (
         <TableRow
-            ref={rowRef}
-            style={rowStyle}
             role="row"
             data-slot="task-tree-row"
             data-task-id={node.id}
@@ -347,14 +327,13 @@ export function TaskRow({
             aria-posinset={posInSet}
             aria-setsize={setSize}
             aria-expanded={hasChildren ? isExpanded : undefined}
-            className={cn("group", rowClassName)}
+            className="group"
         >
             <TableCell
                 style={expandFrozenLeft === undefined ? undefined : { left: expandFrozenLeft }}
                 className={expandFrozenLeft === undefined ? undefined : FROZEN_BODY_CELL_CLASS}
             >
                 <div className="flex items-center gap-1">
-                    {dragHandle}
                     {hasChildren ? (
                         <Button
                             type="button"
@@ -391,7 +370,7 @@ export function TaskRow({
                      * The subtask-count badge leads the title cell, before the status glyph. It used
                      * to trail the title, where its position followed the resizable title column's
                      * width; anchored here it stays with the row's identity whatever the other
-                     * columns are dragged to. Order: drag handle + chevron (previous cell), badge,
+                     * columns are dragged to. Order: chevron (previous cell), badge,
                      * status glyph, title.
                      *
                      * The badge sits in a reserved fixed-width slot on EVERY row, not only the rows

@@ -5,22 +5,13 @@ import { AlertTriangle, Eye, RotateCcw } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-    Pagination,
-    PaginationContent,
-    PaginationItem,
-    PaginationLink,
-    PaginationNext,
-    PaginationPrevious,
-} from "@/components/ui/pagination";
-import { pruneForest, type TreeNode } from "./utils/tree";
+import { flattenVisible, pruneForest, type TreeNode } from "./utils/tree";
 
 import { AssigneeDialog } from "./components/AssigneeDialog";
-import { SortableTaskRow } from "./components/tree-dnd/SortableTaskRow";
-import { TreeDndProvider } from "./components/tree-dnd/TreeDndProvider";
 import { SubtaskCreateDialog } from "./components/SubtaskCreateDialog";
 import { TaskDetailSheet } from "./components/TaskDetailSheet";
 import { TaskFormDialog, type TaskBreadcrumb } from "./components/TaskFormDialog";
+import { DEFAULT_TASK_PAGE_SIZE, TaskPagination } from "./components/TaskPagination";
 import { TaskTree } from "./components/TaskTree";
 import { TasksHeaderActions } from "./components/TasksHeaderActions";
 import { TasksToolbar } from "./components/TasksToolbar";
@@ -38,7 +29,7 @@ import { DashboardView } from "./components/views/DashboardView";
 import { GanttView } from "./components/views/GanttView";
 import { TeamView } from "./components/views/TeamView";
 import type { CellEditRequest } from "./components/TaskCellEditor";
-import type { TaskRowPatch, TaskRowProps, TaskRowView } from "./components/TaskRow";
+import type { TaskRowPatch, TaskRowView } from "./components/TaskRow";
 import type { TaskViewProps, TasksViewId } from "./types/task-view";
 import { useAssignees } from "./hooks/useAssignees";
 import { useSavedTaskFilters } from "./hooks/useSavedTaskFilters";
@@ -52,13 +43,14 @@ import {
 } from "./hooks/useTasks";
 import { useTaskMutations } from "./hooks/useTaskMutations";
 import { useTaskTree, type TaskTreeRow } from "./hooks/useTaskTree";
-import type { MoveTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
+import type { UpdateTaskInput } from "./types/pm-task.schema";
 
 /**
  * The Tasks client orchestrator.
  *
  * It owns the page's interaction state — the search box, the filter-clause array, the root page
- * number and the background-refresh flag — and composes the hooks that carry the data:
+ * number, the page size and the background-refresh flag — and composes the hooks that carry the
+ * data:
  * `useTasks` (rows, catalogs, capabilities), `useAssignees` (the member directory that names the
  * assignees) and `useTaskTree` (the assembled forest plus expand/collapse state).
  *
@@ -67,25 +59,30 @@ import type { MoveTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
  *   and `TaskDetailSheet` (read view with the edit / add-sub-task / delete actions). This module owns
  *   only their open state and the callbacks they call, so the toolbar's `onCreateTask` contract stays
  *   a plain "open the create dialog".
- * - **Drag-and-drop persistence** is a thin adapter here: `TreeDndProvider` resolves the pinned
- *   `{ parent_id, sibling_ids }` payload and this module hands the moved id plus that payload to
- *   `useTaskMutations().moveTask`, which performs the write and the mandatory refetch.
  *
- * Filtering follows the pinned semantics: the pagination unit is the ROOT task (a root's whole
- * subtree renders with it), a matching row brings its ENTIRE subtree (searching a parent still shows
- * every child), a non-matching ancestor of a match stays visible with only the matching branches
- * beneath it (so a child is never orphaned), any filter/search change resets to page 1, page numbers
- * clamp when the set shrinks, and the pager renders nothing on a single page. Filters are client-side
- * over the department's already-fetched set; the department identity scoping happened server-side.
+ * Filtering follows the pinned semantics: a matching row brings its ENTIRE subtree (searching a
+ * parent still shows every child), a non-matching ancestor of a match stays visible with only the
+ * matching branches beneath it (so a child is never orphaned), any filter/search change resets to
+ * page 1, page numbers clamp when the set shrinks, and the pager drops its page NAVIGATION on a
+ * single page — the count and the page-size picker stay, so the large choice that collapsed the set
+ * can always be undone.
+ *
+ * The pagination unit is the RENDERED ROW — the exact flattened list the tree paints — so "Rows per
+ * page 10" really shows 10 rows even when a root carries a subtree. This carries one accepted trade:
+ * a page boundary may fall INSIDE a subtree, so a page can open on rows whose parent rendered on the
+ * previous page. Every row still carries the real `depth` `buildTree` computed for it, so those rows
+ * indent correctly rather than rendering flush-left as if they were top-level. Keeping whole
+ * subtrees on one page was rejected precisely because it is what let the count and the page size
+ * disagree.
+ *
+ * Paging is client-side over the department's already-fetched set; the department identity scoping
+ * happened server-side.
  *
  * Capabilities are never computed here: `capabilities` comes off the route payload and is handed
  * straight to the header actions and the dialogs, which are the only things that decide which
  * actions to mount. The one exception the payload does not answer is per-row delete, and that
  * answer is the row's own server-computed `can_delete` — never a session flag, never an id comparison.
  */
-
-/** Root tasks per page — the pagination unit is a root task, never a nested row. */
-const PAGE_SIZE = 10;
 
 /** Case- and whitespace-insensitive search term, used for the match and the empty copy. */
 function normaliseSearch(value: string): string {
@@ -254,11 +251,6 @@ function resolveCellEdit(
     }
 }
 
-/** Stable row renderer: the sortable wrapper the dnd engine needs, defined once. */
-function SortableRow(props: TaskRowProps) {
-    return <SortableTaskRow {...props} />;
-}
-
 /**
  * The ids of every node in a (already pruned) forest that owns children.
  *
@@ -342,7 +334,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
         createTask,
         updateTask,
         deleteTask,
-        moveTask,
         uploadAttachment,
         detachAttachment,
         clearError,
@@ -360,6 +351,12 @@ export function TasksModule({ userId }: TasksModuleProps) {
      */
     const [clauses, setClauses] = useState<readonly FilterClause[]>([]);
     const [page, setPage] = useState(1);
+    /**
+     * Roots per page. It is an INPUT to the page set, so changing it resets to page 1 exactly as a
+     * search or filter change does — staying on page 3 of a set that now has two pages is the bug
+     * this guards against. The choices and the default live with the pager.
+     */
+    const [pageSize, setPageSize] = useState<number>(DEFAULT_TASK_PAGE_SIZE);
 
     const [isCreateOpen, setIsCreateOpen] = useState(false);
     /** Which of the six views is showing. The list is the default and the only editable one. */
@@ -467,14 +464,33 @@ export function TasksModule({ userId }: TasksModuleProps) {
         return true;
     }, [expandableRootIds, expandedIds]);
 
-    const totalPages = Math.max(1, Math.ceil(filteredRoots.length / PAGE_SIZE));
+    /**
+     * Every row the tree can render, in render order: the filtered forest with the active expansion
+     * state applied. This is the pagination unit — the SAME flattened list `TaskTree` paints (it is
+     * handed `pagedRows` below), so the page count, the slice and the footer all count rows, never
+     * roots.
+     */
+    const visibleRows = useMemo(
+        () => flattenVisible(filteredRoots, renderExpandedIds),
+        [filteredRoots, renderExpandedIds],
+    );
+
+    const totalPages = Math.max(1, Math.ceil(visibleRows.length / pageSize));
+    /*
+     * The page is CLAMPED at read time rather than written back through an effect: `page` may hold a
+     * stale number for one render after the set shrinks, but every consumer — the slice and the
+     * pager — reads this clamped value, so a deleted, filtered-away or newly-collapsed page can
+     * never strand the user on an empty page. Expanding/collapsing changes the ROW count and so the
+     * page count, which this clamp also covers. Every input change resets `page` to 1, so the stale
+     * value is unobservable.
+     */
     const currentPage = Math.min(page, totalPages);
 
-    // The pagination unit is a root task, so the slice is taken over roots and never over the
-    // flattened subtree — a root and all of its descendants always render on the same page.
-    const pagedRoots = useMemo(
-        () => filteredRoots.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
-        [filteredRoots, currentPage],
+    // The slice is taken over RENDERED ROWS, so a page boundary can fall inside a subtree. The rows
+    // keep the true `depth` `buildTree` gave them, so indentation stays right on a mid-subtree page.
+    const pagedRows = useMemo(
+        () => visibleRows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+        [visibleRows, currentPage, pageSize],
     );
 
     const handleSearchChange = useCallback((value: string) => {
@@ -534,6 +550,15 @@ export function TasksModule({ userId }: TasksModuleProps) {
     );
 
     /**
+     * A page-size change is an input change, so it lands on page 1 — the old size's page indices
+     * mean nothing under the new one.
+     */
+    const handlePageSizeChange = useCallback((next: number): void => {
+        setPageSize(next);
+        setPage(1);
+    }, []);
+
+    /**
      * The create seam the toolbar calls. Landing the dialog changes nothing about that contract: it
      * still just opens the create form.
      */
@@ -585,14 +610,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [deleteTask],
     );
 
-    const handleTreeMove = useCallback(
-        (activeId: number, payload: MoveTaskInput): void => {
-            void moveTask(activeId, payload);
-        },
-        [moveTask],
-    );
-
-    /** Opens a cell editor, unless that cell already has a save in flight. */
     const handleStartCellEdit = useCallback((taskId: number, column: string): void => {
         if (inFlightCellsRef.current.has(cellKey(taskId, column))) return;
         setEditingCell({ taskId, column });
@@ -673,10 +690,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
     );
 
     /**
-     * The per-row actions the tree renders: open the detail sheet. Re-parenting is drag-and-drop
-     * only, so the drag handle — not a row action — is the move affordance; it is disabled while a
-     * filter is active because the reorder contract is defined over the destination parent's complete
-     * child list, which a filtered view does not show.
+     * The per-row actions the tree renders: open the detail sheet.
      */
     const renderRowActions = useCallback((node: TreeNode<TaskRowView>) => {
         const detailsLabel = `View details for ${node.title}`;
@@ -789,87 +803,42 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onSubtasksExpandedChange={handleSubtasksExpandedChange}
             />
 
-            {/*
-             * A drop persists through `onMove` → `moveTask` → refetch. Reordering is disabled while
-             * a filter or search is active, because the ordering contract is defined over the
-             * destination parent's COMPLETE child list, which a filtered view does not show.
-             */}
-            <TreeDndProvider
-                roots={pagedRoots}
+            <TaskTree
+                roots={filteredRoots}
+                rows={pagedRows}
                 expandedIds={renderExpandedIds}
-                allRows={items}
-                reorderDisabled={isFiltering}
-                onMove={handleTreeMove}
-            >
-                <TaskTree
-                    roots={pagedRoots}
-                    expandedIds={renderExpandedIds}
-                    onToggleExpand={toggleExpand}
-                    isLoading={isLoading}
-                    error={error}
-                    onRetry={handleRefresh}
-                    emptyMessage={emptyMessage}
-                    fields={fields}
-                    catalogs={catalogs}
-                    members={members}
-                    editingCell={editingCell}
-                    cellPatches={cellPatches}
-                    onStartCellEdit={handleStartCellEdit}
-                    onCancelCellEdit={handleCancelCellEdit}
-                    onCommitCellEdit={handleCellCommit}
-                    renderRow={SortableRow}
-                    renderActions={renderRowActions}
-                    aria-label="Task list"
+                onToggleExpand={toggleExpand}
+                isLoading={isLoading}
+                error={error}
+                onRetry={handleRefresh}
+                emptyMessage={emptyMessage}
+                fields={fields}
+                catalogs={catalogs}
+                members={members}
+                editingCell={editingCell}
+                cellPatches={cellPatches}
+                onStartCellEdit={handleStartCellEdit}
+                onCancelCellEdit={handleCancelCellEdit}
+                onCommitCellEdit={handleCellCommit}
+                renderActions={renderRowActions}
+                aria-label="Task list"
+            />
+
+            {/*
+             * The pager is pinned BELOW the tree and outside its horizontal-scroll container, so one
+             * pager drives both the wide table and the narrow card layout and never scrolls out of
+             * reach. It is withheld entirely while loading, on error, or when the filtered set is
+             * empty — an empty list shows the existing empty state, never "Page 1 of 0".
+             */}
+            {!isLoading && !showError && visibleRows.length > 0 ? (
+                <TaskPagination
+                    page={currentPage}
+                    totalPages={totalPages}
+                    totalRows={visibleRows.length}
+                    pageSize={pageSize}
+                    onPageChange={handlePageChange}
+                    onPageSizeChange={handlePageSizeChange}
                 />
-            </TreeDndProvider>
-
-            {totalPages > 1 ? (
-                <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
-                    <p className="text-xs text-muted-foreground">
-                        Page {currentPage} of {totalPages}
-                        {" · "}
-                        {filteredRoots.length} top-level task{filteredRoots.length === 1 ? "" : "s"}
-                    </p>
-
-                    <Pagination className="mx-0 w-auto">
-                        <PaginationContent>
-                            <PaginationItem>
-                                <PaginationPrevious
-                                    href="#"
-                                    aria-disabled={currentPage <= 1}
-                                    className={currentPage <= 1 ? "pointer-events-none opacity-50" : undefined}
-                                    onClick={(event) => {
-                                        event.preventDefault();
-                                        handlePageChange(currentPage - 1);
-                                    }}
-                                />
-                            </PaginationItem>
-                            <PaginationItem>
-                                <PaginationLink
-                                    href="#"
-                                    isActive
-                                    aria-label={`Page ${currentPage}`}
-                                    onClick={(event) => event.preventDefault()}
-                                >
-                                    {currentPage}
-                                </PaginationLink>
-                            </PaginationItem>
-                            <PaginationItem>
-                                <PaginationNext
-                                    href="#"
-                                    aria-disabled={currentPage >= totalPages}
-                                    className={
-                                        currentPage >= totalPages ? "pointer-events-none opacity-50" : undefined
-                                    }
-                                    onClick={(event) => {
-                                        event.preventDefault();
-                                        handlePageChange(currentPage + 1);
-                                    }}
-                                />
-                            </PaginationItem>
-                        </PaginationContent>
-                    </Pagination>
-                </div>
             ) : null}
             </div>
 
