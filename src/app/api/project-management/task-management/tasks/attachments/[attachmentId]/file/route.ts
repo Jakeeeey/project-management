@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isScopedActor, resolveActor } from "@/modules/project-management/services/actor-service";
-import { loadAttachmentScoped } from "@/modules/project-management/services/scoping";
+import { isScopedActor, resolveActor } from "@/modules/project-management/task-management/tasks/services/actor-service";
+import { loadAttachmentScoped } from "@/modules/project-management/task-management/tasks/services/scoping";
 import { AttachmentStreamService } from "@/modules/project-management/task-management/tasks/services/attachment-stream-service";
 
 export const runtime = "nodejs";

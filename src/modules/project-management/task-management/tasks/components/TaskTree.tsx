@@ -15,7 +15,7 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { flattenVisible, type TreeNode } from "@/modules/project-management/utils/tree";
+import { flattenVisible, type TreeNode } from "../utils/tree";
 
 import { AssigneeStack } from "./AssigneeStack";
 import {

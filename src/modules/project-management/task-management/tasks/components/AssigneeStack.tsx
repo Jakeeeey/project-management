@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import {
     assigneeColorFor,
     assigneeForegroundFor,
-} from "@/modules/project-management/components/assignee-color";
+} from "./assignee-color";
 
 /**
  * One assigned member, as the tasks route resolves it.

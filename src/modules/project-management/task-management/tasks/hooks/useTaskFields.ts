@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { CapabilitiesSchema, type Capabilities } from "@/modules/project-management/types/capabilities";
+import { CapabilitiesSchema, type Capabilities } from "../types/capabilities";
 
 import { parseTaskFields, type TaskField, type TaskFieldType } from "./useTasks";
 

@@ -1,7 +1,7 @@
-import { createItem, readItems, updateItem, updateItems } from "@/modules/project-management/services/directus-client";
-import { loadConfigScoped, type ConfigKind, type ScopedConfigRow } from "@/modules/project-management/services/scoping";
-import type { ScopedActor } from "@/modules/project-management/services/actor-service";
-import { phNow } from "@/modules/project-management/utils/ph-time";
+import { createItem, readItems, updateItem, updateItems } from "./directus-client";
+import { loadConfigScoped, type ConfigKind, type ScopedConfigRow } from "./scoping";
+import type { ScopedActor } from "./actor-service";
+import { phNow } from "../utils/ph-time";
 import type { CreateCatalogItemInput, UpdateCatalogItemInput } from "../types/task-config.schema";
 import { seedDepartmentCatalogs, type SeedDefaultsResult } from "./catalog-seed";
 import {

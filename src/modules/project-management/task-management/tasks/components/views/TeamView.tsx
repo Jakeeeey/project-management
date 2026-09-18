@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import {
     assigneeColorFor,
     assigneeForegroundFor,
-} from "@/modules/project-management/components/assignee-color";
+} from "../assignee-color";
 
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
 import type { TaskListItem } from "../../hooks/useTasks";

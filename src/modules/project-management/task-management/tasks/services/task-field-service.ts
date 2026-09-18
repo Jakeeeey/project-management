@@ -4,17 +4,17 @@ import {
     readItems,
     updateItem,
     updateItems,
-} from "@/modules/project-management/services/directus-client";
+} from "./directus-client";
 import {
     loadFieldOptionScoped,
     loadFieldScoped,
     type ScopedFieldOptionRow,
     type ScopedFieldRow,
     type ScopedFieldValueRow,
-} from "@/modules/project-management/services/scoping";
-import type { ScopedActor } from "@/modules/project-management/services/actor-service";
+} from "./scoping";
+import type { ScopedActor } from "./actor-service";
 import { isTrueFlag } from "@/modules/project-management/task-management/configure/services/task-config-policy";
-import { phNow } from "@/modules/project-management/utils/ph-time";
+import { phNow } from "../utils/ph-time";
 import {
     TaskFieldTypeSchema,
     type CreateTaskFieldInput,

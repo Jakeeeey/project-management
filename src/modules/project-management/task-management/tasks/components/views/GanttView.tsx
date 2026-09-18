@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 import {
     resolveCatalogForeground,
     resolveCatalogHex,
-} from "@/modules/project-management/components/CatalogChip";
+} from "../CatalogChip";
 
 import { parseDateOnly } from "../SingleDatePicker";
 import { GANTT_TODAY_CLASS, highlightToday } from "./gantt-today";

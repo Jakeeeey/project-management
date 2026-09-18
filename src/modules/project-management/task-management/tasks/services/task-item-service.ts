@@ -1,10 +1,10 @@
-import { readItems, updateItem, updateItems } from "@/modules/project-management/services/directus-client";
-import type { ScopedActor } from "@/modules/project-management/services/actor-service";
-import type { PermissionContext } from "@/modules/project-management/services/permission-service";
-import { loadTaskScoped, type ScopedAttachmentRow, type ScopedTaskRow } from "@/modules/project-management/services/scoping";
+import { readItems, updateItem, updateItems } from "./directus-client";
+import type { ScopedActor } from "./actor-service";
+import type { PermissionContext } from "./permission-service";
+import { loadTaskScoped, type ScopedAttachmentRow, type ScopedTaskRow } from "./scoping";
 import { TaskConfigService } from "@/modules/project-management/task-management/configure/services/task-config-service";
-import { collectDescendantIds, type TreeSourceRow } from "@/modules/project-management/utils/tree";
-import { phNow } from "@/modules/project-management/utils/ph-time";
+import { collectDescendantIds, type TreeSourceRow } from "../utils/tree";
+import { phNow } from "../utils/ph-time";
 import type { UpdateTaskInput } from "../types/pm-task.schema";
 import { TaskServiceError, assertDateOrder, resolveCatalogId } from "./task-service";
 import { TaskFieldService } from "./task-field-service";

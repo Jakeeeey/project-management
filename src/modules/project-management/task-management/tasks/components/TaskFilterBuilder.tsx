@@ -31,7 +31,7 @@ import {
 import {
     TaskCombobox,
     type TaskComboboxOption,
-} from "@/modules/project-management/components/TaskCombobox";
+} from "./TaskCombobox";
 
 import { SingleDatePicker } from "./SingleDatePicker";
 import {

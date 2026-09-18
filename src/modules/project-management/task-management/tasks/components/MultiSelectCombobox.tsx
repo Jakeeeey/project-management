@@ -23,7 +23,7 @@ import {
     CatalogChipDot,
     resolveCatalogForeground,
     resolveCatalogHex,
-} from "@/modules/project-management/components/CatalogChip";
+} from "./CatalogChip";
 
 /**
  * The ONE searchable MULTI-SELECT combobox for the project-management module.

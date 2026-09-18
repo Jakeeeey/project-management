@@ -1,6 +1,6 @@
-import { DirectusRequestError, createItem, readItems, updateItem } from "@/modules/project-management/services/directus-client";
-import type { ScopedActor } from "@/modules/project-management/services/actor-service";
-import { phNow } from "@/modules/project-management/utils/ph-time";
+import { DirectusRequestError, createItem, readItems, updateItem } from "./directus-client";
+import type { ScopedActor } from "./actor-service";
+import { phNow } from "../utils/ph-time";
 import type { UpdateDepartmentSettingInput } from "../types/access.schema";
 import { findExistingSettingRow, resolveAllowAllMembersGrant } from "./access-policy";
 

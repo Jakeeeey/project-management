@@ -1,4 +1,4 @@
-import { DirectusRequestError, readItems } from "@/modules/project-management/services/directus-client";
+import { DirectusRequestError, readItems } from "./directus-client";
 
 /**
  * The physical table behind the access grant, and the one place that knows its name.

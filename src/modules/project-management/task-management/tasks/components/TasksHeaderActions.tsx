@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Plus, Settings2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { Capabilities } from "@/modules/project-management/types/capabilities";
+import type { Capabilities } from "../types/capabilities";
 
 /**
  * The tasks page-level actions, rendered beside the page title rather than inside the filter bar.

@@ -29,7 +29,7 @@ import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrate
 import { hasViewportRelativeCoordinates } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 
-import { flattenVisible, isDescendant, type TreeNode } from "@/modules/project-management/utils/tree";
+import { flattenVisible, isDescendant, type TreeNode } from "../../utils/tree";
 import { type MoveTaskInput } from "@/modules/project-management/task-management/tasks/types/pm-task.schema";
 
 import { TaskPriorityBadge, TaskStatusBadge } from "../TaskRowBadges";

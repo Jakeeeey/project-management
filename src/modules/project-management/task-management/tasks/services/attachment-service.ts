@@ -1,7 +1,7 @@
-import { DirectusRequestError, createItem, getDirectusBaseUrl, updateItem } from "@/modules/project-management/services/directus-client";
-import type { ScopedActor } from "@/modules/project-management/services/actor-service";
-import type { ScopedAttachmentRow, ScopedTaskRow } from "@/modules/project-management/services/scoping";
-import { phNow } from "@/modules/project-management/utils/ph-time";
+import { DirectusRequestError, createItem, getDirectusBaseUrl, updateItem } from "./directus-client";
+import type { ScopedActor } from "./actor-service";
+import type { ScopedAttachmentRow, ScopedTaskRow } from "./scoping";
+import { phNow } from "../utils/ph-time";
 
 /**
  * The attachment ingest service — the Directus file's folder, the multipart upload, and the

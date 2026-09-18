@@ -1,6 +1,6 @@
 "use client";
 
-import { CatalogChip } from "@/modules/project-management/components/CatalogChip";
+import { CatalogChip } from "./CatalogChip";
 
 /**
  * A resolved status or priority catalog row, as the tasks route hands it to the client.

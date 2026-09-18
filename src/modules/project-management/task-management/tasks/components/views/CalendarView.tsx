@@ -17,7 +17,7 @@ import {
     CatalogChipDot,
     catalogSolidStyle,
     resolveCatalogHex,
-} from "@/modules/project-management/components/CatalogChip";
+} from "../CatalogChip";
 
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
 import type { TaskListItem } from "../../hooks/useTasks";

@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, Pencil, Plus, Star, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CatalogChip } from "@/modules/project-management/components/CatalogChip";
+import { CatalogChip } from "./CatalogChip";
 
 import {
     kindLabel,

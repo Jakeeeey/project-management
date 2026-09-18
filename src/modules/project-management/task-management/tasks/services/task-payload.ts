@@ -3,8 +3,8 @@ import type {
     ScopedAttachmentRow,
     ScopedConfigRow,
     ScopedFieldValueRow,
-} from "@/modules/project-management/services/scoping";
-import type { PermissionContext } from "@/modules/project-management/services/permission-service";
+} from "./scoping";
+import type { PermissionContext } from "./permission-service";
 import type { CatalogLists } from "@/modules/project-management/task-management/configure/services/task-config-service";
 import type { TaskFieldClientRow, TaskFieldValueClientRow } from "./task-field-service";
 

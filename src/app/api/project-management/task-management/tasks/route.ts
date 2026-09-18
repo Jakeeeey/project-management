@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project-management/services/actor-service";
+import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project-management/task-management/tasks/services/actor-service";
 import {
     PermissionError,
     assertCanCreate,
     getPermissionContext,
-} from "@/modules/project-management/services/permission-service";
+} from "@/modules/project-management/task-management/tasks/services/permission-service";
 import { CreateTaskSchema } from "@/modules/project-management/task-management/tasks/types/pm-task.schema";
 import { TaskService, TaskServiceError } from "@/modules/project-management/task-management/tasks/services/task-service";
 import { TaskFieldError } from "@/modules/project-management/task-management/tasks/services/task-field-service";

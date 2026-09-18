@@ -30,8 +30,8 @@ import type { MemberAccessItem } from "@/modules/project-management/task-managem
 import {
     TaskCombobox,
     type TaskComboboxOption,
-} from "@/modules/project-management/components/TaskCombobox";
-import type { Capabilities } from "@/modules/project-management/types/capabilities";
+} from "./TaskCombobox";
+import type { Capabilities } from "../types/capabilities";
 
 import type { TaskCatalogOption, TaskCatalogs, TaskListItem } from "../hooks/useTasks";
 import type { CreateTaskInput, UpdateTaskInput } from "../types/pm-task.schema";

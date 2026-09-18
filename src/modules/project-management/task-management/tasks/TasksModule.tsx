@@ -13,7 +13,7 @@ import {
     PaginationNext,
     PaginationPrevious,
 } from "@/components/ui/pagination";
-import type { TreeNode } from "@/modules/project-management/utils/tree";
+import type { TreeNode } from "./utils/tree";
 
 import { AssigneeDialog } from "./components/AssigneeDialog";
 import { SortableTaskRow } from "./components/tree-dnd/SortableTaskRow";

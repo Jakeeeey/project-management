@@ -29,7 +29,7 @@ import {
     PaginationNext,
     PaginationPrevious,
 } from "@/components/ui/pagination";
-import { CatalogChip } from "@/modules/project-management/components/CatalogChip";
+import { CatalogChip } from "./CatalogChip";
 
 import { fieldTypeLabel, useTaskFields, type TaskFieldFormInput } from "../hooks/useTaskFields";
 import type { TaskField, TaskFieldOption } from "../hooks/useTasks";

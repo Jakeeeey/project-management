@@ -21,7 +21,7 @@ import {
     SheetHeader,
     SheetTitle,
 } from "@/components/ui/sheet";
-import type { Capabilities } from "@/modules/project-management/types/capabilities";
+import type { Capabilities } from "../types/capabilities";
 
 import type { TaskField, TaskListItem } from "../hooks/useTasks";
 import { AssigneeStack } from "./AssigneeStack";

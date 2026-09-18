@@ -29,10 +29,10 @@
  * and self-heals if it changes under a running process — see `./access-table`.
  */
 
-import { createItem, readItems, updateItem } from "@/modules/project-management/services/directus-client";
-import { assertCanGrant } from "@/modules/project-management/services/permission-service";
-import type { ScopedActor } from "@/modules/project-management/services/actor-service";
-import { phNow } from "@/modules/project-management/utils/ph-time";
+import { createItem, readItems, updateItem } from "./directus-client";
+import { assertCanGrant } from "./permission-service";
+import type { ScopedActor } from "./actor-service";
+import { phNow } from "../utils/ph-time";
 import type { GrantAccessInput } from "../types/access.schema";
 import { withAccessTable } from "./access-table";
 import { AccessError, findExistingAccessRow, isTrueFlag, mergeMemberAccessState, toPhTimestamp, toPositiveInt, type AccessRow } from "./access-policy";

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { CapabilitiesSchema, type Capabilities } from "@/modules/project-management/types/capabilities";
+import { CapabilitiesSchema, type Capabilities } from "../types/capabilities";
 
 /**
  * The client hook behind the Access page.

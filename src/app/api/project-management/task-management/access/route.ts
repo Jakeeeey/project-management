@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project-management/services/actor-service";
+import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project-management/task-management/access/services/actor-service";
 import {
     PermissionError,
     assertCanGrant,
     assertCanManageDepartmentSetting,
     getPermissionContext,
-} from "@/modules/project-management/services/permission-service";
+} from "@/modules/project-management/task-management/access/services/permission-service";
 import {
     GrantAccessSchema,
     RevokeAccessSchema,

@@ -7,8 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { cn, formatDateLong } from "@/lib/utils";
-import { CatalogChip } from "@/modules/project-management/components/CatalogChip";
-import type { TreeNode } from "@/modules/project-management/utils/tree";
+import { CatalogChip } from "./CatalogChip";
+import type { TreeNode } from "../utils/tree";
 
 import { AssigneeStack, type TaskAssigneeView } from "./AssigneeStack";
 import { parseDateOnly } from "./SingleDatePicker";

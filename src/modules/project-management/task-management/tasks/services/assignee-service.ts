@@ -1,7 +1,7 @@
-import { createItem, readItems, updateItem } from "@/modules/project-management/services/directus-client";
-import type { ScopedActor } from "@/modules/project-management/services/actor-service";
-import type { ScopedTaskRow } from "@/modules/project-management/services/scoping";
-import { phNow } from "@/modules/project-management/utils/ph-time";
+import { createItem, readItems, updateItem } from "./directus-client";
+import type { ScopedActor } from "./actor-service";
+import type { ScopedTaskRow } from "./scoping";
+import { phNow } from "../utils/ph-time";
 import type { AssigneeMutationInput } from "../types/pm-task.schema";
 import { TaskServiceError } from "./task-service";
 import { TASK_ACTIVITY_FIELD_LABELS, buildActivityChange } from "./task-activity-delta";

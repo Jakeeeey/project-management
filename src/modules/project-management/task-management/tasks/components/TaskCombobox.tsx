@@ -15,7 +15,7 @@ import {
     ComboboxTrigger,
     ComboboxValue,
 } from "@/components/ui/combobox";
-import { CatalogChipDot } from "@/modules/project-management/components/CatalogChip";
+import { CatalogChipDot } from "./CatalogChip";
 
 /**
  * The ONE searchable single-select combobox for the project-management module.

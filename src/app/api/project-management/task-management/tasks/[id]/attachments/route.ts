@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project-management/services/actor-service";
-import { loadAttachmentScoped, loadTaskScoped } from "@/modules/project-management/services/scoping";
+import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project-management/task-management/tasks/services/actor-service";
+import { loadAttachmentScoped, loadTaskScoped } from "@/modules/project-management/task-management/tasks/services/scoping";
 import {
     ATTACHMENT_ACCEPTED_TYPES,
     AttachmentService,

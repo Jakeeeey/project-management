@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project-management/services/actor-service";
-import { PermissionError, assertCanAssign } from "@/modules/project-management/services/permission-service";
-import { loadTaskScoped } from "@/modules/project-management/services/scoping";
+import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project-management/task-management/tasks/services/actor-service";
+import { PermissionError, assertCanAssign } from "@/modules/project-management/task-management/tasks/services/permission-service";
+import { loadTaskScoped } from "@/modules/project-management/task-management/tasks/services/scoping";
 import { AssigneeService } from "@/modules/project-management/task-management/tasks/services/assignee-service";
 import { TaskServiceError } from "@/modules/project-management/task-management/tasks/services/task-service";
 import { AssigneeMutationSchema } from "@/modules/project-management/task-management/tasks/types/pm-task.schema";

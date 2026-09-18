@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 
-import { buildTree, flattenVisible, type TreeNode } from "@/modules/project-management/utils/tree";
+import { buildTree, flattenVisible, type TreeNode } from "../utils/tree";
 
 import type { TaskListItem } from "./useTasks";
 

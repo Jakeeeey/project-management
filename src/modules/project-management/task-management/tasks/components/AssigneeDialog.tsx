@@ -13,12 +13,12 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import type { MemberAccessItem } from "@/modules/project-management/task-management/access/hooks/useAccess";
-import { assigneeColorFor } from "@/modules/project-management/components/assignee-color";
+import { assigneeColorFor } from "./assignee-color";
 import {
     MultiSelectChipRow,
     MultiSelectOptionList,
     type MultiSelectComboboxOption,
-} from "@/modules/project-management/components/MultiSelectCombobox";
+} from "./MultiSelectCombobox";
 
 /**
  * The centered assignees modal.

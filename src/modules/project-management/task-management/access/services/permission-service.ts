@@ -30,8 +30,8 @@
  */
 
 import { readItems } from "./directus-client";
-import { DepartmentSettingService } from "../task-management/access/services/department-setting-service";
-import { withAccessTable } from "../task-management/access/services/access-table";
+import { DepartmentSettingService } from "./department-setting-service";
+import { withAccessTable } from "./access-table";
 import type { ScopedActor } from "./actor-service";
 import type { Capabilities } from "../types/capabilities";
 import { PermissionError, allows, canDeleteTaskFrom, canEditTaskFrom, type RoleFacts } from "./permission-matrix";

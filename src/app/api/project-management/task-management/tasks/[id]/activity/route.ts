@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project-management/services/actor-service";
+import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project-management/task-management/tasks/services/actor-service";
 import {
     PermissionError,
-} from "@/modules/project-management/services/permission-service";
-import { loadTaskScoped } from "@/modules/project-management/services/scoping";
+} from "@/modules/project-management/task-management/tasks/services/permission-service";
+import { loadTaskScoped } from "@/modules/project-management/task-management/tasks/services/scoping";
 import { TaskActivityService } from "@/modules/project-management/task-management/tasks/services/task-activity-service";
 import { TaskServiceError } from "@/modules/project-management/task-management/tasks/services/task-service";
 import { TaskFieldError } from "@/modules/project-management/task-management/tasks/services/task-field-service";

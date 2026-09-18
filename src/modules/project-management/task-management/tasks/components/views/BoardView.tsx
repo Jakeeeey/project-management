@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { CatalogChipDot } from "@/modules/project-management/components/CatalogChip";
+import { CatalogChipDot } from "../CatalogChip";
 
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
 import type { TaskCatalogOption, TaskListItem } from "../../hooks/useTasks";

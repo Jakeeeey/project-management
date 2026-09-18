@@ -1,4 +1,4 @@
-import { getDirectusBaseUrl } from "@/modules/project-management/services/directus-client";
+import { getDirectusBaseUrl } from "./directus-client";
 
 /**
  * The attachment egress service — everything the streaming proxy needs from Directus.

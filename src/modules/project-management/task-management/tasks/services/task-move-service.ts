@@ -1,9 +1,9 @@
-import { updateItems } from "@/modules/project-management/services/directus-client";
-import type { ScopedActor } from "@/modules/project-management/services/actor-service";
-import type { PermissionContext } from "@/modules/project-management/services/permission-service";
-import { loadTaskScoped, type ScopedTaskRow } from "@/modules/project-management/services/scoping";
-import { isDescendant, type TreeSourceRow } from "@/modules/project-management/utils/tree";
-import { phNow } from "@/modules/project-management/utils/ph-time";
+import { updateItems } from "./directus-client";
+import type { ScopedActor } from "./actor-service";
+import type { PermissionContext } from "./permission-service";
+import { loadTaskScoped, type ScopedTaskRow } from "./scoping";
+import { isDescendant, type TreeSourceRow } from "../utils/tree";
+import { phNow } from "../utils/ph-time";
 import type { MoveTaskInput } from "../types/pm-task.schema";
 import { containsExactlyOnce, isCompletePostMoveChildSet } from "./task-move-rules";
 import { TaskItemService } from "./task-item-service";

@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import {
     TaskCombobox,
     type TaskComboboxOption,
-} from "@/modules/project-management/components/TaskCombobox";
+} from "./TaskCombobox";
 
 import type { TaskField } from "../hooks/useTasks";
 import { SingleDatePicker } from "./SingleDatePicker";

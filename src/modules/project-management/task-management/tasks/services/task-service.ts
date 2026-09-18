@@ -1,14 +1,14 @@
-import { DirectusRequestError, createItem, readItem, readItems } from "@/modules/project-management/services/directus-client";
+import { DirectusRequestError, createItem, readItem, readItems } from "./directus-client";
 import {
     DepartmentScopeError,
     assertSameDepartment,
     type ScopedAttachmentRow,
     type ScopedConfigRow,
-} from "@/modules/project-management/services/scoping";
-import type { ScopedActor } from "@/modules/project-management/services/actor-service";
-import type { PermissionContext } from "@/modules/project-management/services/permission-service";
+} from "./scoping";
+import type { ScopedActor } from "./actor-service";
+import type { PermissionContext } from "./permission-service";
 import { TaskConfigService, effectiveDefaultRow } from "@/modules/project-management/task-management/configure/services/task-config-service";
-import { phNow } from "@/modules/project-management/utils/ph-time";
+import { phNow } from "../utils/ph-time";
 import {
     buildShaping,
     groupByTaskId,

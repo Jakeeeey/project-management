@@ -1,6 +1,6 @@
-import { createItems, readItems } from "@/modules/project-management/services/directus-client";
-import type { ConfigKind, ScopedConfigRow } from "@/modules/project-management/services/scoping";
-import { phNow } from "@/modules/project-management/utils/ph-time";
+import { createItems, readItems } from "./directus-client";
+import type { ConfigKind, ScopedConfigRow } from "./scoping";
+import { phNow } from "../utils/ph-time";
 import { CONFIG_COLLECTIONS } from "./task-config-policy";
 
 /**
