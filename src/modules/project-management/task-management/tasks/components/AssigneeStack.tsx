@@ -8,6 +8,7 @@ import {
     AvatarImage,
 } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { UserPlus } from "lucide-react";
 import {
     assigneeColorFor,
     assigneeForegroundFor,
@@ -30,6 +31,13 @@ export interface AssigneeStackProps {
     /** How many avatars render before the rest collapse into a `+N` pill. At least one is shown. */
     max?: number;
     className?: string;
+    /**
+     * How the zero-assignee state renders. `"text"` (the default) keeps the explanatory words for
+     * surfaces with room for a sentence; `"icon"` swaps them for a quiet `UserPlus` glyph, which
+     * fits a dense table cell where a 12-character string would truncate. Opt-in so the default
+     * stays byte-for-byte the previous behaviour.
+     */
+    emptyVariant?: "text" | "icon";
 }
 
 /** "Maria Santos" → "MS"; a single-word name keeps its first letter. */
@@ -46,10 +54,34 @@ function initialsOf(name: string): string {
  *
  * Avatars are not interactive, so each one is exposed as an image with its member name (and a
  * `title` tooltip) rather than as a control — the full name is reachable even when only initials
- * render. An empty assignment renders a muted "No assignees", never an empty cell.
+ * render. An empty assignment is never an empty cell: it renders the muted "No assignees", or a
+ * muted `UserPlus` glyph when the caller asks for the `icon` variant.
  */
-export function AssigneeStack({ assignees, max = 3, className }: AssigneeStackProps) {
+export function AssigneeStack({
+    assignees,
+    max = 3,
+    className,
+    emptyVariant = "text",
+}: AssigneeStackProps) {
     if (assignees.length === 0) {
+        if (emptyVariant === "icon") {
+            /*
+             * Presentational only: this cell already owns the assignee edit affordance, so the glyph
+             * is NOT a second control (no click or focus target). It is aria-hidden, with the words
+             * below as the accessible name, so the empty state is never silent to a screen reader.
+             */
+            return (
+                <span
+                    data-slot="assignee-stack-empty"
+                    title="No assignees"
+                    className="inline-flex items-center text-muted-foreground"
+                >
+                    <UserPlus className="size-4" aria-hidden="true" />
+                    <span className="sr-only">No assignees</span>
+                </span>
+            );
+        }
+
         return (
             <span data-slot="assignee-stack-empty" className="text-xs text-muted-foreground">
                 No assignees

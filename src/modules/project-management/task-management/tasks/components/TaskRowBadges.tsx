@@ -23,8 +23,12 @@ export interface TaskCatalogRef {
 export const NO_STATUS_LABEL = "No status assigned yet";
 export const NO_PRIORITY_LABEL = "No priority set";
 
-/** The dense tree cell's cap — the status/priority columns keep their fixed width. */
-const CELL_CHIP_CLASS = "max-w-[140px]";
+/**
+ * The dense tree cell's cap: the COLUMN width, not a fixed pixel count. The table is `table-fixed`
+ * and the column is user-resizable, so `max-w-full` lets a widened column reveal more of the chip's
+ * label while `truncate` still ellipsizes it rather than overflowing or wrapping.
+ */
+const CELL_CHIP_CLASS = "max-w-full";
 
 interface CatalogBadgeProps {
     kind: "status" | "priority";

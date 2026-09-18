@@ -9,6 +9,11 @@ import { TableCell, TableRow } from "@/components/ui/table";
 import { cn, formatDateLong } from "@/lib/utils";
 import { CatalogChip } from "./CatalogChip";
 import { CatalogStatusIcon } from "./CatalogStatusIcon";
+import {
+    FROZEN_BODY_CELL_CLASS,
+    FROZEN_EDGE_CLASS,
+    type FrozenTaskColumnOffsets,
+} from "./task-frozen-columns";
 import type { TreeNode } from "../utils/tree";
 
 import { AssigneeStack, type TaskAssigneeView } from "./AssigneeStack";
@@ -84,8 +89,18 @@ function patched<T>(patch: TaskRowPatch | undefined, key: keyof TaskRowPatch, fa
  */
 export const MAX_INDENT_DEPTH = 8;
 
-/** Pixels of left gutter per level of visual indent. */
-export const INDENT_STEP_PX = 20;
+/**
+ * Pixels of left gutter per level of visual indent.
+ *
+ * Sized just wider than a parent's leading group — the 24px subtask-count slot plus the 6px gap —
+ * so a child's status glyph and title always clear the parent's leading block, which is what makes
+ * the level step legible. The step is a runtime number and stays an INLINE STYLE (see the padding
+ * application below); it can never be a Tailwind class.
+ *
+ * At the `MAX_INDENT_DEPTH` cap this is 8 × 32 = 256px, past the title column's 220px default; that
+ * only reaches the deepest levels, whose gutter is deliberately frozen at the cap.
+ */
+export const INDENT_STEP_PX = 32;
 
 /**
  * A `YYYY-MM-DD` task date as long-form display text.
@@ -169,7 +184,7 @@ function FieldChoiceChip({ field, value }: { field: TaskField; value: string | n
                 value={null}
                 placeholder={value === null || value === "" ? "Not set" : "Removed choice"}
                 density="dense"
-                className="max-w-[140px]"
+                className="max-w-full"
                 data-slot={`task-field-${field.id}-badge`}
             />
         );
@@ -179,7 +194,7 @@ function FieldChoiceChip({ field, value }: { field: TaskField; value: string | n
         <CatalogChip
             value={{ label: option.label, color: option.color, icon: option.icon }}
             density="dense"
-            className="max-w-[140px]"
+            className="max-w-full"
             data-slot={`task-field-${field.id}-badge`}
         />
     );
@@ -202,6 +217,12 @@ export interface TaskRowProps {
     dragHandle?: ReactNode;
     /** Slot for the row's overflow menu / actions. */
     actions?: ReactNode;
+    /**
+     * The frozen-column `left` offsets, when the wide table is pinning its leading columns. Absent
+     * for a plain render (a fixture, a preview), which leaves the row exactly as it was: the two
+     * leading cells only become sticky when the caller supplies geometry to stick them against.
+     */
+    frozenColumns?: FrozenTaskColumnOffsets;
     /** The department's custom columns, rendered as extra cells after the status column. */
     fields?: readonly TaskField[];
     /**
@@ -236,8 +257,9 @@ export interface TaskRowProps {
  *
  * The expand chevron only renders for a node with children; a leaf keeps the same leading width
  * via an aria-hidden spacer so titles stay aligned across a level. Every text-bearing cell wraps
- * its value in a `max-w-* truncate` span (plus `title`) so a long value can neither push its
- * neighbours nor force the table wider than its own horizontal scroll.
+ * its value in a `max-w-full truncate` span (plus `title`) whose bound is the COLUMN's width: the
+ * table is `table-fixed` and the column widths are the user's resizable ones, so a long value
+ * ellipsizes to whatever the column is currently sized to and can never push its neighbours.
  *
  * When the server says the row `can_edit`, each data cell becomes an editable cell: clicking it
  * swaps the display for the column's own picker (see `TaskCellEditor`), and the row shows the new
@@ -253,6 +275,7 @@ export function TaskRow({
     onToggleExpand,
     dragHandle,
     actions,
+    frozenColumns,
     fields = [],
     rowRef,
     rowStyle,
@@ -268,6 +291,8 @@ export function TaskRow({
     const subtaskCount = node.children.length;
     const subtaskLabel = `${subtaskCount} sub-task${subtaskCount === 1 ? "" : "s"}`;
     const expandLabel = isExpanded ? `Collapse ${node.title}` : `Expand ${node.title}`;
+    const expandFrozenLeft = frozenColumns?.expand;
+    const titleFrozenLeft = frozenColumns?.title;
 
     const patchFor = useCallback(
         (column: string): TaskRowPatch | undefined => cellPatches?.get(`${node.id}:${column}`),
@@ -324,7 +349,10 @@ export function TaskRow({
             aria-expanded={hasChildren ? isExpanded : undefined}
             className={cn("group", rowClassName)}
         >
-            <TableCell className="w-[76px]">
+            <TableCell
+                style={expandFrozenLeft === undefined ? undefined : { left: expandFrozenLeft }}
+                className={expandFrozenLeft === undefined ? undefined : FROZEN_BODY_CELL_CLASS}
+            >
                 <div className="flex items-center gap-1">
                     {dragHandle}
                     {hasChildren ? (
@@ -350,14 +378,47 @@ export function TaskRow({
                 </div>
             </TableCell>
 
-            <TableCell className="max-w-[360px]">
+            <TableCell
+                style={titleFrozenLeft === undefined ? undefined : { left: titleFrozenLeft }}
+                className={
+                    titleFrozenLeft === undefined
+                        ? undefined
+                        : cn(FROZEN_BODY_CELL_CLASS, FROZEN_EDGE_CLASS)
+                }
+            >
                 <div className="flex items-center gap-1.5" style={{ paddingLeft: indentDepth * INDENT_STEP_PX }}>
                     {/*
-                     * The leading status glyph — after the expand cell's chevron, before the title.
+                     * The subtask-count badge leads the title cell, before the status glyph. It used
+                     * to trail the title, where its position followed the resizable title column's
+                     * width; anchored here it stays with the row's identity whatever the other
+                     * columns are dragged to. Order: drag handle + chevron (previous cell), badge,
+                     * status glyph, title.
+                     *
+                     * The badge sits in a reserved fixed-width slot on EVERY row, not only the rows
+                     * that own one. A parent's leading group is [count][status][title] while a leaf's
+                     * is [status][title], so without the slot a leaf's status glyph and title start
+                     * one badge-width to the LEFT of its parent's — cancelling the level step and
+                     * making the two levels look aligned. The slot keeps one baseline across a level.
+                     */}
+                    <span className="flex w-6 shrink-0 items-center justify-center">
+                        {subtaskCount > 0 ? (
+                            <Badge
+                                variant="secondary"
+                                data-slot="task-subtask-count"
+                                title={subtaskLabel}
+                                className="shrink-0 border-border/60 px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground"
+                            >
+                                <span aria-hidden="true">{subtaskCount}</span>
+                                <span className="sr-only">{subtaskLabel}</span>
+                            </Badge>
+                        ) : null}
+                    </span>
+                    {/*
+                     * The leading status glyph — after the subtask badge, before the title.
                      * Only a resolved FK draws one: an unresolved status already renders its own
                      * placeholder chip in the status column, so an empty slot here would merely
-                     * shift the title. `density="dense"` holds the 20px row and the title's own
-                     * truncation cap stays untouched.
+                     * shift the title. `density="dense"` holds the 20px row and the title truncates
+                     * against the column's own width, so widening the column reveals more of it.
                      */}
                     {status !== null ? (
                         <CatalogStatusIcon
@@ -386,24 +447,13 @@ export function TaskRow({
                             className={cn(CELL_BUTTON_CLASS, "min-w-0 font-medium")}
                             onClick={() => startEdit("title")}
                         >
-                            <span className="block max-w-[320px] truncate">{title}</span>
+                            <span className="block max-w-full truncate">{title}</span>
                         </button>
                     ) : (
-                        <span className="block max-w-[320px] truncate font-medium" title={title}>
+                        <span className="block max-w-full truncate font-medium" title={title}>
                             {title}
                         </span>
                     )}
-                    {subtaskCount > 0 ? (
-                        <Badge
-                            variant="secondary"
-                            data-slot="task-subtask-count"
-                            title={subtaskLabel}
-                            className="shrink-0 border-border/60 px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground"
-                        >
-                            <span aria-hidden="true">{subtaskCount}</span>
-                            <span className="sr-only">{subtaskLabel}</span>
-                        </Badge>
-                    ) : null}
                 </div>
             </TableCell>
 
@@ -412,25 +462,29 @@ export function TaskRow({
              * requests the assignees edit, which the module answers with the centered assignees
              * dialog — never an inline picker in this 160px column (a wrapping chip field here is
              * exactly what made the row tall and clumped before).
+             *
+             * Centred with its header label: the avatars are a horizontal cluster, so a centred
+             * header over a left-aligned stack reads as misalignment. The edit button keeps its
+             * full-cell hit target (`block w-full`) and centres its contents with flex instead.
              */}
-            <TableCell className="max-w-[160px]">
+            <TableCell className="text-center">
                 {editable ? (
                     <button
                         type="button"
                         aria-label={`Edit assignees for ${title}`}
                         title={`Edit assignees for ${title}`}
                         data-slot="task-cell-edit"
-                        className={cn(CELL_BUTTON_CLASS, "cursor-pointer")}
+                        className={cn(CELL_BUTTON_CLASS, "flex cursor-pointer justify-center")}
                         onClick={() => startEdit("assignees")}
                     >
-                        <AssigneeStack assignees={assignees} />
+                        <AssigneeStack assignees={assignees} emptyVariant="icon" />
                     </button>
                 ) : (
-                    <AssigneeStack assignees={assignees} />
+                    <AssigneeStack assignees={assignees} emptyVariant="icon" className="mx-auto" />
                 )}
             </TableCell>
 
-            <TableCell className="max-w-[160px]">
+            <TableCell>
                 {editable && isCellEditing("start") ? (
                     <TaskCellEditor
                         spec={{ kind: "date", field: "start", value: startDate }}
@@ -462,7 +516,7 @@ export function TaskRow({
                 )}
             </TableCell>
 
-            <TableCell className="max-w-[160px]">
+            <TableCell>
                 {editable && isCellEditing("due") ? (
                     <TaskCellEditor
                         spec={{ kind: "date", field: "end", value: endDate }}
@@ -494,7 +548,7 @@ export function TaskRow({
                 )}
             </TableCell>
 
-            <TableCell className="max-w-[140px]">
+            <TableCell>
                 {editable && isCellEditing("priority") ? (
                     <TaskCellEditor
                         spec={{
@@ -524,7 +578,7 @@ export function TaskRow({
                 )}
             </TableCell>
 
-            <TableCell className="max-w-[140px]">
+            <TableCell>
                 {editable && isCellEditing("status") ? (
                     <TaskCellEditor
                         spec={{
@@ -564,7 +618,7 @@ export function TaskRow({
                 const isChoice = field.field_type === "select";
 
                 return (
-                    <TableCell key={field.id} className="max-w-[160px]">
+                    <TableCell key={field.id}>
                         {editable && isCellEditing(column) ? (
                             <TaskCellEditor
                                 spec={{ kind: "field", field, value: answer }}
@@ -601,7 +655,7 @@ export function TaskRow({
                 );
             })}
 
-            <TableCell className="w-[72px] text-right">
+            <TableCell className="text-right">
                 {actions ?? <span className="sr-only">No actions available</span>}
             </TableCell>
         </TableRow>
