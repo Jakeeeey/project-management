@@ -369,7 +369,10 @@ export function TasksModule({ userId }: TasksModuleProps) {
         detachAttachment,
         clearError,
     } = useTaskMutations({ onChanged: refresh });
-    const { roots, expandedIds, toggleExpand } = useTaskTree(items, memberNameById);
+    const { roots, expandedIds, toggleExpand, expandAll, collapseAll } = useTaskTree(
+        items,
+        memberNameById,
+    );
     const { savedFilters, saveFilter, deleteFilter } = useSavedTaskFilters();
 
     const [search, setSearch] = useState("");
@@ -463,6 +466,29 @@ export function TasksModule({ userId }: TasksModuleProps) {
         return merged;
     }, [expandedIds, autoExpandedIds]);
 
+    /**
+     * Every parent id in the WHOLE forest — the universe the `Subtasks` control's `Expanded` mode
+     * means. It is computed off `roots` (not the filtered or paged slice) so the derived mode is
+     * stable across a page change or a filter, and it matches what the hook's `expandAll` seeds.
+     */
+    const expandableRootIds = useMemo(() => expandableIds(roots), [roots]);
+
+    /**
+     * The `Subtasks` control is a MODE, not a command, and its active option is DERIVED here rather
+     * than stored: `Expanded` holds exactly while the user's own `expandedIds` covers every
+     * expandable row. That is what keeps the checkmark honest — collapsing one row by hand drops it
+     * back to `Collapsed` with no parallel flag to fall out of sync. The filtered auto-reveal
+     * (`autoExpandedIds`) is intentionally not consulted: it is a transient view guarantee, not a
+     * user choice, so it must not make an unexpanded tree report itself as `Expanded`.
+     */
+    const isSubtasksExpanded = useMemo(() => {
+        if (expandableRootIds.size === 0) return false;
+        for (const id of expandableRootIds) {
+            if (!expandedIds.has(id)) return false;
+        }
+        return true;
+    }, [expandableRootIds, expandedIds]);
+
     const totalPages = Math.max(1, Math.ceil(filteredRoots.length / PAGE_SIZE));
     const currentPage = Math.min(page, totalPages);
 
@@ -494,6 +520,20 @@ export function TasksModule({ userId }: TasksModuleProps) {
         setClauses([]);
         setPage(1);
     }, []);
+
+    /**
+     * The `Subtasks` control's two choices drive the hook's own `expandAll` / `collapseAll`, so the
+     * toolbar writes the SAME `expandedIds` the per-row chevrons toggle. `Collapsed` clears the
+     * user's set only: a filter's ancestor reveal lives in `autoExpandedIds`, so a filtered match
+     * stays visible even while this is `Collapsed`.
+     */
+    const handleSubtasksExpandedChange = useCallback(
+        (expanded: boolean): void => {
+            if (expanded) expandAll();
+            else collapseAll();
+        },
+        [expandAll, collapseAll],
+    );
 
     const handleRefresh = useCallback(() => {
         void refresh();
@@ -758,6 +798,8 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onClearFilters={handleClearFilters}
                 isRefreshing={isRefreshing}
                 onRefresh={handleRefresh}
+                isSubtasksExpanded={isSubtasksExpanded}
+                onSubtasksExpandedChange={handleSubtasksExpandedChange}
             />
 
             {/*

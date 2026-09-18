@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ListFilter, RotateCcw, Search, X } from "lucide-react";
+import { ChevronDown, ListFilter, ListTree, RotateCcw, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,14 @@ import {
     DialogTitle,
     DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+    DropdownMenu,
+    DropdownMenuCheckboxItem,
+    DropdownMenuContent,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
@@ -42,6 +50,13 @@ import type { TaskField } from "../hooks/useTasks";
  * pill that carries the active-clause count. That is what keeps the toolbar one row however many
  * filter rows the user adds; the pill itself is the module's `outline` button with `className`
  * overrides, never a new primitive.
+ *
+ * Beside the filter pill sits the `Subtasks` control — a dropdown over the pinned two-value enum
+ * (Collapsed / Expanded) that drives the tree's own expand/collapse state. It is a MODE, not a
+ * one-shot command: the caller derives the active option from the live `expandedIds` set rather than
+ * storing a parallel flag, so a hand-collapsed row immediately reads as `Collapsed` again and the
+ * checkmark can never disagree with the list. This file stays presentational: it renders the mode it
+ * is handed and reports the pick.
  */
 
 /** The member shape the toolbar renders; a `MemberAccessItem` satisfies it structurally. */
@@ -76,6 +91,14 @@ export interface TasksToolbarProps {
     /** True while the list is refetching behind the current rows. */
     readonly isRefreshing: boolean;
     readonly onRefresh: () => void;
+    /**
+     * True when EVERY expandable row is currently expanded — the derived `Expanded` mode of the
+     * `Subtasks` control. The caller derives it from the tree's live expansion set, so a row
+     * collapsed by hand flips it back to `false` (Collapsed) with no parallel source of truth.
+     */
+    readonly isSubtasksExpanded: boolean;
+    /** Pick `Expanded` (`true`) or `Collapsed` (`false`) for the whole tree. */
+    readonly onSubtasksExpandedChange: (expanded: boolean) => void;
 }
 
 export function TasksToolbar({
@@ -96,6 +119,8 @@ export function TasksToolbar({
     onClearFilters,
     isRefreshing,
     onRefresh,
+    isSubtasksExpanded,
+    onSubtasksExpandedChange,
 }: TasksToolbarProps) {
     const [isFilterOpen, setIsFilterOpen] = useState(false);
 
@@ -113,6 +138,13 @@ export function TasksToolbar({
               : `${activeFilterCount} Filters`;
     const filterAriaLabel =
         activeFilterCount === 0 ? "Filters, none active" : `Filters, ${activeFilterCount} active`;
+
+    /**
+     * The `Subtasks` control's current mode, named from the same boolean the caller derived off the
+     * live expansion set — so the trigger, the checkmark and the tree can never disagree.
+     */
+    const subtasksModeLabel = isSubtasksExpanded ? "Expanded" : "Collapsed";
+    const subtasksAriaLabel = `Show subtasks, currently ${subtasksModeLabel}`;
 
     return (
         <div data-slot="tasks-toolbar" className="space-y-3">
@@ -190,6 +222,48 @@ export function TasksToolbar({
                             </DialogFooter>
                         </DialogContent>
                     </Dialog>
+
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                data-slot="task-subtasks-trigger"
+                                aria-label={subtasksAriaLabel}
+                                title={subtasksAriaLabel}
+                                aria-haspopup="menu"
+                                className="rounded-full"
+                            >
+                                <ListTree className="size-4" aria-hidden="true" />
+                                Subtasks
+                                <ChevronDown className="size-4" aria-hidden="true" />
+                            </Button>
+                        </DropdownMenuTrigger>
+
+                        <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuLabel>Show subtasks</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+
+                            <DropdownMenuCheckboxItem
+                                checked={!isSubtasksExpanded}
+                                onSelect={() => onSubtasksExpandedChange(false)}
+                                aria-label="Show subtasks: Collapsed"
+                            >
+                                Collapsed
+                                <span className="ml-auto text-xs text-muted-foreground">
+                                    (default)
+                                </span>
+                            </DropdownMenuCheckboxItem>
+
+                            <DropdownMenuCheckboxItem
+                                checked={isSubtasksExpanded}
+                                onSelect={() => onSubtasksExpandedChange(true)}
+                                aria-label="Show subtasks: Expanded"
+                            >
+                                Expanded
+                            </DropdownMenuCheckboxItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
 
                     {isFiltering ? (
                         <Button type="button" variant="ghost" onClick={onClearFilters}>
