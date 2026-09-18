@@ -347,35 +347,57 @@ function FilterClauseRow({
 
     return (
         /*
-         * ONE clause = ONE row. A 4-column grid (not a wrapping flex) gives every control a
-         * predictable share and makes wrapping impossible at ANY width: the first three columns are
-         * `minmax(0, …)` flexible tracks (they shrink and their text truncates) and the last is an
-         * `auto` track that hugs the remove button. `min-w-0` on each flexible child lets a long
-         * option label truncate inside its control instead of widening the row or overflowing the
-         * modal. At narrow widths the row stays a single row and the controls shrink — it never falls
-         * back to the old broken two-line wrap.
+         * ONE clause = ONE row, responsive at the `sm:` tier the module's own dialogs already use.
+         *
+         * Below `sm:` the row STACKS: a 2-track grid where the field and the operator each span both
+         * tracks (one control per line) and the value shares its line with the trailing remove
+         * button. Squeezing all four tracks into a phone width crushed the field and value controls
+         * (they truncated to "S…" / "No valu") while the operator's hard floor consumed the rest, so
+         * at phone width each control gets its own full-width line and renders its label whole.
+         *
+         * From `sm:` up the layout is the original 4-track row, unchanged: field and value are
+         * `minmax(0, …)` flexible (they shrink and their text truncates), while the OPERATOR track
+         * carries a hard `9rem` FLOOR. That floor is wider than the longest operator label
+         * ("Is not empty", ~84px at `text-sm`) plus the trigger's own padding and chevron, so the
+         * operator can never be squeezed into wrapping — the bug this row previously had. `min-w-0`
+         * on each flexible child lets a long option label truncate inside its control instead of
+         * widening the row or overflowing the modal. The `9rem` floor lives ONLY in the `sm:`
+         * template: in the stacked layout the operator is full-width, so a floor there would only
+         * force a horizontal overflow.
          */
         <div
             data-slot="task-filter-row"
-            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_auto] items-center gap-2"
+            className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[minmax(0,1.25fr)_minmax(9rem,1fr)_minmax(0,1.25fr)_auto]"
         >
             <TaskCombobox
                 ariaLabel="Filter field"
                 placeholder="Select field"
                 searchPlaceholder="Search fields..."
-                className="w-full min-w-0"
+                className="col-span-2 w-full min-w-0 sm:col-span-1"
                 options={fieldOptions}
                 value={clause.fieldKey}
                 onValueChange={changeField}
             />
 
             <Select value={clause.operator} onValueChange={(next) => onChange({ ...clause, operator: toOperator(next) })}>
-                <SelectTrigger className="w-full min-w-0" aria-label="Filter operator">
+                {/*
+                 * The trigger already sets `whitespace-nowrap`, but the primitive ALSO puts
+                 * `line-clamp-1` and `flex` on the `select-value` span, and that `display` conflict
+                 * can drop the clamp and let the label break. Re-asserting `whitespace-nowrap` on the
+                 * span itself makes the single-line rule explicit and independent of which utility
+                 * wins — the operator track's `9rem` floor (above) is what guarantees the text is
+                 * not merely clipped. Behaviour, keyboard interaction and styling are untouched.
+                 * `col-span-2`/`sm:col-span-1` only widens the trigger on the stacked layout.
+                 */}
+                <SelectTrigger
+                    className="col-span-2 w-full min-w-0 whitespace-nowrap sm:col-span-1 [&_[data-slot=select-value]]:whitespace-nowrap"
+                    aria-label="Filter operator"
+                >
                     <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                     {operators.map((operator) => (
-                        <SelectItem key={operator} value={operator}>
+                        <SelectItem key={operator} value={operator} className="whitespace-nowrap">
                             {FILTER_OPERATOR_LABELS[operator]}
                         </SelectItem>
                     ))}

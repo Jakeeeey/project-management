@@ -13,7 +13,7 @@ import {
     PaginationNext,
     PaginationPrevious,
 } from "@/components/ui/pagination";
-import type { TreeNode } from "./utils/tree";
+import { pruneForest, type TreeNode } from "./utils/tree";
 
 import { AssigneeDialog } from "./components/AssigneeDialog";
 import { SortableTaskRow } from "./components/tree-dnd/SortableTaskRow";
@@ -72,10 +72,11 @@ import type { MoveTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
  *   `useTaskMutations().moveTask`, which performs the write and the mandatory refetch.
  *
  * Filtering follows the pinned semantics: the pagination unit is the ROOT task (a root's whole
- * subtree renders with it), a filter/search never orphans a child (an ancestor of a match stays
- * visible), any filter/search change resets to page 1, page numbers clamp when the set shrinks, and
- * the pager renders nothing on a single page. Filters are client-side over the department's
- * already-fetched set; the department identity scoping happened server-side.
+ * subtree renders with it), a matching row brings its ENTIRE subtree (searching a parent still shows
+ * every child), a non-matching ancestor of a match stays visible with only the matching branches
+ * beneath it (so a child is never orphaned), any filter/search change resets to page 1, page numbers
+ * clamp when the set shrinks, and the pager renders nothing on a single page. Filters are client-side
+ * over the department's already-fetched set; the department identity scoping happened server-side.
  *
  * Capabilities are never computed here: `capabilities` comes off the route payload and is handed
  * straight to the header actions and the dialogs, which are the only things that decide which
@@ -107,29 +108,6 @@ function rowMatches(
     const term = normaliseSearch(search);
     if (term !== "" && !row.title.toLowerCase().includes(term)) return false;
     return rowMatchesClauses(row, clauses, fields);
-}
-
-/**
- * Prunes the forest to the matching rows while keeping every ancestor of a match.
- *
- * A root that does not match but owns a matching descendant is still returned (with only the
- * matching branches beneath it), which is what stops a filter from orphaning a child. The returned
- * nodes are copies so the source forest stays untouched; `depth` and `children` are carried over.
- */
-function filterTree(
-    nodes: readonly TreeNode<TaskTreeRow>[],
-    search: string,
-    clauses: readonly FilterClause[],
-    fields: readonly TaskField[],
-): TreeNode<TaskTreeRow>[] {
-    const kept: TreeNode<TaskTreeRow>[] = [];
-
-    for (const node of nodes) {
-        const children = filterTree(node.children, search, clauses, fields);
-        const isMatch = rowMatches(node, search, clauses, fields);
-        if (isMatch || children.length > 0) kept.push({ ...node, children });
-    }
-    return kept;
 }
 
 /** The `"<taskId>:<column>"` key the open cell, its in-flight guard and its optimistic patch share. */
@@ -450,7 +428,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
     const isFiltering = normaliseSearch(search) !== "" || anyClauseActive(clauses);
 
     const filteredRoots = useMemo(
-        () => filterTree(roots, search, clauses, fields),
+        () => pruneForest(roots, (row) => rowMatches(row, search, clauses, fields)),
         [roots, search, clauses, fields],
     );
 
@@ -725,10 +703,19 @@ export function TasksModule({ userId }: TasksModuleProps) {
         ? "No tasks match the current search and filters."
         : "No tasks yet. Create the first task to get started.";
 
+    /*
+     * Deliberately FULL-WIDTH — no `mx-auto max-w-*` cap. The resizable task grid is fixed-width
+     * (sum of its column widths) inside its own horizontal-scroll container, so a centred max-w box
+     * only adds dead margin either side and, worse, starves the grid of room and forces it to
+     * overflow. When it overflows and scrolls, the opaque frozen leading columns slide over the
+     * columns beneath them — which is what hid the Start column. The `px-4` gutter (on top of the
+     * page's own `p-2 sm:p-4`) is the only breathing room the grid needs, and it does not leak into
+     * any sibling module: this section belongs to the tasks page alone.
+     */
     return (
         <section
             data-slot="tasks-module"
-            className="mx-auto w-full max-w-7xl scroll-pt-16 space-y-4 px-4 py-6 md:scroll-pt-20"
+            className="w-full scroll-pt-16 space-y-4 px-4 py-6 md:scroll-pt-20"
         >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 space-y-1">

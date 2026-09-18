@@ -21,25 +21,30 @@ import {
     useSensors,
     type CollisionDetection,
     type DragEndEvent,
+    type DragMoveEvent,
     type DragOverEvent,
     type DragStartEvent,
+    type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { hasViewportRelativeCoordinates } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 
-import { flattenVisible, isDescendant, type TreeNode } from "../../utils/tree";
+import { flattenVisible, type TreeNode } from "../../utils/tree";
 import { type MoveTaskInput } from "@/modules/project-management/task-management/tasks/types/pm-task.schema";
 
 import { TaskPriorityBadge, TaskStatusBadge } from "../TaskRowBadges";
-import { type TaskRowView } from "../TaskRow";
+import { INDENT_STEP_PX, MAX_INDENT_DEPTH, type TaskRowView } from "../TaskRow";
 import {
+    droppableTargetIds,
     intentFromKeyboard,
+    projectDepth,
     resolveDropIntent,
-    resolveDropPayload,
+    resolveProjectedDrop,
     type DndRow,
     type DropIntent,
+    type FlatRow,
 } from "./dnd-logic";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
@@ -80,8 +85,8 @@ export interface TreeDndContextValue {
     readonly overId: number | null;
     /** Resolved drop intent for the current `over` row, or `null` when there is none. */
     readonly intent: DropIntent | null;
-    /** True when `overId` is inside the dragged row's subtree — the nest affordance is suppressed. */
-    readonly isOverDescendant: boolean;
+    /** The depth the drop will actually apply, or `null` when the current over is not a valid drop. */
+    readonly projectedDepth: number | null;
     /** True while a filter or search is active; every handle is disabled and no drop is emitted. */
     readonly isReorderDisabled: boolean;
     /** The complete flat row set — hidden rows included, so the cycle guard sees the whole tree. */
@@ -106,17 +111,17 @@ export interface TreeDndProviderProps {
     expandedIds: ReadonlySet<number>;
     /**
      * Called with the moved row's id and the pinned `{ parent_id, sibling_ids }` payload when a drop
-     * settles on a valid target. Never called for a no-op, and never called for a cycle. The id is
-     * part of the contract because the move route is addressed by the moved node
-     * (`PATCH /tasks/<id>/move`) while the payload describes its destination.
+     * settles on a valid target. Never called for a no-op or a cycle. The id is part of the contract
+     * because the move route is addressed by the moved node (`PATCH /tasks/<id>/move`) while the
+     * payload describes its destination — including a new `parent_id` when the drag re-parented.
      */
     onMove?: (activeId: number, payload: MoveTaskInput) => void;
     /**
-     * The department's COMPLETE flat row set — every root, across every page. It is used only for
-     * the cycle guard and for the emitted `sibling_ids`, and defaults to the rows under `roots`.
-     * Pagination is by root, so pass this whenever `roots` is a page slice: the reorder contract is
-     * defined over the destination parent's complete child list, and computing it from one page
-     * would omit the off-page siblings and make the move route reject every root move.
+     * The department's COMPLETE flat row set — every root, across every page. It is used for the
+     * cycle guard, the emitted `sibling_ids` and the anchor's position in the full child list, and
+     * defaults to the rows under `roots`. Pagination is by root, so pass this whenever `roots` is a
+     * page slice: the reorder contract is defined over the destination parent's complete child list,
+     * and computing it from one page would omit the off-page siblings.
      */
     allRows?: readonly DndRow[];
     /** Disables every drag handle — todo 21 sets this while a filter or search is active. */
@@ -155,9 +160,13 @@ function pointerFromActivator(activator: Event): { x: number; y: number } | null
  * - ONE droppable per row, and it is the sortable registered by `useSortable` inside
  *   `SortableTaskRow`. The provider deliberately registers no second droppable: a duplicate id
  *   collides in dnd-kit's container map and clobbers the measured rect.
- * - Drop intent is the pointer's vertical third inside the `over` rect, resolved by
- *   `resolveDropIntent`. `pointerWithin` is the primary collision detector, `closestCenter` the
- *   fall-through for the gaps between rows.
+ * - Vertical position is ORDER (`resolveDropIntent`), horizontal offset is DEPTH
+ *   (`projectDepth` → `resolveProjectedDrop`). The collision detector scopes candidates to
+ *   `droppableTargetIds`, i.e. every row except the dragged node and its descendants, so `over` can
+ *   never resolve onto a cycle target. `pointerWithin` is primary, `closestCenter` the row-gap
+ *   fall-through.
+ * - The resolved depth is exposed on the context and rendered on the drag overlay, so the preview
+ *   shows the indentation the drop will apply.
  * - `DragOverlay` renders the clone so the list does not reflow mid-drag.
  *
  * Data-injectable: `roots` / `expandedIds` / `onMove` are props, so the engine mounts with fixtures
@@ -176,15 +185,24 @@ export function TreeDndProvider({
     const [activeId, setActiveId] = useState<number | null>(null);
     const [overId, setOverId] = useState<number | null>(null);
     const [intent, setIntent] = useState<DropIntent | null>(null);
+    const [projectedDepth, setProjectedDepth] = useState<number | null>(null);
 
     const pageRows = useMemo(() => collectAllRows(roots), [roots]);
     const computationRows = useMemo<readonly DndRow[]>(
         () => allRows ?? pageRows,
         [allRows, pageRows],
     );
-    const visibleIds = useMemo(
-        () => flattenVisible(roots, expandedIds).map((node) => node.id),
-        [roots, expandedIds],
+    const visibleNodes = useMemo(() => flattenVisible(roots, expandedIds), [roots, expandedIds]);
+    const visibleIds = useMemo(() => visibleNodes.map((node) => node.id), [visibleNodes]);
+    const visibleRows = useMemo<readonly FlatRow[]>(
+        () =>
+            visibleNodes.map((node) => ({
+                id: node.id,
+                parent_id: node.parent_id,
+                sort_order: node.sort_order,
+                depth: node.depth,
+            })),
+        [visibleNodes],
     );
     const nodesById = useMemo(() => {
         const byId = new Map<number, TreeNode<TaskRowView>>();
@@ -196,25 +214,91 @@ export function TreeDndProvider({
     const overRectRef = useRef<{ top: number; height: number } | null>(null);
     const overIdRef = useRef<number | null>(null);
     const intentRef = useRef<DropIntent | null>(null);
+    const deltaXRef = useRef(0);
+    const keyboardDepthRef = useRef(0);
+
+    const refreshProjection = useCallback(
+        (active: number, over: number | null, nextIntent: DropIntent | null) => {
+            if (over === null || over === active || nextIntent === null) {
+                setProjectedDepth(null);
+                return;
+            }
+            const sourceDepth = nodesById.get(active)?.depth ?? 0;
+            const deltaX = pointerRef.current === null
+                ? keyboardDepthRef.current * INDENT_STEP_PX
+                : deltaXRef.current;
+            const resolved = resolveProjectedDrop({
+                visibleRows,
+                allRows: computationRows,
+                activeId: active,
+                overId: over,
+                intent: nextIntent,
+                projectedDepth: projectDepth(sourceDepth, deltaX, INDENT_STEP_PX),
+            });
+            setProjectedDepth(resolved === null ? null : resolved.depth);
+        },
+        [nodesById, visibleRows, computationRows],
+    );
+
+    /**
+     * Left/Right change the projected depth, Up/Down still step the order.
+     *
+     * The keyboard keeps its own depth offset (in steps) rather than pretending to move the pointer:
+     * dnd-kit's sensor only understands coordinates, so returning the unchanged coordinates for
+     * Left/Right keeps `over` put while `keyboardDepthRef` feeds the same `projectDepth` the pointer
+     * uses. Up/Down delegate to `sortableKeyboardCoordinates`. Drop (Enter/Space) and cancel (Esc)
+     * stay the sensor's, and the resolved payload obeys the same projection and cycle rules.
+     */
+    const coordinateGetter = useCallback<KeyboardCoordinateGetter>(
+        (event, args) => {
+            if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
+                event.preventDefault();
+                keyboardDepthRef.current += event.code === "ArrowRight" ? 1 : -1;
+                refreshProjection(Number(args.active), overIdRef.current, intentRef.current);
+                return args.currentCoordinates;
+            }
+            return sortableKeyboardCoordinates(event, args);
+        },
+        [refreshProjection],
+    );
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-        useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+        useSensor(KeyboardSensor, { coordinateGetter }),
     );
 
-    const collisionDetection = useCallback<CollisionDetection>((args) => {
-        const pointerCollisions = pointerWithin(args);
-        return pointerCollisions.length > 0 ? pointerCollisions : closestCenter(args);
-    }, []);
+    const collisionDetection = useCallback<CollisionDetection>(
+        (args) => {
+            // Cycle guard at the collision layer: the dragged node and its descendants can never be
+            // `over`, so a re-parent that would loop is never previewable. Unlike the old
+            // same-parent filter this does NOT restrict the destination level — re-parenting is the
+            // whole point now; only the structural cycle is refused.
+            const targets = droppableTargetIds(computationRows, Number(args.active.id));
+            const scoped = {
+                ...args,
+                droppableContainers: args.droppableContainers.filter((container) =>
+                    targets.has(Number(container.id)),
+                ),
+            };
+            if (scoped.droppableContainers.length === 0) return [];
+
+            const pointerCollisions = pointerWithin(scoped);
+            return pointerCollisions.length > 0 ? pointerCollisions : closestCenter(scoped);
+        },
+        [computationRows],
+    );
 
     const clearDragState = useCallback(() => {
         pointerRef.current = null;
         overRectRef.current = null;
         overIdRef.current = null;
         intentRef.current = null;
+        deltaXRef.current = 0;
+        keyboardDepthRef.current = 0;
         setActiveId(null);
         setOverId(null);
         setIntent(null);
+        setProjectedDepth(null);
     }, []);
 
     const handleDragStart = (event: DragStartEvent) => {
@@ -222,9 +306,12 @@ export function TreeDndProvider({
         overRectRef.current = null;
         overIdRef.current = null;
         intentRef.current = null;
+        deltaXRef.current = 0;
+        keyboardDepthRef.current = 0;
         setActiveId(Number(event.active.id));
         setOverId(null);
         setIntent(null);
+        setProjectedDepth(null);
     };
 
     const handleDragOver = (event: DragOverEvent) => {
@@ -237,10 +324,10 @@ export function TreeDndProvider({
             overRectRef.current = null;
             intentRef.current = null;
             setIntent(null);
+            setProjectedDepth(null);
             return;
         }
 
-        const overIsDescendant = isDescendant(computationRows, active, over);
         const rect = event.over?.rect ?? null;
         overRectRef.current = rect === null ? null : { top: rect.top, height: rect.height };
 
@@ -252,27 +339,47 @@ export function TreeDndProvider({
                       pointerY: pointer.y + event.delta.y,
                       rectTop: rect.top,
                       rectHeight: rect.height,
-                      overIsDescendant,
                   });
 
         intentRef.current = nextIntent;
         setIntent(nextIntent);
+        refreshProjection(active, over, nextIntent);
+    };
+
+    const handleDragMove = (event: DragMoveEvent) => {
+        // Horizontal travel changes the projected depth without changing `over`, so the depth is
+        // recomputed on every move, not just when the hovered row changes.
+        deltaXRef.current = event.delta.x;
+        const active = Number(event.active.id);
+        const over = event.over === null ? overIdRef.current : Number(event.over.id);
+        refreshProjection(active, over, intentRef.current);
     };
 
     const handleDragEnd = (event: DragEndEvent) => {
         const active = Number(event.active.id);
         const over = event.over === null ? overIdRef.current : Number(event.over.id);
         const finalIntent = intentRef.current;
+        const deltaX = pointerRef.current === null
+            ? keyboardDepthRef.current * INDENT_STEP_PX
+            : deltaXRef.current;
 
         clearDragState();
 
         if (reorderDisabled) return;
         if (over === null || finalIntent === null) return;
 
-        const payload = resolveDropPayload(computationRows, active, over, finalIntent);
-        if (payload === null) return;
+        const sourceDepth = nodesById.get(active)?.depth ?? 0;
+        const resolved = resolveProjectedDrop({
+            visibleRows,
+            allRows: computationRows,
+            activeId: active,
+            overId: over,
+            intent: finalIntent,
+            projectedDepth: projectDepth(sourceDepth, deltaX, INDENT_STEP_PX),
+        });
+        if (resolved === null) return;
 
-        onMove?.(active, payload);
+        onMove?.(active, resolved.payload);
     };
 
     const contextValue = useMemo<TreeDndContextValue>(
@@ -280,12 +387,11 @@ export function TreeDndProvider({
             activeId,
             overId,
             intent,
-            isOverDescendant:
-                activeId !== null && overId !== null && isDescendant(computationRows, activeId, overId),
+            projectedDepth,
             isReorderDisabled: reorderDisabled,
             rows: computationRows,
         }),
-        [activeId, overId, intent, computationRows, reorderDisabled],
+        [activeId, overId, intent, projectedDepth, computationRows, reorderDisabled],
     );
 
     const activeNode = activeId === null ? null : (nodesById.get(activeId) ?? null);
@@ -297,6 +403,7 @@ export function TreeDndProvider({
             modifiers={[restrictToVerticalAxis]}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
+            onDragMove={handleDragMove}
             onDragEnd={handleDragEnd}
             onDragCancel={clearDragState}
         >
@@ -312,22 +419,40 @@ export function TreeDndProvider({
             >
                 {activeNode === null
                     ? null
-                    : (renderOverlay?.(activeNode) ?? <TaskDragOverlay node={activeNode} />)}
+                    : (renderOverlay?.(activeNode) ?? (
+                          <TaskDragOverlay node={activeNode} projectedDepth={projectedDepth} />
+                      ))}
             </DragOverlay>
         </DndContext>
     );
 }
 
-function TaskDragOverlay({ node }: { node: TreeNode<TaskRowView> }) {
+function TaskDragOverlay({
+    node,
+    projectedDepth,
+}: {
+    node: TreeNode<TaskRowView>;
+    projectedDepth: number | null;
+}) {
+    const visualDepth = Math.min(projectedDepth ?? node.depth, MAX_INDENT_DEPTH);
+
     return (
         <div
             data-slot="task-drag-overlay"
+            // The indent is the live depth preview: it matches `min(projectedDepth, cap)` exactly the
+            // way `TaskRow` renders rows, so the overlay shows the level the drop will apply.
+            style={{ marginLeft: visualDepth * INDENT_STEP_PX }}
             className="flex max-w-[360px] items-center gap-2 rounded-md border border-border/60 bg-card px-3 py-2 shadow-lg"
         >
             <GripVertical className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span className="truncate text-sm font-medium">{node.title}</span>
             <TaskStatusBadge status={node.status} />
             <TaskPriorityBadge priority={node.priority} />
+            {projectedDepth !== null && (
+                <span className="shrink-0 text-xs text-muted-foreground">
+                    Level {projectedDepth + 1}
+                </span>
+            )}
         </div>
     );
 }

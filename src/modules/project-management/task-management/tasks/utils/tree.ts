@@ -217,3 +217,42 @@ export function flattenVisible<T extends TreeSourceRow>(
     }
     return visible;
 }
+
+/** A copy of `node` and every descendant, so a pruned forest can never alias the source forest. */
+function cloneSubtree<T extends TreeSourceRow>(node: TreeNode<T>): TreeNode<T> {
+    return { ...node, children: node.children.map(cloneSubtree) };
+}
+
+/**
+ * Prunes a forest to the branches that satisfy `isMatch`.
+ *
+ * The rule is applied recursively and is deliberately asymmetric:
+ * - a node that MATCHES keeps its ENTIRE subtree — nothing beneath a match is pruned. This is what
+ *   lets a user search for a parent and then expand it to work with its real children: the subtask
+ *   count stays the parent's true count and the chevron opens onto rows, not onto nothing;
+ * - a node that does NOT match is kept only while a descendant matches, and only on the branches
+ *   that lead to (or contain) a match — so a deep match is never orphaned by a missing ancestor;
+ * - anything else is dropped, so a search that matches nothing returns an empty forest.
+ *
+ * Returned nodes are copies (the source forest is untouched) and keep their `depth`, so a kept
+ * row's visual indent and `aria-level` do not shift when sibling branches are pruned away.
+ *
+ * @param nodes   The forest to prune, typically from `buildTree`.
+ * @param isMatch The row-level predicate; a match is kept together with its whole subtree.
+ * @returns The pruned forest, preserving the source order at every level.
+ */
+export function pruneForest<T extends TreeSourceRow>(
+    nodes: readonly TreeNode<T>[],
+    isMatch: (row: T) => boolean,
+): TreeNode<T>[] {
+    const kept: TreeNode<T>[] = [];
+    for (const node of nodes) {
+        if (isMatch(node)) {
+            kept.push(cloneSubtree(node));
+            continue;
+        }
+        const children = pruneForest(node.children, isMatch);
+        if (children.length > 0) kept.push({ ...node, children });
+    }
+    return kept;
+}

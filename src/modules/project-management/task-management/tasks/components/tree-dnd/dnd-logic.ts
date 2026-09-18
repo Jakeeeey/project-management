@@ -1,11 +1,17 @@
 /**
- * Pure drop-intent and move-payload logic for the task tree's drag-and-drop engine.
+ * Pure geometry and destination logic for the task tree's drag-and-drop engine.
  *
  * Everything dnd-kit-aware lives in `TreeDndProvider`; this file holds only the decisions that can
- * be reasoned about without a DOM — which vertical third of the row the pointer is in, and what the
- * pinned `{ parent_id, sibling_ids }` payload becomes once a drop settles. Keeping it separate is
- * what makes the engine fixture-assertable: `tree-dnd/__assert.ts` feeds it the same calls the
- * provider's `onDragOver` / `onDragEnd` handlers make.
+ * be reasoned about without a DOM — the vertical before/after intent, the horizontal depth
+ * projection, which rows are legal targets, and the `{ parent_id, sibling_ids }` payload a drop
+ * resolves to. Keeping it separate is what makes the engine fixture-assertable:
+ * `tree-dnd/__assert.ts` feeds it the same calls the provider's handlers make.
+ *
+ * MODEL: vertical position sets ORDER, horizontal offset sets DEPTH (Notion/Workflowy style).
+ * `projectDepth` turns the horizontal offset into a candidate level and `resolveProjectedDrop`
+ * validates that level against the hovered row's real ancestry before composing the move.
+ * Re-parenting is the point, so the only structural rule left is the CYCLE GUARD: the dragged node
+ * and every descendant of it are never legal targets.
  *
  * This file imports nothing and uses only erasable syntax (no `enum`, no `namespace`, no parameter
  * properties) so `__assert.ts` can load it through Node's native type stripping.
@@ -18,22 +24,32 @@ export interface DndRow {
     readonly sort_order: number;
 }
 
-/** Where a drop lands relative to the row under the pointer. */
-export type DropIntent = "before" | "after" | "nest";
+/**
+ * A row carrying its TRUE computed depth, as `flattenVisible` returns it (see `utils/tree.ts`).
+ *
+ * Depth is structural and is never capped here — the visual indent cap is presentation only, so a
+ * level-12 row keeps `depth: 12` and only renders flush with level 8.
+ */
+export interface FlatRow extends DndRow {
+    readonly depth: number;
+}
 
-/** The pinned reorder write contract: the destination parent plus its complete ordered child list. */
+/** Where a drop lands relative to the row under the pointer. Vertical only; depth is separate. */
+export type DropIntent = "before" | "after";
+
+/** The pinned reorder/re-parent write contract: the destination parent plus its ordered child list. */
 export interface MovePayload {
     parent_id: number | null;
     sibling_ids: number[];
 }
 
 /**
- * Vertical thirds of the `over` rect. Top third inserts before the row, bottom third inserts after
- * it, and the middle third nests as a child — unless the row is a descendant of the dragged node,
- * in which case the middle third degrades to an insert (a nest would be a cycle).
+ * The pointer's vertical midpoint splits insert-before from insert-after.
+ *
+ * Depth (horizontal) never affects this: a plain vertical drag keeps the source's depth, so the
+ * accidental case remains a same-level reorder.
  */
-export const BEFORE_FRACTION = 1 / 3;
-export const AFTER_FRACTION = 2 / 3;
+export const INSERT_MIDPOINT = 0.5;
 
 /** Sibling order is `(sort_order, id)` — the order every read path returns and a write must match. */
 function bySortOrder(a: DndRow, b: DndRow): number {
@@ -90,9 +106,9 @@ export function listChildIds(
 /**
  * Splices the moved id into the destination parent's child list and returns the pinned payload.
  *
- * `insertIndex` is clamped into range so a stale index can never drop a sibling. Returns `null`
- * when the destination is the moved node itself or one of its descendants, and the caller then
- * emits nothing — the client-side half of the cycle refusal (the move route is the other half).
+ * The cycle guard is the one structural refusal: `parentId` may not be the moved node or any of its
+ * descendants. Every other parent is legal, including a different level (re-parent) and `null`
+ * (promote to root). `insertIndex` is clamped so a stale index can never drop a sibling.
  */
 export function computeMovePayload(
     rows: readonly DndRow[],
@@ -108,66 +124,153 @@ export function computeMovePayload(
     return { parent_id: parentId, sibling_ids: siblingIds };
 }
 
-/** Inputs for the pointer-third decision. `rectHeight === 0` (unmeasured) falls back to nesting. */
+/** Inputs for the pointer-half decision. `rectHeight === 0` (unmeasured) falls back to insert-after. */
 export interface DropIntentInput {
     readonly pointerY: number;
     readonly rectTop: number;
     readonly rectHeight: number;
-    /** True when the `over` row sits inside the dragged row's subtree — no nest affordance then. */
-    readonly overIsDescendant: boolean;
 }
 
 /**
- * Pointer-driven intent from the pointer's vertical third inside the `over` rect.
+ * Insert-before or insert-after, from which vertical half of the `over` rect the pointer is in.
  *
- * A descendant of the dragged row must not offer the nest affordance, so its middle third returns
- * an insert intent instead. The resulting payload is still refused by `computeMovePayload` (the
- * destination parent would be inside the dragged subtree), so the cycle never reaches the wire.
+ * Depth is not decided here — that is the horizontal projection's job.
  */
 export function resolveDropIntent(input: DropIntentInput): DropIntent {
-    const { pointerY, rectTop, rectHeight, overIsDescendant } = input;
+    const { pointerY, rectTop, rectHeight } = input;
 
-    if (rectHeight <= 0) return overIsDescendant ? "before" : "nest";
+    if (rectHeight <= 0) return "after";
 
     const ratio = (pointerY - rectTop) / rectHeight;
-    if (ratio < BEFORE_FRACTION) return "before";
-    if (ratio > AFTER_FRACTION) return "after";
-    return overIsDescendant ? "before" : "nest";
+    return ratio < INSERT_MIDPOINT ? "before" : "after";
 }
 
-/**
- * Keyboard reorder is sibling-only: the drag direction decides before/after and never nests.
- *
- * Re-parenting for keyboard users is the separate "Move to…" dialog, which emits the same payload —
- * `sortableKeyboardCoordinates` is deliberately never asked to change a row's parent.
- */
+/** Keyboard vertical reorder is the same before/after decision as the pointer's vertical half. */
 export function intentFromKeyboard(deltaY: number): DropIntent {
     return deltaY < 0 ? "before" : "after";
 }
 
 /**
- * Maps a settled drop onto the pinned payload, or `null` when nothing should be emitted.
+ * Horizontal drag offset → projected depth: one step per `indentStepPx` of travel.
  *
- * `before` / `after` resolve the destination parent from the `over` row's parent; `nest` makes the
- * `over` row itself the parent. All three delegate to `computeMovePayload`, so the cycle guard and
- * the complete-child-list contract hold for every entry point.
+ * `sourceDepth` is the dragged row's TRUE depth, and no upper clamp is applied here. `MAX_INDENT_DEPTH`
+ * is a VISUAL cap (`TaskRow` renders `min(depth, cap)` while `aria-level` keeps the true value), so
+ * using it as a structural ceiling would silently promote every over-cap row on the first right
+ * drag and forbid nesting it deeper. The real ceiling is the hovered row's own depth + 1, enforced
+ * by `resolveProjectedDrop`; a plain vertical drag (`deltaX === 0`) reproduces the source depth.
  */
-export function resolveDropPayload(
-    rows: readonly DndRow[],
-    activeId: number,
-    overId: number,
-    intent: DropIntent,
-): MovePayload | null {
-    if (overId === activeId) return null;
+export function projectDepth(sourceDepth: number, deltaX: number, indentStepPx: number): number {
+    if (indentStepPx <= 0) return Math.max(0, sourceDepth);
+    const steps = Math.round(deltaX / indentStepPx);
+    return Math.max(0, sourceDepth + steps);
+}
 
-    if (intent === "nest") {
-        return computeMovePayload(rows, activeId, overId, Number.MAX_SAFE_INTEGER);
+/**
+ * Every row a drag may legally target: all rows except the dragged node and its descendants.
+ *
+ * `TreeDndProvider` scopes its collision candidates to this set so `over` can never resolve onto a
+ * cycle target. The dragged row itself is excluded too, so a drop is never a self-drop.
+ */
+export function droppableTargetIds(rows: readonly DndRow[], activeId: number): Set<number> {
+    const ids = new Set<number>();
+    for (const row of rows) {
+        if (row.id === activeId) continue;
+        if (isCycleTarget(rows, activeId, row.id)) continue;
+        ids.add(row.id);
     }
+    return ids;
+}
 
-    const parentId = parentOf(rows, overId);
-    const siblings = listChildIds(rows, parentId, activeId);
-    const overIndex = siblings.indexOf(overId);
+/** The id of the nearest row above the drop boundary at exactly `depth`, or `undefined`. */
+function lastRowAboveWithDepth(
+    visibleRows: readonly FlatRow[],
+    boundary: number,
+    depth: number,
+): number | undefined {
+    for (let index = boundary - 1; index >= 0; index -= 1) {
+        if (visibleRows[index].depth === depth) return visibleRows[index].id;
+    }
+    return undefined;
+}
+
+export interface ProjectedDropInput {
+    /** Visible rows in render order, carrying true depth. */
+    readonly visibleRows: readonly FlatRow[];
+    /** The complete flat row set — used for sibling lists and the cycle guard. */
+    readonly allRows: readonly DndRow[];
+    readonly activeId: number;
+    readonly overId: number;
+    readonly intent: DropIntent;
+    /** Candidate depth from `projectDepth`, before ancestry validation. */
+    readonly projectedDepth: number;
+}
+
+/** A valid drop: the depth that will actually be applied plus the payload that applies it. */
+export interface ProjectedDrop {
+    readonly depth: number;
+    readonly payload: MovePayload;
+}
+
+/**
+ * Validates a projected depth against the hovered row and composes the move.
+ *
+ * The hovered row's ancestry makes every level `0..overDepth` legitimate, plus `overDepth + 1` to
+ * become that row's child; `projectedDepth` is clamped into that range and then walked downward
+ * until a real parent row exists at `depth - 1` (e.g. "before" the first child has no previous
+ * sibling to nest under, so it falls back to the child's own level). `depth === 0` is the root and
+ * is a legitimate destination.
+ *
+ * The destination parent is the nearest row above the boundary at `depth - 1`; the insert index is
+ * placed immediately after that parent's last child above the boundary, so the moved node lands
+ * where the gap is previewed. Returns `null` for a self-drop, a drop over a descendant (cycle), or
+ * an inconsistent row set.
+ */
+export function resolveProjectedDrop(input: ProjectedDropInput): ProjectedDrop | null {
+    const { visibleRows, allRows, activeId, overId, intent, projectedDepth } = input;
+
+    if (overId === activeId) return null;
+    if (isCycleTarget(allRows, activeId, overId)) return null;
+
+    const overIndex = visibleRows.findIndex((row) => row.id === overId);
     if (overIndex === -1) return null;
 
-    return computeMovePayload(rows, activeId, parentId, intent === "before" ? overIndex : overIndex + 1);
+    const overDepth = visibleRows[overIndex].depth;
+    const boundary = overIndex + (intent === "after" ? 1 : 0);
+    const ceiling = overDepth + 1;
+
+    let depth = Math.max(0, Math.min(projectedDepth, ceiling));
+    let parentId: number | null = null;
+    while (depth > 0) {
+        const candidate = lastRowAboveWithDepth(visibleRows, boundary, depth - 1);
+        const candidateIsSafe =
+            candidate !== undefined &&
+            candidate !== activeId &&
+            !isCycleTarget(allRows, activeId, candidate);
+        if (candidateIsSafe) {
+            parentId = candidate;
+            break;
+        }
+        depth -= 1;
+    }
+
+    const children = listChildIds(allRows, parentId, activeId);
+    let anchorId: number | undefined;
+    for (let index = boundary - 1; index >= 0; index -= 1) {
+        const row = visibleRows[index];
+        if (row.id !== activeId && parentOf(allRows, row.id) === parentId) {
+            anchorId = row.id;
+            break;
+        }
+    }
+
+    let insertIndex = 0;
+    if (anchorId !== undefined) {
+        const position = children.indexOf(anchorId);
+        if (position === -1) return null;
+        insertIndex = position + 1;
+    }
+
+    const payload = computeMovePayload(allRows, activeId, parentId, insertIndex);
+    if (payload === null) return null;
+    return { depth, payload };
 }

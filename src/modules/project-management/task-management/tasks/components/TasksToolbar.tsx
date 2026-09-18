@@ -184,7 +184,14 @@ export function TasksToolbar({
                             </Button>
                         </DialogTrigger>
 
-                        <DialogContent className="w-[95vw] gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-[500px]">
+                        {/*
+                         * The filter modal is the widest dialog in the module: four tracks (field /
+                         * operator / value / remove) plus the saved-filter controls need real room,
+                         * and the operator track in particular must never squeeze "Is not empty" onto
+                         * two lines. `w-[95vw]` keeps it inside a phone viewport and the `sm:` tier
+                         * caps it on a desktop, matching the module's other dialogs.
+                         */}
+                        <DialogContent className="w-[95vw] gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-[720px]">
                             <DialogHeader className="border-b px-6 pt-6 pb-4">
                                 <DialogTitle>Filters</DialogTitle>
                                 <DialogDescription>Add rows to narrow the list of tasks.</DialogDescription>
@@ -212,6 +219,23 @@ export function TasksToolbar({
                             </div>
 
                             <DialogFooter className="justify-end border-t bg-muted/20 px-6 py-4">
+                                {/*
+                                 * Resets the CLAUSE SET only — `[]` is exactly the state the module
+                                 * starts from and the matcher already treats as "no filters". It
+                                 * deliberately does NOT touch the search box: a saved filter's
+                                 * `search` text is not part of its clause set (see `task-filter.ts`),
+                                 * so the search term stays where the user left it. Low-emphasis ghost
+                                 * so the modal's only filled-ish action stays `Done`.
+                                 */}
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    data-slot="task-filter-clear-all"
+                                    onClick={() => onClausesChange([])}
+                                    disabled={clauses.length === 0}
+                                >
+                                    Clear all filters
+                                </Button>
                                 <Button
                                     type="button"
                                     variant="outline"

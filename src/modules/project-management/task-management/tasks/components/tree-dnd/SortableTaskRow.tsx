@@ -24,13 +24,13 @@ export type SortableTaskRowProps = TaskRowProps;
  * `rowRef` / `rowStyle` / `rowClassName` props added for this wrapper, and the drag handle goes into
  * the existing `dragHandle` slot.
  *
- * Affordances: a horizontal line marks an insert-before / insert-after position, and a distinct
- * ring marks the nest zone. A row that is a descendant of the dragged row never shows the nest ring
- * (see `resolveDropIntent`). Under reduced motion the transform transition is dropped while both
- * affordances stay.
+ * Affordances: a horizontal line marks an insert-before / insert-after position. The projected depth
+ * from the horizontal offset is shown on the drag overlay, not by re-indenting this row — the row's
+ * own indentation is the true tree indent and must not move. Under reduced motion the transform
+ * transition is dropped while the insert line stays.
  */
 export function SortableTaskRow({ node, ...rowProps }: SortableTaskRowProps) {
-    const { activeId, overId, intent, isOverDescendant, isReorderDisabled } = useTreeDnd();
+    const { activeId, overId, intent, isReorderDisabled } = useTreeDnd();
     const prefersReducedMotion = usePrefersReducedMotion();
     const {
         setNodeRef,
@@ -45,7 +45,6 @@ export function SortableTaskRow({ node, ...rowProps }: SortableTaskRowProps) {
     const isDropTarget = overId === node.id && !isDragging;
     const showInsertBefore = isDropTarget && intent === "before";
     const showInsertAfter = isDropTarget && intent === "after";
-    const showNest = isDropTarget && intent === "nest" && !isOverDescendant;
 
     const handleLabel = isReorderDisabled
         ? `Reordering is disabled while a filter or search is active: ${node.title}`
@@ -86,7 +85,6 @@ export function SortableTaskRow({ node, ...rowProps }: SortableTaskRowProps) {
             rowClassName={cn(
                 showInsertBefore && "border-t-2 border-t-primary",
                 showInsertAfter && "border-b-2 border-b-primary",
-                showNest && "bg-primary/5 ring-2 ring-primary/50 ring-inset",
                 isDragging && "opacity-40",
             )}
             dragHandle={dragHandle}

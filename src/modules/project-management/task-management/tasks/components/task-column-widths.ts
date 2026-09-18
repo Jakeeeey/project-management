@@ -51,7 +51,8 @@ export const DEFAULT_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
  * The floor per column: nothing can be dragged narrower than this. The narrow utility gutters
  * (expand, actions) get a smaller floor than the text columns, because they hold one control each;
  * the text columns still keep enough room that their truncation is legible rather than a single
- * glyph. Custom columns share the `field` floor.
+ * glyph. Custom columns share the `field` floor. (A fixed column's floor is moot — see
+ * `NON_RESIZABLE_TASK_COLUMN_KEYS` — but it stays here so the record remains total over the union.)
  */
 export const MIN_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
     expand: 68,
@@ -64,6 +65,32 @@ export const MIN_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
     actions: 56,
     field: 120,
 };
+
+/**
+ * The structural gutters whose width is NOT a user preference: the `expand` control gutter (drag
+ * handle + accordion chevron) and the `actions` icon gutter. Their widths are pinned by the table's
+ * own geometry — `expand` is the leading frozen column, so its 76px is the baseline every following
+ * column's frozen offset is derived from — and nothing in the row reads a "wider gutter" as a
+ * preference. Letting them be dragged would silently shift the frozen block and the indentation
+ * baseline for no benefit, so they are fixed.
+ *
+ * This constant is the SINGLE SOURCE OF TRUTH for "which columns may be resized": the header reads
+ * `isResizableTaskColumnKey` to decide whether to render a handle, and the width store reads
+ * `isNonResizableTaskColumnKey` to ignore any persisted or proposed override for these keys. Every
+ * other column — the data columns and every custom `field-*` column — stays resizable.
+ */
+export const NON_RESIZABLE_TASK_COLUMN_KEYS = ["expand", "actions"] as const;
+export type NonResizableTaskColumnKey = (typeof NON_RESIZABLE_TASK_COLUMN_KEYS)[number];
+
+/** True for a structural gutter whose width must never change by any path. */
+export function isNonResizableTaskColumnKey(columnKey: string): columnKey is NonResizableTaskColumnKey {
+    return (NON_RESIZABLE_TASK_COLUMN_KEYS as readonly string[]).includes(columnKey);
+}
+
+/** True when a column may be resized: every data column, never a structural gutter. */
+export function isResizableTaskColumnKey(columnKey: string): boolean {
+    return !isNonResizableTaskColumnKey(columnKey);
+}
 
 /** The per-column overrides a user has dragged: the fixed keys plus any `field-<id>` entries. */
 export type TaskColumnWidthOverrides = Partial<Record<TaskColumnKey, number>> &
@@ -107,6 +134,10 @@ export function minTaskColumnWidth(columnKey: string): number {
  * poisoning the layout.
  */
 export function clampTaskColumnWidth(columnKey: string, width: number): number {
+    // A structural gutter has no adjustable width, so no proposal may move it. This is the store
+    // half of the invariant: the header renders no handle for these keys, and this guarantees a
+    // direct/programmatic `setColumnWidth` cannot resize them either.
+    if (isNonResizableTaskColumnKey(columnKey)) return defaultTaskColumnWidth(columnKey);
     if (!Number.isFinite(width)) return defaultTaskColumnWidth(columnKey);
     return Math.max(minTaskColumnWidth(columnKey), Math.round(width));
 }
@@ -134,6 +165,11 @@ export function parseTaskColumnWidths(raw: string | null): TaskColumnWidthOverri
     const overrides: Record<string, number> = {};
     for (const [columnKey, value] of Object.entries(parsed)) {
         if (!isPersistableColumnKey(columnKey)) continue;
+        // A structural gutter's width is not a preference, so a `expand`/`actions` override persisted
+        // by the build that still allowed it is DROPPED here — silently inert, without a key bump and
+        // without discarding the user's other widths. The stale on-disk entry is purged the next time
+        // any column is resized (the write spreads this parsed snapshot, which no longer carries it).
+        if (isNonResizableTaskColumnKey(columnKey)) continue;
         if (typeof value !== "number" || !Number.isFinite(value)) continue;
         overrides[columnKey] = clampTaskColumnWidth(columnKey, value);
     }

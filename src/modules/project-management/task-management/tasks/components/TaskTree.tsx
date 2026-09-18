@@ -21,7 +21,7 @@ import { useTaskColumnWidths } from "../hooks/useTaskColumnWidths";
 import { AssigneeStack } from "./AssigneeStack";
 import { CatalogStatusIcon } from "./CatalogStatusIcon";
 import { ColumnResizeHandle } from "./ColumnResizeHandle";
-import { minTaskColumnWidth } from "./task-column-widths";
+import { isResizableTaskColumnKey, minTaskColumnWidth } from "./task-column-widths";
 import {
     FROZEN_EDGE_CLASS,
     FROZEN_HEADER_CELL_CLASS,
@@ -64,8 +64,9 @@ interface TaskTreeColumn {
  * time, so this is only the part that never varies.
  *
  * There are no width classes here any more: every column's width is a RUNTIME number applied through
- * the table's `<colgroup>` (see `task-column-widths.ts` for the defaults and floors). The fixed set's
- * default widths still sum under the `max-w-7xl` container's usable width at `xl` and up.
+ * the table's `<colgroup>` (see `task-column-widths.ts` for the defaults and floors). The defaults
+ * are the INITIAL layout only — the page is full-width now, so once the department's columns (custom
+ * columns included) outgrow the viewport the grid scrolls inside its own container instead.
  *
  * Order: the expand gutter, then task title, assignees, start, due, priority and status; the
  * custom columns follow the fixed set and the actions gutter is appended last.
@@ -552,14 +553,23 @@ export function TaskTree({
                                             )}
                                         >
                                             {column.srOnly ? <span className="sr-only">{column.label}</span> : column.label}
-                                            <ColumnResizeHandle
-                                                columnKey={column.key}
-                                                label={column.label}
-                                                width={widthOf(column.key)}
-                                                minWidth={minTaskColumnWidth(column.key)}
-                                                onResize={handleColumnResize}
-                                                onResizeCommit={handleColumnResizeCommit}
-                                            />
+                                            {/*
+                                             * Only data columns are resizable. The structural gutters
+                                             * (`expand`, `actions`) render no handle — their widths are
+                                             * fixed layout geometry, not a user preference — so they can
+                                             * never be dragged or keyboard-nudged. `isResizableTaskColumnKey`
+                                             * is the single source of truth shared with the width store.
+                                             */}
+                                            {isResizableTaskColumnKey(columnKey) ? (
+                                                <ColumnResizeHandle
+                                                    columnKey={column.key}
+                                                    label={column.label}
+                                                    width={widthOf(column.key)}
+                                                    minWidth={minTaskColumnWidth(column.key)}
+                                                    onResize={handleColumnResize}
+                                                    onResizeCommit={handleColumnResizeCommit}
+                                                />
+                                            ) : null}
                                         </TableHead>
                                     );
                                 })}
