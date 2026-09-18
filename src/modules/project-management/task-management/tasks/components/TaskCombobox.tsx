@@ -15,7 +15,7 @@ import {
     ComboboxTrigger,
     ComboboxValue,
 } from "@/components/ui/combobox";
-import { CatalogChipDot } from "./CatalogChip";
+import { CatalogStatusIcon } from "./CatalogStatusIcon";
 
 /**
  * The ONE searchable single-select combobox for the project-management module.
@@ -27,9 +27,9 @@ import { CatalogChipDot } from "./CatalogChip";
  *
  * - A trigger showing the CURRENT value (or the placeholder while nothing is chosen).
  * - A search input INSIDE the popup, so a long catalog/member list is type-to-filter.
- * - A per-option leading colour dot, rendered by `CatalogChipDot` so a status/priority row looks
- *   exactly like it does everywhere else. The dot is OPTIONAL — an option with no stored colour
- *   renders no dot at all rather than a blank one.
+ * - A per-option leading icon, rendered by `CatalogStatusIcon` so a status/priority/custom-field
+ *   option looks exactly like it does everywhere else. The icon is ALWAYS drawn — an option with no
+ *   stored icon falls back to the foundation's default marker rather than leaving the column blank.
  * - A visible CLEAR (X) button, rendered only while a value is selected, so "how do I remove a
  *   value" is answered by the control itself rather than by a fake first list row labelled with
  *   the placeholder.
@@ -59,10 +59,15 @@ export interface TaskComboboxOption {
     /** The label a person reads, rendered verbatim and truncated to the control's width. */
     readonly label: string;
     /**
-     * Optional stored catalog hex that becomes the row's leading dot. A row with no colour has NO
-     * dot (the wrapper omits it), which is different from a dot rendered in a neutral tone.
+     * Optional stored catalog hex that tints the row's leading icon. A row with no colour renders the
+     * icon in the inherited foreground, which is different from a deliberately neutral dot.
      */
     readonly color?: string | null;
+    /**
+     * Optional allow-listed icon name. Omitted or `null` renders the foundation's default marker, so
+     * every row leads with a glyph and the option columns never shift between icon and no icon.
+     */
+    readonly icon?: string | null;
 }
 
 export interface TaskComboboxProps {
@@ -95,20 +100,25 @@ export interface TaskComboboxProps {
     readonly clearable?: boolean;
 }
 
-/** Labels and colours keyed by option value, so the render pass does not scan the array per row. */
+/** Labels, colours and icons keyed by option value, so the render pass does not scan the array per row. */
 function indexOptions(options: readonly TaskComboboxOption[]): {
     labels: Map<string, string>;
     colors: Map<string, string>;
+    icons: Map<string, string>;
 } {
     const labels = new Map<string, string>();
     const colors = new Map<string, string>();
+    const icons = new Map<string, string>();
     for (const option of options) {
         labels.set(option.value, option.label);
         if (typeof option.color === "string" && option.color !== "") {
             colors.set(option.value, option.color);
         }
+        if (typeof option.icon === "string" && option.icon !== "") {
+            icons.set(option.value, option.icon);
+        }
     }
-    return { labels, colors };
+    return { labels, colors, icons };
 }
 
 export function TaskCombobox({
@@ -123,7 +133,7 @@ export function TaskCombobox({
     emptyMessage = "No matches.",
     clearable = true,
 }: TaskComboboxProps) {
-    const { labels, colors } = React.useMemo(() => indexOptions(options), [options]);
+    const { labels, colors, icons } = React.useMemo(() => indexOptions(options), [options]);
 
     /**
      * The primitive filters its list by the item values it is given. Passing the option VALUES (not
@@ -157,6 +167,19 @@ export function TaskCombobox({
                     )}
                     aria-label={ariaLabel}
                 >
+                    {/*
+                     * The selected value leads with its stored icon — the same glyph the read-only
+                     * row chip shows — so opening the editor never changes what the value looks
+                     * like. `tone="status"` because the trigger is a bare surface, not a filled pill.
+                     */}
+                    {value === null ? null : (
+                        <CatalogStatusIcon
+                            icon={icons.get(value)}
+                            color={colors.get(value)}
+                            tone="status"
+                            density="comfortable"
+                        />
+                    )}
                     {/*
                      * The label truncates inside the trigger's flexible middle, so a long catalog
                      * name can never widen the control past the caller's `w-*` cap.
@@ -198,19 +221,23 @@ export function TaskCombobox({
                     aria-label={`Search ${ariaLabel}`}
                 />
                 <ComboboxList>
-                    {(itemValue: string) => {
-                        const color = colors.get(itemValue);
-                        return (
-                            <ComboboxItem key={itemValue} value={itemValue}>
-                                {color === undefined ? null : (
-                                    <CatalogChipDot color={color} density="comfortable" />
-                                )}
-                                <span className="min-w-0 truncate">
-                                    {labels.get(itemValue) ?? itemValue}
-                                </span>
-                            </ComboboxItem>
-                        );
-                    }}
+                    {(itemValue: string) => (
+                        <ComboboxItem key={itemValue} value={itemValue}>
+                            {/*
+                             * The glyph is ALWAYS drawn: an option with no stored icon falls back to
+                             * the foundation's default marker, so the option column stays uniform.
+                             */}
+                            <CatalogStatusIcon
+                                icon={icons.get(itemValue)}
+                                color={colors.get(itemValue)}
+                                tone="status"
+                                density="comfortable"
+                            />
+                            <span className="min-w-0 truncate">
+                                {labels.get(itemValue) ?? itemValue}
+                            </span>
+                        </ComboboxItem>
+                    )}
                 </ComboboxList>
                 <ComboboxEmpty>{emptyMessage}</ComboboxEmpty>
             </ComboboxContent>

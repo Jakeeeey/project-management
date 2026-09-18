@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ import {
     type CreateCatalogItemInput,
 } from "../types/task-config.schema";
 import { kindLabel, type CatalogFormInput, type CatalogItem } from "../hooks/useTaskConfiguration";
+import { CatalogIconPicker } from "../../tasks/components/CatalogIconPicker";
 
 /** A valid 6-digit hex the native colour input can render before the user picks their own. */
 const FALLBACK_HEX = "#64748b";
@@ -70,14 +71,18 @@ export function CatalogItemDialog({
 
     const form = useForm<CreateCatalogItemInput>({
         resolver: zodResolver(CreateCatalogItemSchema),
-        defaultValues: { label: "", color: null, is_default: false },
+        defaultValues: { label: "", color: null, icon: null, is_default: false },
     });
+
+    /** The live colour, so the icon previews below track it without subscribing via `form.watch`. */
+    const currentColor = useWatch({ control: form.control, name: "color" });
 
     useEffect(() => {
         if (!open) return;
         form.reset({
             label: item?.label ?? "",
             color: item?.color ?? null,
+            icon: item?.icon ?? null,
             is_default: item?.is_default ?? false,
         });
     }, [open, item, form]);
@@ -86,6 +91,7 @@ export function CatalogItemDialog({
         await onSubmit({
             label: values.label.trim(),
             color: values.color ?? null,
+            icon: values.icon ?? null,
             is_default: values.is_default === true,
         });
     });
@@ -156,6 +162,32 @@ export function CatalogItemDialog({
                                         </div>
                                         <FormDescription>
                                             Optional 6-digit hex, such as #16a34a. Shown as a badge tint.
+                                        </FormDescription>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+
+                            <FormField
+                                control={form.control}
+                                name="icon"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel htmlFor="catalog-item-icon">Icon</FormLabel>
+                                        {/*
+                                         * The picker previews every glyph in the colour being chosen
+                                         * above, so `form.watch("color")` is read here rather than
+                                         * duplicating the colour into a second form field.
+                                         */}
+                                        <CatalogIconPicker
+                                            id="catalog-item-icon"
+                                            value={field.value ?? null}
+                                            onChange={field.onChange}
+                                            color={currentColor}
+                                            disabled={isSubmitting}
+                                        />
+                                        <FormDescription>
+                                            Optional icon shown with the badge. Previews follow the colour above.
                                         </FormDescription>
                                         <FormMessage />
                                     </FormItem>

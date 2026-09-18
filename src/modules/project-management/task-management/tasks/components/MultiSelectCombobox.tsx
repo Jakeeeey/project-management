@@ -20,10 +20,10 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-    CatalogChipDot,
     resolveCatalogForeground,
     resolveCatalogHex,
 } from "./CatalogChip";
+import { CatalogStatusIcon } from "./CatalogStatusIcon";
 
 /**
  * The ONE searchable MULTI-SELECT combobox for the project-management module.
@@ -36,7 +36,7 @@ import {
  * control carries no bespoke combobox primitive of its own.
  *
  * What it keeps from the module that the reference does not have: an option may carry a stored hex
- * (`color`), and that hex tints BOTH the option's chip and its leading list dot. The caller derives
+ * (`color`), and that hex tints BOTH the option's chip and its leading list icon. The caller derives
  * the colour (`assigneeColorFor(user.id)`) and the tint's readable ink comes from the module's one
  * WCAG decision, `resolveCatalogForeground`, so an assignee chip here can never disagree with the
  * same person's avatar in the table.
@@ -73,11 +73,16 @@ export interface MultiSelectComboboxOption {
     /** The label a person reads, rendered verbatim and truncated to the control's width. */
     readonly label: string;
     /**
-     * Optional stored hex that tints the option's chip and its leading list dot. It is the caller's
+     * Optional stored hex that tints the option's chip and its leading list icon. It is the caller's
      * job to derive it (an assignee passes `assigneeColorFor(user.id)`); a row without a colour keeps
-     * the neutral chip and no dot, which is different from a deliberately neutral dot.
+     * the neutral chip and the inherited-ink icon, which is different from a deliberately neutral dot.
      */
     readonly color?: string | null;
+    /**
+     * Optional allow-listed icon name. Omitted or `null` renders the foundation's default marker, so
+     * every row and chip leads with a glyph and the control never shifts between icon and no icon.
+     */
+    readonly icon?: string | null;
     /**
      * Extra text the search matches but never displays — an email, a role. Optional, so a plain
      * id/label list searches by label alone.
@@ -124,18 +129,23 @@ function commandKeywordsFor(option: MultiSelectComboboxOption): string[] {
         : [option.label, option.keywords];
 }
 
-/** Labels and colours keyed by value, so a render pass resolves each selected value only once. */
+/** Labels, colours and icons keyed by value, so a render pass resolves each selected value only once. */
 function indexOptions(options: readonly MultiSelectComboboxOption[]): {
     labelByValue: Map<string, string>;
     colorByValue: Map<string, string | null>;
+    iconByValue: Map<string, string>;
 } {
     const labelByValue = new Map<string, string>();
     const colorByValue = new Map<string, string | null>();
+    const iconByValue = new Map<string, string>();
     for (const option of options) {
         labelByValue.set(option.value, option.label);
         colorByValue.set(option.value, option.color ?? null);
+        if (typeof option.icon === "string" && option.icon !== "") {
+            iconByValue.set(option.value, option.icon);
+        }
     }
-    return { labelByValue, colorByValue };
+    return { labelByValue, colorByValue, iconByValue };
 }
 
 export interface MultiSelectChipProps {
@@ -143,6 +153,8 @@ export interface MultiSelectChipProps {
     readonly label: string;
     /** Stored 6-digit hex; anything else keeps the neutral `Badge` styling. */
     readonly color?: string | null;
+    /** Allow-listed icon name, or `null`/omitted for the foundation's default marker. */
+    readonly icon?: string | null;
     /** Removes this one value from the selection. */
     readonly onRemove: () => void;
 }
@@ -155,7 +167,7 @@ export interface MultiSelectChipProps {
  * remove control is a focusable `span` with its own event handlers that stop propagation, so a click
  * removes the value without also toggling the popover or submitting a surrounding form.
  */
-export function MultiSelectChip({ label, color, onRemove }: MultiSelectChipProps) {
+export function MultiSelectChip({ label, color, icon, onRemove }: MultiSelectChipProps) {
     const hex = resolveCatalogHex(color);
 
     return (
@@ -169,6 +181,17 @@ export function MultiSelectChip({ label, color, onRemove }: MultiSelectChipProps
                     : { backgroundColor: hex, color: resolveCatalogForeground(hex) }
             }
         >
+            {/*
+             * A filled chip takes the legibility-derived contrast ink, exactly like the row's chip;
+             * the neutral (colourless) chip uses the inherited foreground so the glyph stays visible.
+             * The glyph is always drawn — a missing icon falls back to the default marker.
+             */}
+            <CatalogStatusIcon
+                icon={icon}
+                color={hex}
+                tone={hex === null ? "status" : "contrast"}
+                density="comfortable"
+            />
             <span className="min-w-0 flex-1 truncate">{label}</span>
             <span
                 role="button"
@@ -216,7 +239,7 @@ export function MultiSelectChipRow({
     onRemove,
     className,
 }: MultiSelectChipRowProps) {
-    const { labelByValue, colorByValue } = React.useMemo(
+    const { labelByValue, colorByValue, iconByValue } = React.useMemo(
         () => indexOptions(options),
         [options],
     );
@@ -228,6 +251,7 @@ export function MultiSelectChipRow({
                     key={value}
                     label={labelByValue.get(value) ?? value}
                     color={colorByValue.get(value)}
+                    icon={iconByValue.get(value)}
                     onRemove={() => onRemove(value)}
                 />
             ))}
@@ -276,7 +300,6 @@ export function MultiSelectOptionList({
             <CommandGroup>
                 {options.map((option) => {
                     const checked = selectedSet.has(option.value);
-                    const hex = resolveCatalogHex(option.color);
 
                     return (
                         <CommandItem
@@ -292,9 +315,17 @@ export function MultiSelectOptionList({
                                 )}
                                 aria-hidden="true"
                             />
-                            {hex === null ? null : (
-                                <CatalogChipDot color={hex} density="comfortable" />
-                            )}
+                            {/*
+                             * The list row is a bare surface, so the glyph takes `tone="status"` (the
+                             * stored hex itself). It is always drawn — an option with no stored icon
+                             * falls back to the foundation's default marker, keeping rows aligned.
+                             */}
+                            <CatalogStatusIcon
+                                icon={option.icon}
+                                color={option.color}
+                                tone="status"
+                                density="comfortable"
+                            />
                             <span className="min-w-0 flex-1 truncate" title={option.label}>
                                 {option.label}
                             </span>
@@ -312,7 +343,7 @@ export function MultiSelectOptionList({
  * Picks KEEP the popover open (it is a toggle, not a pick-and-close), so several members can be added
  * or removed in one interaction. Backspace / Delete on the CLOSED trigger drops the last pick, the
  * clear (X) empties the whole selection when `clearable`, and an option's colour tints its chip and
- * its list dot.
+ * its list icon.
  */
 export function MultiSelectCombobox({
     options,

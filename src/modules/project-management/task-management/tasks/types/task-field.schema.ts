@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { normalizeIconName } from "../components/catalog-icon";
+
 /**
  * The custom-column contracts for the tasks module — the ONLY definition of the `pm_task_field` /
  * `pm_task_field_option` payload shapes in the repository.
@@ -41,6 +43,16 @@ export const TaskFieldColorSchema = z
     .string()
     .regex(/^#[0-9a-f]{6}$/i, "Colour must be a 6-digit hex value such as #16a34a");
 
+/**
+ * A curated lucide icon name. `normalizeIconName` is both the validator and the normaliser: the
+ * refine rejects a name outside the allow-list, and the transform stores the canonical spelling, so
+ * `lucide-Circle` persists as `circle` and every reader downstream only ever sees a known name.
+ */
+export const TaskFieldIconSchema = z
+    .string()
+    .refine((value) => normalizeIconName(value) !== null, "Unknown icon")
+    .transform((value) => normalizeIconName(value) ?? value);
+
 /** Both tables store `sort_order INT NOT NULL DEFAULT 0`; every list orders by `(sort_order, id)`. */
 const SortOrderSchema = z.number().int().min(0, "Sort order must be zero or greater");
 
@@ -74,6 +86,7 @@ export const CreateTaskFieldOptionSchema = z.object({
     field_id: IdentifierSchema,
     label: TaskFieldLabelSchema,
     color: TaskFieldColorSchema.nullable().optional(),
+    icon: TaskFieldIconSchema.nullable().optional(),
     sort_order: SortOrderSchema.optional(),
 });
 
@@ -82,6 +95,7 @@ export const UpdateTaskFieldOptionSchema = z.object({
     id: IdentifierSchema,
     label: TaskFieldLabelSchema.optional(),
     color: TaskFieldColorSchema.nullable().optional(),
+    icon: TaskFieldIconSchema.nullable().optional(),
     sort_order: SortOrderSchema.optional(),
 });
 

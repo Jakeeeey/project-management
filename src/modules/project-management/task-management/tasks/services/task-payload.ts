@@ -7,6 +7,7 @@ import type {
 import type { PermissionContext } from "./permission-service";
 import type { CatalogLists } from "@/modules/project-management/task-management/configure/services/task-config-service";
 import type { TaskFieldClientRow, TaskFieldValueClientRow } from "./task-field-service";
+import { normalizeIconName } from "../components/catalog-icon";
 
 /**
  * The projection layer between Directus rows and the tasks route's wire payload.
@@ -59,8 +60,12 @@ export interface TaskClientRow {
     readonly can_delete: boolean;
     readonly status_label: string | null;
     readonly status_color: string | null;
+    /** The live status row's icon, normalised through `normalizeIconName` — allow-listed or `null`. */
+    readonly status_icon: string | null;
     readonly priority_label: string | null;
     readonly priority_color: string | null;
+    /** The live priority row's icon, normalised through `normalizeIconName` — allow-listed or `null`. */
+    readonly priority_icon: string | null;
 }
 
 /** The GET payload: the department's flat rows, the catalogs their labels resolve from, and the custom columns the rows carry answers for. */
@@ -229,7 +234,9 @@ export function toClientRow(source: TaskRowSource, shaping: RowShaping): TaskCli
         can_delete: shaping.permissions.canDeleteThisTask({ created_by: row.created_by }),
         status_label: status?.label ?? null,
         status_color: status?.color ?? null,
+        status_icon: normalizeIconName(status?.icon),
         priority_label: priority?.label ?? null,
         priority_color: priority?.color ?? null,
+        priority_icon: normalizeIconName(priority?.icon),
     };
 }

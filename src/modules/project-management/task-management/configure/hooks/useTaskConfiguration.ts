@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { normalizeIconName } from "../../tasks/components/catalog-icon";
+
 import { CapabilitiesSchema, type Capabilities } from "../types/capabilities";
 
 import type { CatalogKind } from "../types/task-config.schema";
@@ -34,6 +36,8 @@ export interface CatalogItem {
     readonly label: string;
     /** Stored 6-digit hex (`#16a34a`) or `null` — rendered as an inline style, never a class. */
     readonly color: string | null;
+    /** Allow-listed lucide icon name, or `null` — normalised from the API row. */
+    readonly icon: string | null;
     readonly sort_order: number;
     readonly is_default: boolean;
 }
@@ -45,6 +49,12 @@ export type CatalogItemWithKind = CatalogItem & { readonly kind: CatalogKind };
 export interface CatalogFormInput {
     readonly label: string;
     readonly color: string | null;
+    /**
+     * Allow-listed icon name, or `null`. OPTIONAL so a caller that only edits a label (or the row's
+     * `is_default`) keeps compiling without naming an icon — an omitted key leaves the stored icon
+     * untouched server-side, which is different from sending `null` to clear it.
+     */
+    readonly icon?: string | null;
     readonly is_default: boolean;
 }
 
@@ -115,6 +125,7 @@ function toCatalogItems(raw: unknown): CatalogItem[] {
             id,
             label: typeof entry.label === "string" ? entry.label : "",
             color: typeof entry.color === "string" && entry.color.trim() !== "" ? entry.color : null,
+            icon: normalizeIconName(entry.icon),
             sort_order: Number(entry.sort_order) || 0,
             is_default: readFlag(entry.is_default),
         });

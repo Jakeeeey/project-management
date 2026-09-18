@@ -93,6 +93,7 @@ export function TaskFieldsSection() {
         createOption,
         renameOption,
         setOptionColor,
+        setOptionIcon,
         deleteOption,
         moveOption,
     } = useTaskFields();
@@ -141,7 +142,7 @@ export function TaskFieldsSection() {
         const { field, option } = optionEditor;
 
         if (option === null) {
-            const createdId = await createOption(field.id, values.label, values.color);
+            const createdId = await createOption(field.id, values.label, values.color, values.icon);
             if (createdId === null) return;
             // The create request carries the colour but the route does not persist it, so a non-null
             // colour is written through the same recolour path an edit uses.
@@ -161,6 +162,10 @@ export function TaskFieldsSection() {
             if (values.color !== option.color) {
                 const coloured = await setOptionColor(option.id, values.color);
                 if (!coloured) return;
+            }
+            if ((values.icon ?? null) !== (option.icon ?? null)) {
+                const iconned = await setOptionIcon(option.id, values.icon ?? null);
+                if (!iconned) return;
             }
             if (values.isDefault) {
                 if (String(option.id) !== field.default_value) {
@@ -375,8 +380,12 @@ export function TaskFieldsSection() {
                                                                     <div className="min-w-0 flex-1">
                                                                         <CatalogChip
                                                                             value={{
+                                                                                // The stored icon rides through so the settings list shows the same
+                                                                                // glyph the task row and the pickers do; `CatalogChip` owns the
+                                                                                // fallback, so a null icon still draws the default marker.
                                                                                 label: option.label,
                                                                                 color: option.color,
+                                                                                icon: option.icon,
                                                                             }}
                                                                             density="comfortable"
                                                                             className="max-w-full"

@@ -85,6 +85,7 @@ export class TaskConfigService {
             department_id: actor.departmentId,
             label: input.label,
             color: input.color ?? null,
+            icon: input.icon ?? null,
             sort_order: input.sort_order ?? 0,
             is_default: input.is_default === true ? 1 : 0,
             is_deleted: 0,
@@ -122,9 +123,10 @@ export class TaskConfigService {
             }
         }
 
-        const changes: { label?: string; color?: string | null; sort_order?: number; is_default?: number } = {};
+        const changes: { label?: string; color?: string | null; icon?: string | null; sort_order?: number; is_default?: number } = {};
         if (input.label !== undefined) changes.label = input.label;
         if (input.color !== undefined) changes.color = input.color;
+        if (input.icon !== undefined) changes.icon = input.icon;
         if (input.sort_order !== undefined) changes.sort_order = input.sort_order;
         if (input.is_default === true) {
             await TaskConfigService.clearFlaggedDefaults(
@@ -146,6 +148,7 @@ export class TaskConfigService {
             ...target,
             label: changes.label ?? target.label,
             color: changes.color !== undefined ? changes.color : target.color,
+            icon: changes.icon !== undefined ? changes.icon : target.icon,
             sort_order: changes.sort_order ?? target.sort_order,
             is_default: changes.is_default ?? target.is_default,
             updated_at: now,

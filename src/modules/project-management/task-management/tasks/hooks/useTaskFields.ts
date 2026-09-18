@@ -58,9 +58,15 @@ export interface UseTaskFieldsResult {
     readonly setEnabled: (fieldId: number, enabled: boolean) => Promise<boolean>;
     readonly setDefaultValue: (fieldId: number, value: string | null) => Promise<boolean>;
     /** Adds a choice; resolves to the new choice's id, or `null` when the write failed. */
-    readonly createOption: (fieldId: number, label: string, color: string | null) => Promise<number | null>;
+    readonly createOption: (
+        fieldId: number,
+        label: string,
+        color: string | null,
+        icon: string | null,
+    ) => Promise<number | null>;
     readonly renameOption: (optionId: number, label: string) => Promise<boolean>;
     readonly setOptionColor: (optionId: number, color: string | null) => Promise<boolean>;
+    readonly setOptionIcon: (optionId: number, icon: string | null) => Promise<boolean>;
     readonly deleteOption: (optionId: number, label: string) => Promise<boolean>;
     readonly moveOption: (
         fieldId: number,
@@ -224,7 +230,12 @@ export function useTaskFields(): UseTaskFieldsResult {
     );
 
     const createOption = useCallback(
-        async (fieldId: number, label: string, color: string | null): Promise<number | null> => {
+        async (
+            fieldId: number,
+            label: string,
+            color: string | null,
+            icon: string | null,
+        ): Promise<number | null> => {
             const field = fields.find((candidate) => candidate.id === fieldId);
             const sortOrder =
                 (field?.options.reduce((highest, option) => Math.max(highest, option.sort_order), -1) ?? -1) + 1;
@@ -236,6 +247,7 @@ export function useTaskFields(): UseTaskFieldsResult {
                     field_id: fieldId,
                     label,
                     color,
+                    icon,
                     sort_order: sortOrder,
                 });
                 if (isRecord(data) && typeof data.id === "number") createdId = data.id;
@@ -255,6 +267,12 @@ export function useTaskFields(): UseTaskFieldsResult {
     const setOptionColor = useCallback(
         async (optionId: number, color: string | null): Promise<boolean> =>
             runMutation(() => request("PATCH", { kind: "option", id: optionId, color }), "Colour updated"),
+        [request, runMutation],
+    );
+
+    const setOptionIcon = useCallback(
+        async (optionId: number, icon: string | null): Promise<boolean> =>
+            runMutation(() => request("PATCH", { kind: "option", id: optionId, icon }), "Icon updated"),
         [request, runMutation],
     );
 
@@ -315,6 +333,7 @@ export function useTaskFields(): UseTaskFieldsResult {
         createOption,
         renameOption,
         setOptionColor,
+        setOptionIcon,
         deleteOption,
         moveOption,
     };

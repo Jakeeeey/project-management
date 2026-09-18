@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { cn, formatDateLong } from "@/lib/utils";
 import { CatalogChip } from "./CatalogChip";
+import { CatalogStatusIcon } from "./CatalogStatusIcon";
 import type { TreeNode } from "../utils/tree";
 
 import { AssigneeStack, type TaskAssigneeView } from "./AssigneeStack";
@@ -151,7 +152,11 @@ export function formatTaskFieldValue(field: TaskField, value: string | null | un
 const CELL_BUTTON_CLASS =
     "block w-full min-w-0 rounded px-1 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
 
-/** A custom `select` answer as the module's chip: a live choice tints from its own colour. */
+/**
+ * A custom `select` answer as the module's chip: a live choice tints from and glyphs with its own
+ * stored colour and icon. The icon is the option's identity — omitting it is what made every custom
+ * column render the same fallback ring while the configuration list showed the real glyphs.
+ */
 function FieldChoiceChip({ field, value }: { field: TaskField; value: string | null }) {
     const option =
         value === null || value === ""
@@ -172,7 +177,7 @@ function FieldChoiceChip({ field, value }: { field: TaskField; value: string | n
 
     return (
         <CatalogChip
-            value={{ label: option.label, color: option.color }}
+            value={{ label: option.label, color: option.color, icon: option.icon }}
             density="dense"
             className="max-w-[140px]"
             data-slot={`task-field-${field.id}-badge`}
@@ -347,6 +352,21 @@ export function TaskRow({
 
             <TableCell className="max-w-[360px]">
                 <div className="flex items-center gap-1.5" style={{ paddingLeft: indentDepth * INDENT_STEP_PX }}>
+                    {/*
+                     * The leading status glyph — after the expand cell's chevron, before the title.
+                     * Only a resolved FK draws one: an unresolved status already renders its own
+                     * placeholder chip in the status column, so an empty slot here would merely
+                     * shift the title. `density="dense"` holds the 20px row and the title's own
+                     * truncation cap stays untouched.
+                     */}
+                    {status !== null ? (
+                        <CatalogStatusIcon
+                            icon={status.icon}
+                            color={status.color}
+                            tone="status"
+                            density="dense"
+                        />
+                    ) : null}
                     {editable && isCellEditing("title") ? (
                         <div className="min-w-0 flex-1">
                             <TaskCellEditor

@@ -143,7 +143,7 @@ const NO_CELL_PATCHES: ReadonlyMap<string, TaskRowPatch> = new Map();
 /** The catalog ref an optimistic status/priority cell shows while the picked id is being saved. */
 function catalogRefFor(options: readonly TaskCatalogOption[], id: number): TaskCatalogRef | null {
     const option = options.find((candidate) => candidate.id === id);
-    return option === undefined ? null : { label: option.label, color: option.color };
+    return option === undefined ? null : { label: option.label, color: option.color, icon: option.icon };
 }
 
 /** Everything `resolveCellEdit` needs beyond the row and the request. */

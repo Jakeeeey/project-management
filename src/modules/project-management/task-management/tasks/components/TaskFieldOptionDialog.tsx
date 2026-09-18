@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { Loader2 } from "lucide-react";
 import { z } from "zod";
 
@@ -27,8 +27,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 
-import { TaskFieldColorSchema, TaskFieldLabelSchema } from "../types/task-field.schema";
+import { TaskFieldColorSchema, TaskFieldIconSchema, TaskFieldLabelSchema } from "../types/task-field.schema";
 import type { TaskFieldOption } from "../hooks/useTasks";
+import { CatalogIconPicker } from "./CatalogIconPicker";
 
 /** A valid 6-digit hex the native colour input can render before the user picks their own. */
 const FALLBACK_HEX = "#64748b";
@@ -44,6 +45,7 @@ const FALLBACK_HEX = "#64748b";
 const OptionFormSchema = z.object({
     label: TaskFieldLabelSchema,
     color: TaskFieldColorSchema.nullable(),
+    icon: TaskFieldIconSchema.nullable(),
     isDefault: z.boolean(),
 });
 
@@ -82,14 +84,18 @@ export function TaskFieldOptionDialog({
 
     const form = useForm<TaskFieldOptionFormInput>({
         resolver: zodResolver(OptionFormSchema),
-        defaultValues: { label: "", color: null, isDefault: false },
+        defaultValues: { label: "", color: null, icon: null, isDefault: false },
     });
+
+    /** The live colour, so the icon previews below track it without subscribing via `form.watch`. */
+    const currentColor = useWatch({ control: form.control, name: "color" });
 
     useEffect(() => {
         if (!open) return;
         form.reset({
             label: option?.label ?? "",
             color: option?.color ?? null,
+            icon: option?.icon ?? null,
             isDefault,
         });
     }, [open, option, isDefault, form]);
@@ -98,6 +104,7 @@ export function TaskFieldOptionDialog({
         await onSubmit({
             label: values.label.trim(),
             color: values.color ?? null,
+            icon: values.icon ?? null,
             isDefault: values.isDefault === true,
         });
     });
@@ -164,6 +171,27 @@ export function TaskFieldOptionDialog({
                                         </div>
                                         <FormDescription>
                                             Optional 6-digit hex, such as #16a34a. Shown as a badge tint.
+                                        </FormDescription>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+
+                            <FormField
+                                control={form.control}
+                                name="icon"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel htmlFor="task-field-option-icon">Icon</FormLabel>
+                                        <CatalogIconPicker
+                                            id="task-field-option-icon"
+                                            value={field.value ?? null}
+                                            onChange={field.onChange}
+                                            color={currentColor}
+                                            disabled={isSubmitting}
+                                        />
+                                        <FormDescription>
+                                            Optional icon shown with this choice. Previews follow the colour above.
                                         </FormDescription>
                                         <FormMessage />
                                     </FormItem>

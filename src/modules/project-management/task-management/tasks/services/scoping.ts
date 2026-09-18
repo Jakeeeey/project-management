@@ -83,6 +83,12 @@ export interface ScopedConfigRow {
     readonly created_by: number | null;
     readonly updated_at: string | null;
     readonly updated_by: number | null;
+    /**
+     * `VARCHAR(64)` lucide icon name or absent; optional and `unknown` for the same pre-DDL reason
+     * as `ScopedFieldRow.is_enabled`. Every reader normalises it through `normalizeIconName`, so a
+     * missing column and a stale value both resolve to the same "no icon" answer.
+     */
+    readonly icon?: unknown;
 }
 
 /** A live `pm_task_field` row as the scoped loader returns it — one custom task column. */
@@ -123,6 +129,8 @@ export interface ScopedFieldOptionRow {
     readonly updated_by: number | null;
     /** `VARCHAR(32)` hex or absent; optional for the same pre-DDL reason as `ScopedFieldRow.is_enabled`. */
     readonly color?: unknown;
+    /** `VARCHAR(64)` lucide icon name or absent; optional for the same pre-DDL reason as `color`. */
+    readonly icon?: unknown;
 }
 
 /** A live `pm_task_field_value` row as the scoped loader returns it — one task's answer. */

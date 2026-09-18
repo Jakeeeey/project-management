@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { flattenVisible, type TreeNode } from "../utils/tree";
 
 import { AssigneeStack } from "./AssigneeStack";
+import { CatalogStatusIcon } from "./CatalogStatusIcon";
 import {
     INDENT_STEP_PX,
     MAX_INDENT_DEPTH,
@@ -342,6 +343,20 @@ export function TaskTree({
 
                                         <div className="min-w-0 flex-1 space-y-1.5">
                                             <div className="flex items-center gap-1.5">
+                                                {/*
+                                                 * The card's leading status glyph, mirroring the wide
+                                                 * table: after the expand chevron, before the title.
+                                                 * An unresolved FK draws nothing — the badge strip
+                                                 * below already carries the placeholder.
+                                                 */}
+                                                {node.status !== null ? (
+                                                    <CatalogStatusIcon
+                                                        icon={node.status.icon}
+                                                        color={node.status.color}
+                                                        tone="status"
+                                                        density="dense"
+                                                    />
+                                                ) : null}
                                                 <p
                                                     className="min-w-0 break-words text-sm font-medium"
                                                     title={node.title}

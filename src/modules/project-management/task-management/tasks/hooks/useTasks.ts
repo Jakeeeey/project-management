@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { CapabilitiesSchema, type Capabilities } from "../types/capabilities";
+import { normalizeIconName } from "../components/catalog-icon";
 
 /**
  * The client hook behind the department task list.
@@ -49,6 +50,8 @@ export interface TaskCatalogOption {
     readonly label: string;
     /** Stored 6-digit hex (`#16a34a`) or `null` — rendered as an inline style, never a class. */
     readonly color: string | null;
+    /** Allow-listed lucide icon name, or `null` — resolved through `normalizeIconName`. */
+    readonly icon: string | null;
     readonly sort_order: number;
     readonly is_default: boolean;
 }
@@ -66,6 +69,8 @@ export interface TaskCatalogs {
 export interface TaskCatalogRef {
     readonly label: string;
     readonly color: string | null;
+    /** Allow-listed icon name the server resolved, or `null` — never a name outside the allow-list. */
+    readonly icon?: string | null;
 }
 
 /** One assigned member as the wire carries them: the id only — the directory (useAssignees) names them. */
@@ -92,6 +97,8 @@ export interface TaskFieldOption {
     readonly label: string;
     /** Stored 6-digit hex, or `null` — rendered as an inline style, never a class. */
     readonly color: string | null;
+    /** Allow-listed lucide icon name, or `null` — resolved through `normalizeIconName`. */
+    readonly icon: string | null;
     readonly sort_order: number;
 }
 
@@ -219,9 +226,11 @@ async function readEnvelope(res: Response): Promise<Record<string, unknown>> {
  * The route already resolves labels from live catalog rows and sends `null` for an unresolved one;
  * a non-string label is treated the same way, so the badge can never render a blank string.
  */
-function toCatalogRef(label: unknown, color: unknown): TaskCatalogRef | null {
+function toCatalogRef(label: unknown, color: unknown, icon: unknown): TaskCatalogRef | null {
     const text = toNullableString(label);
-    return text === null ? null : { label: text, color: toNullableString(color) };
+    return text === null
+        ? null
+        : { label: text, color: toNullableString(color), icon: normalizeIconName(icon) };
 }
 
 /** One catalog row, dropping malformed entries rather than rendering them. */
@@ -233,6 +242,7 @@ function toCatalogOption(raw: unknown): TaskCatalogOption | null {
         id,
         label: typeof raw.label === "string" ? raw.label : "",
         color: toNullableString(raw.color),
+        icon: normalizeIconName(raw.icon),
         sort_order: toNumber(raw.sort_order),
         is_default: readFlag(raw.is_default),
     };
@@ -317,6 +327,7 @@ function toFieldOptions(raw: unknown): TaskFieldOption[] {
             id,
             label: typeof entry.label === "string" ? entry.label : "",
             color: toNullableString(entry.color),
+            icon: normalizeIconName(entry.icon),
             sort_order: toNumber(entry.sort_order),
         });
     }
@@ -381,8 +392,8 @@ function toTaskListItems(raw: unknown): TaskListItem[] {
             end_date: toNullableString(entry.end_date),
             status_id: toNumber(entry.status_id),
             priority_id: toNumber(entry.priority_id),
-            status: toCatalogRef(entry.status_label, entry.status_color),
-            priority: toCatalogRef(entry.priority_label, entry.priority_color),
+            status: toCatalogRef(entry.status_label, entry.status_color, entry.status_icon),
+            priority: toCatalogRef(entry.priority_label, entry.priority_color, entry.priority_icon),
             can_edit: readFlag(entry.can_edit),
             can_delete: readFlag(entry.can_delete),
             assignees: toAssigneeRefs(entry.assignees),

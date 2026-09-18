@@ -15,6 +15,8 @@ export interface TaskCatalogRef {
     label: string;
     /** 6-digit hex string from the catalog's `color` column, or null/undefined for the default tint. */
     color?: string | null;
+    /** Allow-listed lucide icon name from the catalog's `icon` column, or null/undefined for none. */
+    icon?: string | null;
 }
 
 /** The neutral copy for a reference that no longer resolves to a live catalog row. */

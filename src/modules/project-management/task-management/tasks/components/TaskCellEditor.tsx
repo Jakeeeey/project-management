@@ -43,6 +43,12 @@ export interface CellChoice {
     readonly id: number;
     readonly label: string;
     readonly color: string | null;
+    /**
+     * Allow-listed icon name for the choice, or `null`. Optional because the status/priority
+     * catalogs and a custom `select`'s choices both carry one, but the two callers build the value
+     * from different shapes; omitting it still renders the default glyph rather than a hole.
+     */
+    readonly icon?: string | null;
 }
 
 /**
@@ -295,6 +301,7 @@ function CatalogCellEditor({
                 value: String(option.id),
                 label: option.label,
                 color: option.color,
+                icon: option.icon,
             })),
         [options],
     );

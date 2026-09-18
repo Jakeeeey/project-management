@@ -2,6 +2,8 @@ import type { CSSProperties } from "react";
 
 import { cn } from "@/lib/utils";
 
+import { CatalogStatusIcon } from "../../tasks/components/CatalogStatusIcon";
+
 /**
  * A status or priority catalog row as a chip renders it.
  *
@@ -15,13 +17,15 @@ export interface CatalogChipValue {
     readonly label: string;
     /** 6-digit hex from the catalog's `color` column, or `null`/`undefined` for no stored colour. */
     readonly color?: string | null;
+    /** Allow-listed lucide icon name from the catalog's `icon` column, or `null`/`undefined` for none. */
+    readonly icon?: string | null;
 }
 
 /**
  * The two fixed chip geometries. Every chip on a surface uses the same one.
  *
- * `dense` is the tree table's status/priority cells (`text-[11px] font-semibold`, 20px tall);
- * `comfortable` is the detail sheet, the drag overlay and the configuration list (`text-xs`, 24px).
+ * `dense` is the tree table's status/priority cells (`text-[11px] font-semibold`, 28px tall);
+ * `comfortable` is the custom-column settings and the configuration list (`text-xs`, 32px).
  */
 export type CatalogChipDensity = "dense" | "comfortable";
 
@@ -116,10 +120,26 @@ export function catalogSolidStyle(color: string): CSSProperties {
 /** The foreground halo that keeps a very dark or very light dot visible on either theme. */
 const DOT_HALO = "0 0 0 1px color-mix(in srgb, hsl(var(--foreground)) 15%, transparent)";
 
-/** One geometry per density: identical height, gap, padding and text size. */
+/**
+ * One geometry per density: identical SHAPE, gap, padding and text size.
+ *
+ * The shape is a rounded rectangle, never a pill, and the radius lives HERE rather than in a render
+ * branch so the resolved chip and the dashed placeholder can never take different shapes.
+ * `rounded-md` matches the buttons, pickers and inputs the chip sits among; at these heights a
+ * fully-rounded cap would read as a lozenge that ignores the row it fills.
+ *
+ * Heights are measured against the surfaces' own rows:
+ * - `dense` (28px) is the tree table's status/priority cell. That row is 48px — its tallest cell is
+ *   the actions column's 32px `icon-sm` button plus the shared `TableCell`'s `p-2` (16px) — so a
+ *   28px chip fills most of that 32px content box while the cell padding keeps the breathing room,
+ *   and it can never grow the row (28 + 16 < 48).
+ * - `comfortable` (32px) is the configuration list and the custom-column settings, whose rows are
+ *   ALSO 48px (a 32px `icon-sm` control plus the same `py-2`), so it matches its own row exactly
+ *   without overflowing it.
+ */
 const CHIP_DENSITY_CLASS: Record<CatalogChipDensity, string> = {
-    dense: "h-5 gap-1.5 px-2 text-[11px] font-semibold",
-    comfortable: "h-6 gap-1.5 px-2.5 text-xs font-medium",
+    dense: "h-7 gap-1.5 rounded-md px-2 text-[11px] font-semibold",
+    comfortable: "h-8 gap-1.5 rounded-md px-2.5 text-xs font-medium",
 };
 
 const DOT_DENSITY_CLASS: Record<CatalogChipDensity, string> = {
@@ -178,11 +198,13 @@ export interface CatalogChipProps {
 /**
  * The ONE status/priority chip for the project-management module.
  *
- * A resolved row is a SOLID pill: the fill is the catalog row's own hex at full strength, the edge
- * is transparent, and the label takes whichever of near-black / white stays legible on that fill
- * (see `resolveCatalogForeground`), uppercase and letter-spaced. A row with no stored colour keeps
- * the neutral border and its muted dot; an unresolved reference renders the dashed, muted
- * placeholder so a broken foreign key reads as intentional rather than as a rendering bug.
+ * A resolved row is a SOLID rounded rectangle: the fill is the catalog row's own hex at full
+ * strength, the edge is transparent, the leading glyph is the row's stored icon inked for contrast,
+ * and the label takes whichever of near-black / white stays legible (see `resolveCatalogForeground`),
+ * uppercase and letter-spaced. A row with no stored colour keeps the neutral border but still shows
+ * that icon — a missing icon falls back to a circle rather than vanishing, so every resolved chip
+ * reads the same; an unresolved reference renders the dashed, muted placeholder so a broken foreign
+ * key reads as intentional rather than as a rendering bug.
  *
  * The label truncates inside the caller's `max-w-*` cap (with `title` for the full text), so a long
  * catalog label can never push its column wider. Purely presentational: no state, no fetching.
@@ -204,7 +226,7 @@ export function CatalogChip({
                 data-density={density}
                 title={placeholder}
                 className={cn(
-                    "inline-flex max-w-full items-center rounded-full border border-dashed border-border bg-muted/30 text-muted-foreground",
+                    "inline-flex max-w-full items-center border border-dashed border-border bg-muted/30 text-muted-foreground",
                     CHIP_DENSITY_CLASS[density],
                     className,
                 )}
@@ -225,13 +247,15 @@ export function CatalogChip({
             title={label}
             style={hex === null ? undefined : catalogSolidStyle(hex)}
             className={cn(
-                "inline-flex max-w-full items-center rounded-full border",
+                "inline-flex max-w-full items-center border",
                 CHIP_DENSITY_CLASS[density],
                 hex === null && "border-border bg-muted/40 text-foreground",
                 className,
             )}
         >
-            {hex === null ? <CatalogChipDot density={density} /> : null}
+            {/* Solid fill and muted both lead with the stored icon: it is the row's identity, and a
+                uniform glyph keeps the status/priority columns from shifting between the two. */}
+            <CatalogStatusIcon icon={value?.icon} color={hex} tone="contrast" density={density} />
             <span className="min-w-0 truncate uppercase tracking-wide">{label}</span>
         </span>
     );

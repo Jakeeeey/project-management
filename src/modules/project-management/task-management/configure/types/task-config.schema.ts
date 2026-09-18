@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { normalizeIconName } from "../../tasks/components/catalog-icon";
+
 /**
  * The catalog contracts for the task-configuration module — the ONLY definition of the
  * `pm_task_status` / `pm_task_priority` payload shapes in the repository.
@@ -23,6 +25,16 @@ const HexColorSchema = z
     .string()
     .regex(/^#[0-9a-f]{6}$/i, "Color must be a 6-digit hex value such as #16a34a");
 
+/**
+ * A curated lucide icon name. `normalizeIconName` is both the validator and the normaliser: the
+ * refine rejects a name outside the allow-list, and the transform stores the canonical spelling, so
+ * `lucide-Circle` persists as `circle` and every reader downstream only ever sees a known name.
+ */
+const IconSchema = z
+    .string()
+    .refine((value) => normalizeIconName(value) !== null, "Unknown icon")
+    .transform((value) => normalizeIconName(value) ?? value);
+
 /** Both `label` columns are `VARCHAR(100) NOT NULL`. */
 const LabelSchema = z.string().trim().min(1, "Label is required").max(100, "Label must be 100 characters or fewer");
 
@@ -36,6 +48,7 @@ export const CatalogKindSchema = z.enum(["status", "priority"]);
 export const CreateCatalogItemSchema = z.object({
     label: LabelSchema,
     color: HexColorSchema.nullable().optional(),
+    icon: IconSchema.nullable().optional(),
     sort_order: SortOrderSchema.optional(),
     is_default: z.boolean().optional(),
 });

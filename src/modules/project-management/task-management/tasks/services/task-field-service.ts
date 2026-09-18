@@ -32,6 +32,7 @@ import {
 } from "./task-activity-delta";
 import { TaskActivityService } from "./task-activity-service";
 import { TaskFieldValueError, normaliseFieldValue } from "./task-field-value";
+import { normalizeIconName } from "../components/catalog-icon";
 
 /**
  * The custom-column service — the department's own columns on the task list, their choices, and the
@@ -75,9 +76,10 @@ export interface TaskFieldClientRow extends Omit<ScopedFieldRow, "is_enabled" | 
     readonly options: readonly TaskFieldOptionClientRow[];
 }
 
-/** A choice with its colour normalised, so a missing `color` column reads as "no colour". */
-export interface TaskFieldOptionClientRow extends Omit<ScopedFieldOptionRow, "color"> {
+/** A choice with its colour and icon normalised, so a missing column reads as "none" either way. */
+export interface TaskFieldOptionClientRow extends Omit<ScopedFieldOptionRow, "color" | "icon"> {
     readonly color: string | null;
+    readonly icon: string | null;
 }
 
 /** One task's answer, as the task payload carries it. */
@@ -155,7 +157,11 @@ export class TaskFieldService {
             default_value: readTextOrNull(field.default_value),
             options: options
                 .filter((option) => option.field_id === field.id)
-                .map((option) => ({ ...option, color: toHexOrNull(option.color) })),
+                .map((option) => ({
+                    ...option,
+                    color: toHexOrNull(option.color),
+                    icon: normalizeIconName(option.icon),
+                })),
         }));
     }
 
@@ -329,7 +335,11 @@ export class TaskFieldService {
                 changes.default_value === undefined ? readTextOrNull(target.default_value) : changes.default_value,
             updated_at: now,
             updated_by: actor.userId,
-            options: options.map((option) => ({ ...option, color: toHexOrNull(option.color) })),
+            options: options.map((option) => ({
+                ...option,
+                color: toHexOrNull(option.color),
+                icon: normalizeIconName(option.icon),
+            })),
         };
     }
 
@@ -391,6 +401,7 @@ export class TaskFieldService {
             department_id: actor.departmentId,
             label: input.label,
             color: input.color ?? null,
+            icon: input.icon ?? null,
             sort_order: input.sort_order ?? 0,
             is_deleted: 0,
             created_at: now,
@@ -421,10 +432,11 @@ export class TaskFieldService {
             }
         }
 
-        const changes: { label?: string; sort_order?: number; color?: string | null } = {};
+        const changes: { label?: string; sort_order?: number; color?: string | null; icon?: string | null } = {};
         if (input.label !== undefined) changes.label = input.label;
         if (input.sort_order !== undefined) changes.sort_order = input.sort_order;
         if (input.color !== undefined) changes.color = input.color;
+        if (input.icon !== undefined) changes.icon = input.icon;
 
         const now = phNow();
         await updateItem<unknown>("pm_task_field_option", target.id, {
