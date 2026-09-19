@@ -169,7 +169,7 @@ export function DashboardView({
                 className="flex h-48 flex-col items-center justify-center gap-2 rounded-2xl border border-border/50 bg-card p-6 text-center shadow-sm"
             >
                 <ListTree className="size-8 text-muted-foreground/50" aria-hidden="true" />
-                <p className="text-sm text-muted-foreground">No tasks in this department yet.</p>
+                <p className="text-sm text-muted-foreground">No tasks in this list yet.</p>
             </div>
         );
     }

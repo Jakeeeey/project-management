@@ -40,6 +40,8 @@ export interface TaskClientRow {
     readonly id: number;
     readonly department_id: number;
     readonly parent_id: number | null;
+    /** The task's list — a view dimension the client will switch on; every task carries one. */
+    readonly list_id: number;
     readonly status_id: number;
     readonly priority_id: number;
     readonly title: string;
@@ -83,6 +85,7 @@ export interface RawTaskRow {
     readonly id: number;
     readonly department_id?: unknown;
     readonly parent_id?: unknown;
+    readonly list_id?: unknown;
     readonly status_id?: unknown;
     readonly priority_id?: unknown;
     readonly title?: unknown;
@@ -213,6 +216,7 @@ export function toClientRow(source: TaskRowSource, shaping: RowShaping): TaskCli
         id: row.id,
         department_id: toNumber(row.department_id),
         parent_id: toNumberOrNull(row.parent_id),
+        list_id: toNumber(row.list_id),
         status_id: toNumber(row.status_id),
         priority_id: toNumber(row.priority_id),
         title: typeof row.title === "string" ? row.title : "",

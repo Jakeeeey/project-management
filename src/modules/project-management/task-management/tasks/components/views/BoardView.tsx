@@ -72,7 +72,7 @@ export function BoardView({
         return (
             <BoardStatePanel
                 icon={<LayoutGrid className="size-8 text-muted-foreground/50" aria-hidden="true" />}
-                message="No tasks in this department yet."
+                message="No tasks in this list yet."
             />
         );
     }

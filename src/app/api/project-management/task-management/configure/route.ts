@@ -28,7 +28,8 @@ export const dynamic = "force-dynamic";
  *   ordered by `(sort_order, id)`. Every member may read; a plain member receives
  *   `capabilities.canConfigure: false`, which is what hides the Settings section.
  * - `POST` body `{ kind, label, color?, sort_order?, is_default? }` -> 201 `{ success, data: row }`.
- * - `POST ?action=seed-defaults` (the explicit seed action, never implicit on load) -> 200
+ * - `POST ?action=seed-defaults` (the explicit, head-gated seed action — never implicit on load,
+ *   unlike the decision-free default task list that `POST /tasks/bootstrap` ensures) -> 200
  *   `{ success, data: { statusesCreated, prioritiesCreated } }`; idempotent, so a second call
  *   reports zero.
  * - `PATCH` body `{ kind, id, label?, color?, sort_order?, is_default? }` -> 200 `{ success, data: row }`.

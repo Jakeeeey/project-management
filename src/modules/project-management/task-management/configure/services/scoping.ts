@@ -6,6 +6,16 @@
  * filter Directus expects) and returns `null` when nothing matches. A route turns `null` into a
  * 404 — never a 403 — so the existence of another department's row is never confirmed.
  *
+ * `list_id` adds a second dimension to the TASK-facing loaders. It is a VIEW dimension, not a
+ * security boundary: an actor may view every list of their own department, so the by-id task load
+ * (`loadTaskScoped`) keeps department scoping and takes the list as an OPTIONAL narrowing for
+ * callers that already hold one, while a read OF A LIST (`loadListScoped`, and the collection read
+ * in `task-service`) scopes by department AND list. `loadAttachmentScoped` stays department-scoped:
+ * an attachment is reached through its task, and a list adds no boundary that department scoping
+ * does not already provide. The catalog loaders below stay department-scoped too: statuses,
+ * priorities, custom columns and their options are shared per department and never gain a list
+ * dimension.
+ *
  * The loaders return `null` rather than throwing so the check can run first, before any capability
  * check, any parent/user validation and any write, without every route needing a try/catch.
  * `assertSameDepartment` covers rows that arrived by another path (a `parent_id` target).
@@ -39,6 +49,12 @@ export interface ScopedTaskRow {
     readonly id: number;
     readonly department_id: number;
     readonly parent_id: number | null;
+    /**
+     * `pm_task_list.id` — REQUIRED on a task. A subtask's list always equals its parent's list, so
+     * the column is what binds a subtree to one list; `PATCH` can never change it and a cross-list
+     * re-parent is refused rather than moved.
+     */
+    readonly list_id: number;
     readonly status_id: number;
     readonly priority_id: number;
     readonly title: string;
@@ -46,6 +62,20 @@ export interface ScopedTaskRow {
     readonly start_date: string | null;
     readonly end_date: string | null;
     readonly sort_order: number;
+    readonly is_deleted: number;
+    readonly created_at: string | null;
+    readonly created_by: number | null;
+    readonly updated_at: string | null;
+    readonly updated_by: number | null;
+}
+
+/** A live `pm_task_list` row as the scoped loader returns it — one department's task list. */
+export interface ScopedListRow {
+    readonly id: number;
+    readonly department_id: number;
+    readonly name: string;
+    readonly sort_order: number;
+    readonly is_default: number;
     readonly is_deleted: number;
     readonly created_at: string | null;
     readonly created_by: number | null;
@@ -157,16 +187,53 @@ function toScopedId(value: string | number): number | null {
 }
 
 /**
- * Loads a live task only when it belongs to the actor's department.
+ * Loads a live task that belongs to the actor's department, optionally narrowed to one task list.
  *
- * @returns The row, or `null` — which every caller maps to 404 (task absent, soft-deleted, or
- *          another department's; the three are deliberately indistinguishable).
+ * `listId` is OPTIONAL by design. List is a view dimension, not a security boundary — an actor may
+ * view every list of their own department — and a by-id load usually happens before any list is
+ * known (the `/tasks/<id>` routes), so requiring a list here would invent a boundary the module
+ * does not have. A caller that already holds a list (the read-backs after an update or a move)
+ * passes it, and the extra `filter[list_id]` then asserts the row is still reachable through that
+ * exact scope. An id that cannot name a list is "no match", never a query.
+ *
+ * @returns The row, or `null` — which every caller maps to 404 (task absent, soft-deleted, in
+ *          another department, or outside the requested list; the cases are deliberately
+ *          indistinguishable).
  */
-export async function loadTaskScoped(actor: ScopedActor, taskId: string | number): Promise<ScopedTaskRow | null> {
+export async function loadTaskScoped(
+    actor: ScopedActor,
+    taskId: string | number,
+    listId?: string | number | null,
+): Promise<ScopedTaskRow | null> {
     const id = toScopedId(taskId);
     if (id === null) return null;
 
-    const rows = await readItems<ScopedTaskRow>("pm_task", {
+    const narrowedListId = listId === undefined || listId === null ? null : toScopedId(listId);
+    if (listId !== undefined && listId !== null && narrowedListId === null) return null;
+
+    const filter: Record<string, unknown> = {
+        id: { _eq: id },
+        department_id: { _eq: actor.departmentId },
+        is_deleted: { _eq: 0 },
+    };
+    if (narrowedListId !== null) filter.list_id = { _eq: narrowedListId };
+
+    const rows = await readItems<ScopedTaskRow>("pm_task", { filter, limit: 1 });
+    return rows[0] ?? null;
+}
+
+/**
+ * Loads a live task list only when it belongs to the actor's department — a read OF A LIST, so the
+ * scope is department AND list, unlike the by-id task load above.
+ *
+ * @returns The row, or `null` (absent, soft-deleted, or another department's — indistinguishable),
+ *          which every caller maps to 404.
+ */
+export async function loadListScoped(actor: ScopedActor, listId: string | number): Promise<ScopedListRow | null> {
+    const id = toScopedId(listId);
+    if (id === null) return null;
+
+    const rows = await readItems<ScopedListRow>("pm_task_list", {
         filter: {
             id: { _eq: id },
             department_id: { _eq: actor.departmentId },

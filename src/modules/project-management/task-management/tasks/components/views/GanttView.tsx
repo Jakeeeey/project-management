@@ -710,7 +710,7 @@ export function GanttView({ items, isLoading, error, onRetry }: TaskViewProps) {
                     icon={<ChartGantt className="size-8 text-muted-foreground/50" aria-hidden="true" />}
                     message={
                         items.length === 0
-                            ? "No tasks in this department yet."
+                            ? "No tasks in this list yet."
                             : "No task has both a start date and a due date, so there is nothing to place on the timeline."
                     }
                 />

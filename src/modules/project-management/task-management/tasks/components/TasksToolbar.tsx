@@ -41,8 +41,10 @@ import type { TaskField } from "../hooks/useTasks";
  * this file never fetches, stores or derives anything. The ONE piece of state it owns is the
  * filter modal's open flag, which is purely local UI.
  *
- * The page-level ACTIONS deliberately do not live here. They belong beside the page title (see
- * `TasksHeaderActions`), which is what keeps this bar a single, readable row of list controls.
+ * The page-level SCOPE and ACTIONS deliberately do not live here. The list switcher — which decides
+ * whose tasks every view shows — and the page actions both belong in the title row (see
+ * `TaskListSwitcher` and `TasksHeaderActions`), which is what keeps this bar a single, readable row
+ * of controls over the already-scoped rows.
  * Filter options are DATA: statuses and priorities come from the department's catalogs and members
  * from the access directory, so nothing here hardcodes a status, priority or person.
  *

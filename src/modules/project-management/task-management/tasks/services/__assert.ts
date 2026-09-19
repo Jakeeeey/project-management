@@ -16,6 +16,8 @@
 import { containsExactlyOnce, isCompletePostMoveChildSet, type MoveChildRow } from "./task-move-rules.ts";
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
 import { TASK_ACTIVITY_CUSTOM_FIELD_KEY, TASK_ACTIVITY_FIELD_LABELS, buildActivityChange, buildTaskActivityDeltas, catalogLabelOf, formatActivityValue, hasActivityChanged, joinUserDisplayName, type TaskActivityChange } from "./task-activity-delta.ts";
+// @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
+import { TaskListError, deleteListRefusal, duplicateNameRow, effectiveDefaultList, isListCompatible, resolveTaskListId, sortListRows } from "./task-list-policy.ts";
 
 let checks = 0;
 let failures = 0;
@@ -29,6 +31,10 @@ function check(label: string, passed: boolean, detail: string = ""): void {
     }
     failures += 1;
     console.error(`FAIL - ${label}${suffix}`);
+}
+
+function ids(rows: readonly { readonly id: number }[]): string {
+    return JSON.stringify(rows.map((row) => row.id));
 }
 
 /** 1 -> {2, 3}; 5 -> {6}; 6 -> {7}. The cross-parent fixtures below move a node across this tree. */
@@ -212,6 +218,99 @@ check("a catalog label resolves from the loaded list", catalogLabelOf(STATUSES, 
 check("a string-shaped id still resolves", catalogLabelOf(STATUSES, "4") === "Done");
 check("a dangling catalog id has no label", catalogLabelOf(STATUSES, 999) === null);
 check("an absent catalog id has no label", catalogLabelOf(STATUSES, null) === null);
+
+// --- Task lists: ordering -------------------------------------------------------------------------
+
+const GENERAL = { id: 1, name: "General", sort_order: 0, is_default: 1, is_deleted: 0 };
+const MARKETING = { id: 2, name: "Marketing", sort_order: 1, is_default: 0, is_deleted: 0 };
+const OPERATIONS = { id: 3, name: "Operations", sort_order: 2, is_default: 0, is_deleted: 0 };
+const REMOVED_LIST = { id: 9, name: "General", sort_order: 0, is_default: 0, is_deleted: 1 };
+const TIE_LATE_LIST = { id: 8, name: "Zeta", sort_order: 1, is_default: 0, is_deleted: 0 };
+const TIE_EARLY_LIST = { id: 4, name: "Alpha", sort_order: 1, is_default: 0, is_deleted: 0 };
+const FLAGGED_LATE_LIST = { id: 7, name: "Delta", sort_order: 9, is_default: 1, is_deleted: 0 };
+
+check("list order sorts by (sort_order, id)", ids(sortListRows([OPERATIONS, MARKETING, GENERAL])) === "[1,2,3]");
+check("list order breaks a sort_order tie by id", ids(sortListRows([TIE_LATE_LIST, TIE_EARLY_LIST])) === "[4,8]");
+
+// --- Task lists: duplicate-name detection (no unique key to lean on) ------------------------------
+
+const NAMED_LISTS = [GENERAL, MARKETING, REMOVED_LIST];
+
+check("list names: an exact live match is found", duplicateNameRow(NAMED_LISTS, "Marketing")?.id === 2);
+check("list names: a trimmed, case-only variant is still a duplicate", duplicateNameRow(NAMED_LISTS, "  marketing ")?.id === 2);
+check("list names: a fresh name is free", duplicateNameRow(NAMED_LISTS, "Operations") === null);
+check("list names: a list may keep its own name on update", duplicateNameRow(NAMED_LISTS, "General", 1) === null);
+check("list names: a soft-deleted list never blocks reusing its name", duplicateNameRow([REMOVED_LIST], "General") === null);
+
+// --- Task lists: default resolution (a missing flag must never strand task creation) --------------
+
+check("list default: the flagged row wins over a lower unflagged one", effectiveDefaultList([MARKETING, FLAGGED_LATE_LIST])?.id === 7);
+check("list default: with no flag, the lowest (sort_order, id) live row is used", effectiveDefaultList([OPERATIONS, MARKETING, { ...GENERAL, is_default: 0 }])?.id === 1);
+check("list default: a sort_order tie resolves to the lower id", effectiveDefaultList([TIE_LATE_LIST, TIE_EARLY_LIST])?.id === 4);
+check("list default: soft-deleted rows never serve as the default", effectiveDefaultList([REMOVED_LIST, MARKETING])?.id === 2);
+check("list default: two flagged rows resolve deterministically to the lower id", effectiveDefaultList([{ ...MARKETING, is_default: 1 }, GENERAL])?.id === 1);
+check("list default: a department with no list has no default", effectiveDefaultList([]) === null);
+check("list default: an all-soft-deleted set has no default", effectiveDefaultList([REMOVED_LIST]) === null);
+
+// --- Task lists: soft-delete guard -----------------------------------------------------------------
+
+const TWO_LIVE_LISTS = [GENERAL, MARKETING];
+const TWO_UNFLAGGED_LISTS = [{ ...GENERAL, is_default: 0 }, MARKETING];
+
+check("list delete guard: the current default is refused", deleteListRefusal(TWO_LIVE_LISTS, 1) === "current-default");
+check("list delete guard: a non-default list of a two-list department is allowed", deleteListRefusal(TWO_LIVE_LISTS, 2) === null);
+check("list delete guard: a missing flag still protects the effective fallback", deleteListRefusal(TWO_UNFLAGGED_LISTS, 1) === "current-default");
+check("list delete guard: the last live list is refused", deleteListRefusal([GENERAL], 1) === "last-live-row");
+check("list delete guard: an id that is only soft-deleted is not-found", deleteListRefusal(TWO_LIVE_LISTS, 9) === "not-found");
+
+// --- Task lists: the subtask/list exclusivity predicate --------------------------------------------
+
+check("a root task (no parent list) is compatible with any list", isListCompatible(null, 5));
+check("a subtask in the parent's list is compatible", isListCompatible(5, 5));
+check("a subtask in another list is refused", !isListCompatible(5, 6));
+
+// --- Task lists: the task-creation list resolution -------------------------------------------------
+
+const RESOLUTION_LISTS = [GENERAL, MARKETING];
+
+const explicitRoot = resolveTaskListId({ lists: RESOLUTION_LISTS, requestedListId: 2, parentListId: null });
+check("a root task with an explicit live list resolves to it", explicitRoot.kind === "resolved" && explicitRoot.listId === 2);
+const rootFallback = resolveTaskListId({ lists: RESOLUTION_LISTS, requestedListId: null, parentListId: null });
+check("a root task that omits its list falls back to the default", rootFallback.kind === "resolved" && rootFallback.listId === 1);
+check(
+    "a root task that names an unknown list is refused",
+    resolveTaskListId({ lists: RESOLUTION_LISTS, requestedListId: 99, parentListId: null }).kind === "unknown-list",
+);
+check(
+    "a root task in a department with no list is refused",
+    resolveTaskListId({ lists: [], requestedListId: null, parentListId: null }).kind === "no-list",
+);
+const inheritedSubtask = resolveTaskListId({ lists: RESOLUTION_LISTS, requestedListId: null, parentListId: 2 });
+check("a subtask that omits its list inherits the parent's", inheritedSubtask.kind === "resolved" && inheritedSubtask.listId === 2);
+const namedSubtask = resolveTaskListId({ lists: RESOLUTION_LISTS, requestedListId: 2, parentListId: 2 });
+check("a subtask that names its parent's list is accepted", namedSubtask.kind === "resolved" && namedSubtask.listId === 2);
+check(
+    "a subtask that names another list is a mismatch",
+    resolveTaskListId({ lists: RESOLUTION_LISTS, requestedListId: 1, parentListId: 2 }).kind === "subtask-list-mismatch",
+);
+check(
+    "a subtask that names an unknown list is unknown, not a mismatch",
+    resolveTaskListId({ lists: RESOLUTION_LISTS, requestedListId: 99, parentListId: 2 }).kind === "unknown-list",
+);
+const inheritedFromUnknownList = resolveTaskListId({ lists: RESOLUTION_LISTS, requestedListId: null, parentListId: 42 });
+check(
+    "a subtask trusts its parent's list even when that list is no longer live",
+    inheritedFromUnknownList.kind === "resolved" && inheritedFromUnknownList.listId === 42,
+);
+
+// --- Task lists: coded error -----------------------------------------------------------------------
+
+const listRefusal = new TaskListError("VALIDATION_FAILED", "a live task list already uses that name");
+check(
+    "TaskListError carries its code and a CODE-prefixed message",
+    listRefusal instanceof Error && listRefusal.code === "VALIDATION_FAILED" && listRefusal.message.startsWith("VALIDATION_FAILED:"),
+    listRefusal.message,
+);
 
 if (failures > 0) {
     throw new Error(`${failures} of ${checks} assertions failed`);
