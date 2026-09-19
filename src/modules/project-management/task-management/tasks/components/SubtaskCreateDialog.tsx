@@ -27,7 +27,7 @@ export function SubtaskCreateDialog({ parent, ...formProps }: SubtaskCreateDialo
             titleOverride="Add sub-task"
             descriptionOverride={
                 parent === null
-                    ? "Add a sub-task to your department's board."
+                    ? "Add a sub-task to this list."
                     : `Add a sub-task under “${parent.title}”. Sub-tasks nest as deeply as the work needs.`
             }
         />

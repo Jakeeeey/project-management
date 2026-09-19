@@ -4,23 +4,24 @@ import { TaskCombobox } from "./TaskCombobox";
 import type { TaskListSummary } from "../hooks/useTaskLists";
 
 /**
- * The list switcher, rendered as the left-most control of the tasks toolbar.
+ * The list switcher, rendered at the right end of the view-tabs row.
  *
  * Lists come from the `pm_task_list` TABLE, so the module's own rule applies: a database-sourced,
  * dynamic row set is a searchable `TaskCombobox`, not a plain `Select`. Selecting a list changes
- * which list's tasks the page shows; the control is deliberately NOT permission-gated — viewing any
- * list of one's own department is the normal case, not a boundary.
+ * which list's tasks every view shows; the control is deliberately NOT permission-gated — viewing
+ * any list of one's own department is the normal case, not a boundary.
  *
- * It sits immediately ahead of the search box in the toolbar because that row already holds the
- * current view's scoping controls, so "which list am I looking at" is adjacent to the content it
- * scopes. The page-title row stays heading plus page actions only. It is deliberately NOT in the
- * view-tabs row: those tabs select which REPRESENTATION of the rows is shown (List, Board, …), which
- * is a different axis from which list's rows those are, and combining the two would conflate them.
+ * It shares the row with the view tabs — tabs left, switcher right — because the list is a
+ * PAGE-level scope: it decides which list's rows every view (List, Board, Calendar, Team, Gantt,
+ * Dashboard) projects. That is a different axis from the tabs, which pick the REPRESENTATION of
+ * those already-chosen rows, from the toolbar's search box, which only narrows them further, and
+ * from the page actions, which stay on the heading row. `sm:ml-auto` is what right-aligns it on
+ * that row, and it also pins the control right when the row wraps it onto its own line.
  *
  * The control owns its own width rather than inheriting a caller's. A list name is not a fixed-width
  * catalog label, and a shrink-to-content row would collapse the trigger until realistic names
- * truncated to fragments. Full width on the stacked narrow toolbar, then a bounded track from `sm:`
- * up, keeps that promise without starving the search box beside it.
+ * truncated to fragments. Full width while the row is stacked, then a bounded track from `sm:` up,
+ * keeps that promise without crowding the view tabs beside it.
  */
 export interface TaskListSwitcherProps {
     /** The department's live lists, ordered by `(sort_order, id)`. */
@@ -42,7 +43,7 @@ export function TaskListSwitcher({ lists, selectedId, onSelect }: TaskListSwitch
     return (
         <div
             data-slot="task-list-switcher"
-            className="flex w-full min-w-0 items-center gap-2 sm:w-64 lg:w-72"
+            className="flex w-full min-w-0 items-center gap-2 sm:ml-auto sm:w-64 lg:w-72"
         >
             <TaskCombobox
                 /*

@@ -784,7 +784,24 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 <TasksHeaderActions capabilities={capabilities} onCreateTask={handleCreateTask} />
             </div>
 
-            <TasksViewTabs value={view} onValueChange={setView} />
+            {/*
+             * The view tabs and the list switcher share one row: tabs pinned left, the switcher
+             * pinned right. The switcher is a PAGE-level scope — which list's tasks every view
+             * projects, a different axis from which view — so it rides beside the tabs rather than
+             * in the toolbar's search row or under the page actions. `flex-wrap` is deliberate:
+             * when the six labelled tabs and the switcher cannot both fit — narrow viewports, and
+             * the band just above `sm` where the tab labels reappear — the switcher wraps to its
+             * own right-aligned line instead of squeezing the tabs into slivers. Below `sm` the row
+             * is already stacked.
+             */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                <TasksViewTabs value={view} onValueChange={setView} />
+                <TaskListSwitcher
+                    lists={lists}
+                    selectedId={activeListId}
+                    onSelect={handleSelectList}
+                />
+            </div>
 
             {/*
              * The five extra views are read-only projections of the SAME rows the list renders, so
@@ -827,13 +844,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
             ) : null}
 
             <TasksToolbar
-                listSwitcher={
-                    <TaskListSwitcher
-                        lists={lists}
-                        selectedId={activeListId}
-                        onSelect={handleSelectList}
-                    />
-                }
                 searchValue={search}
                 onSearchChange={handleSearchChange}
                 clauses={clauses}

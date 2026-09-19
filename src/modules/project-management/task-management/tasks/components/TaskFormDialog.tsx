@@ -270,7 +270,7 @@ export function TaskFormDialog({
         (isEditing
             ? "Change the title, status, priority, dates or assignees. Re-parenting lives in the Move to… action."
             : parent === null
-              ? "Add a top-level task to your department's board. Statuses and priorities come from your department's own list."
+              ? "Add a top-level task to this list. Statuses and priorities come from your department's own catalogs."
               : "Add a sub-task under the parent shown below. Sub-tasks nest as deeply as the work needs.");
 
     return (
