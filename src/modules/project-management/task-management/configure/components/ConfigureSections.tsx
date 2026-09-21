@@ -1,13 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { ListChecks, SlidersHorizontal, type LucideIcon } from "lucide-react";
+import { ListChecks, ListTodo, SlidersHorizontal, type LucideIcon } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { TaskFieldsSection } from "@/modules/project-management/task-management/tasks/components/TaskFieldsSection";
 
 import { TaskConfigurationSection } from "./TaskConfigurationSection";
+import { TaskListsSection } from "./TaskListsSection";
 
 /**
  * The section registry — the single edit point for the Configure page.
@@ -23,7 +24,22 @@ interface ConfigureSection {
     readonly render: () => ReactNode;
 }
 
+/**
+ * Order is deliberate: lists come first because every task belongs to one, then the two catalogs a
+ * task references (status and priority) under a single tab, then the optional columns.
+ *
+ * Status and priority share the "Status & priority" tab but are still two independent catalogs with
+ * their own tables and id spaces — the tab merges their PRESENTATION only. `TaskConfigurationSection`
+ * renders each with the same `CatalogList` (its own "Statuses" / "Priorities" heading keeps the two
+ * halves distinguishable), so nothing about the data model is being combined here.
+ */
 const CONFIGURE_SECTIONS: readonly ConfigureSection[] = [
+    {
+        id: "lists",
+        label: "Lists",
+        icon: ListTodo,
+        render: () => <TaskListsSection />,
+    },
     {
         id: "catalogs",
         label: "Status & priority",
@@ -32,7 +48,7 @@ const CONFIGURE_SECTIONS: readonly ConfigureSection[] = [
     },
     {
         id: "custom-fields",
-        label: "Custom fields",
+        label: "Custom Fields",
         icon: SlidersHorizontal,
         render: () => <TaskFieldsSection />,
     },
@@ -50,9 +66,9 @@ const CONFIGURE_SECTIONS: readonly ConfigureSection[] = [
  *
  * `whitespace-nowrap` is load-bearing, not cosmetic, and it belongs on the LABEL SPAN rather than the
  * trigger: a trigger is `flex-1`, so a multi-word label's min-content width is one word per line and
- * it wraps — which is why "Statuses & priorities" rendered on two rows beside the single-word "Custom
- * fields". Putting nowrap on the span is what makes its min-content the whole label, so the strip
- * widens instead of breaking the text; the same class on the trigger alone does not reach the span.
+ * it wraps — which is why "Status & priority" rendered on two rows beside "Lists". Putting nowrap on
+ * the span is what makes its min-content the whole label, so the strip widens instead of breaking the
+ * text; the same class on the trigger alone does not reach the span.
  */
 export function ConfigureSections() {
     return (

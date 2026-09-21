@@ -75,6 +75,7 @@ function toPayloadRow(row: ScopedTaskRow): RawTaskRow {
         id: row.id,
         department_id: row.department_id,
         parent_id: row.parent_id,
+        list_id: row.list_id,
         status_id: row.status_id,
         priority_id: row.priority_id,
         title: row.title,
@@ -142,6 +143,10 @@ export class TaskItemService {
      * live department catalogs only when it differs from the stored value, so a task still pointing
      * at a since-soft-deleted status can be edited without its dangling reference blocking the
      * write. A body that changes nothing performs no write and returns the current row.
+     *
+     * `list_id` is immutable here: a supplied value that differs from the stored one is a 400, so a
+     * plain edit can never move a task — and with it half a subtree — into another list. Re-parenting
+     * is the move route's job and it refuses a cross-list target for the same reason.
      */
     static async updateTask(
         actor: ScopedActor,
@@ -149,6 +154,14 @@ export class TaskItemService {
         task: ScopedTaskRow,
         input: UpdateTaskInput,
     ): Promise<TaskClientRow> {
+        const storedListId = toNumberOrNull(task.list_id);
+        if (input.list_id !== undefined && (input.list_id ?? null) !== storedListId) {
+            throw new TaskServiceError(
+                "VALIDATION_FAILED",
+                "A task cannot change its list by editing; its list is fixed by its place in the tree",
+            );
+        }
+
         const mergedStart = toDateOnly(input.start_date === undefined ? task.start_date : input.start_date);
         const mergedEnd = toDateOnly(input.end_date === undefined ? task.end_date : input.end_date);
         assertDateOrder(mergedStart, mergedEnd);
@@ -249,7 +262,8 @@ export class TaskItemService {
             });
         }
 
-        const updated = Object.keys(changes).length > 0 ? await loadTaskScoped(actor, task.id) : task;
+        const updated =
+            Object.keys(changes).length > 0 ? await loadTaskScoped(actor, task.id, task.list_id) : task;
         if (updated === null) {
             throw new TaskServiceError("INTERNAL_FAIL", "The task was updated but could not be read back");
         }

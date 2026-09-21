@@ -8,45 +8,63 @@ import {
 } from "@/modules/project-management/task-management/tasks/services/permission-service";
 import { CreateTaskSchema } from "@/modules/project-management/task-management/tasks/types/pm-task.schema";
 import { TaskService, TaskServiceError } from "@/modules/project-management/task-management/tasks/services/task-service";
+import { TaskListService } from "@/modules/project-management/task-management/tasks/services/task-list-service";
+import { loadListScoped } from "@/modules/project-management/task-management/tasks/services/scoping";
 import { TaskFieldError } from "@/modules/project-management/task-management/tasks/services/task-field-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * The tasks collection route — the department's task list and task creation.
+ * The tasks collection route — one list's tasks and task creation.
  *
  * Contract:
- * - `GET` -> 200 `{ success, data, catalogs, capabilities }` where `data` is the department's
- *   **flat** row array (the client assembles the tree from `parent_id`), every row carries the
- *   server-computed `can_delete` plus its status/priority labels resolved from live catalog rows,
- *   `catalogs` carries both per-department lists (their `id`s are what a create references), and
- *   `capabilities` is the coarse session answer. A session with no department is 403; no session is
- *   401.
+ * - `GET ?list_id=<id>` -> 200 `{ success, data, catalogs, capabilities }` where `data` is the
+ *   list's **flat** row array (the client assembles the tree from `parent_id`), every row carries
+ *   the server-computed `can_delete` plus its status/priority labels resolved from live catalog
+ *   rows, `catalogs` carries both per-department lists (their `id`s are what a create references),
+ *   and `capabilities` is the coarse session answer. The read is scoped by department AND list: an
+ *   explicit `list_id` must be a live list of the actor's department (a miss is 404, never 403, so
+ *   another department's list is never confirmed) and an omitted one falls back to the
+ *   department's default list. A session with no department is 403; no session is 401.
  * - `POST` body `CreateTaskSchema` -> 201 `{ success, data: row }`. `assertCanCreate` runs first
  *   (every member may create), a supplied `parent_id` is validated against the actor's department,
- *   and a supplied `status_id` / `priority_id` must be a live catalog row of that same department,
- *   falling back to the kind's default when omitted. `department_id`, `created_by`, `updated_by`,
- *   `created_at` and `updated_at` are injected server-side from the actor and `phNow()`; the Zod
- *   schema strips unknown keys, so a body carrying them is ignored rather than honoured.
+ *   `list_id` resolves to a live list (a subtask may only name its parent's list, and inherits it
+ *   when omitted; a root task falls back to the default list), and a supplied `status_id` /
+ *   `priority_id` must be a live catalog row of that same department, falling back to the kind's
+ *   default when omitted. `department_id`, `created_by`, `updated_by`, `created_at` and
+ *   `updated_at` are injected server-side from the actor and `phNow()`; the Zod schema strips
+ *   unknown keys, so a body carrying them is ignored rather than honoured.
  *
- * The department filter is pushed into the Directus query (`filter[department_id][_eq]`) — the
- * route never fetches the collection and post-filters. Directus failures are logged here and
- * answered with the module's own message; raw Directus text never reaches a client.
+ * The department and list filters are pushed into the Directus query (`filter[department_id][_eq]`,
+ * `filter[list_id][_eq]`) — the route never fetches the collection and post-filters. Directus
+ * failures are logged here and answered with the module's own message; raw Directus text never
+ * reaches a client.
  */
 
-/** The actor, or the envelope the handler must return instead: 401 without a session, 403 without a department. */
 type ActorResolution =
     | { readonly resolved: true; readonly actor: ScopedActor }
     | { readonly resolved: false; readonly response: NextResponse };
 
-/** A parsed body, or the 400 envelope explaining why it could not be parsed. */
 type BodyResult<T> =
     | { readonly ok: true; readonly data: T }
     | { readonly ok: false; readonly response: NextResponse };
 
+/**
+ * The list a read is scoped to, or `{ found: false }` when an explicit id names no live list of the
+ * actor's department. A `null` id means the department has no live list at all: there is nothing to
+ * scope by, so the read answers an empty set rather than an unscoped one.
+ */
+type ListScope =
+    | { readonly found: true; readonly listId: number | null }
+    | { readonly found: false };
+
 function badRequest(message: string): NextResponse {
     return NextResponse.json({ success: false, message }, { status: 400 });
+}
+
+function notFound(message: string): NextResponse {
+    return NextResponse.json({ success: false, message }, { status: 404 });
 }
 
 async function resolveTaskActor(): Promise<ActorResolution> {
@@ -64,6 +82,14 @@ async function resolveTaskActor(): Promise<ActorResolution> {
         };
     }
     return { resolved: true, actor };
+}
+
+async function resolveListScope(actor: ScopedActor, requested: string | null): Promise<ListScope> {
+    if (requested === null) {
+        return { found: true, listId: await TaskListService.resolveDefaultListId(actor) };
+    }
+    const list = await loadListScoped(actor, requested);
+    return list === null ? { found: false } : { found: true, listId: list.id };
 }
 
 /** Zod-first body parsing: a body that is not JSON, or fails the schema, is a 400 — never a 500. */
@@ -128,14 +154,17 @@ function failureResponse(scope: string, error: unknown): NextResponse {
     );
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(req: NextRequest): Promise<NextResponse> {
     try {
         const resolution = await resolveTaskActor();
         if (!resolution.resolved) return resolution.response;
         const { actor } = resolution;
 
+        const scope = await resolveListScope(actor, new URL(req.url).searchParams.get("list_id"));
+        if (!scope.found) return notFound("Task list not found");
+
         const permissions = await getPermissionContext(actor);
-        const { rows, catalogs, fields } = await TaskService.listDepartmentTasks(actor, permissions);
+        const { rows, catalogs, fields } = await TaskService.listDepartmentTasks(actor, permissions, scope.listId);
 
         return NextResponse.json({
             success: true,

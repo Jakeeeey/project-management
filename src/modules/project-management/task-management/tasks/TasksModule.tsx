@@ -11,6 +11,7 @@ import { AssigneeDialog } from "./components/AssigneeDialog";
 import { SubtaskCreateDialog } from "./components/SubtaskCreateDialog";
 import { TaskDetailSheet } from "./components/TaskDetailSheet";
 import { TaskFormDialog, type TaskBreadcrumb } from "./components/TaskFormDialog";
+import { TaskListSwitcher } from "./components/TaskListSwitcher";
 import { DEFAULT_TASK_PAGE_SIZE, TaskPagination } from "./components/TaskPagination";
 import { TaskTree } from "./components/TaskTree";
 import { TasksHeaderActions } from "./components/TasksHeaderActions";
@@ -42,8 +43,9 @@ import {
     type TaskListItem,
 } from "./hooks/useTasks";
 import { useTaskMutations } from "./hooks/useTaskMutations";
+import { useTaskLists } from "./hooks/useTaskLists";
 import { useTaskTree, type TaskTreeRow } from "./hooks/useTaskTree";
-import type { UpdateTaskInput } from "./types/pm-task.schema";
+import type { CreateTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
 
 /**
  * The Tasks client orchestrator.
@@ -84,7 +86,6 @@ import type { UpdateTaskInput } from "./types/pm-task.schema";
  * answer is the row's own server-computed `can_delete` — never a session flag, never an id comparison.
  */
 
-/** Case- and whitespace-insensitive search term, used for the match and the empty copy. */
 function normaliseSearch(value: string): string {
     return value.trim().toLowerCase();
 }
@@ -107,7 +108,6 @@ function rowMatches(
     return rowMatchesClauses(row, clauses, fields);
 }
 
-/** The `"<taskId>:<column>"` key the open cell, its in-flight guard and its optimistic patch share. */
 function cellKey(taskId: number, column: string): string {
     return `${taskId}:${column}`;
 }
@@ -121,7 +121,6 @@ function catalogRefFor(options: readonly TaskCatalogOption[], id: number): TaskC
     return option === undefined ? null : { label: option.label, color: option.color, icon: option.icon };
 }
 
-/** Everything `resolveCellEdit` needs beyond the row and the request. */
 interface CellEditContext {
     readonly catalogs: TaskCatalogs;
     readonly memberNameById: ReadonlyMap<number, string>;
@@ -130,7 +129,6 @@ interface CellEditContext {
     readonly unassign: (taskId: number, userId: number, label: string) => Promise<boolean>;
 }
 
-/** A resolved cell edit: the value to show immediately, and the write that makes it true. */
 interface CellEditOutcome {
     readonly patch: TaskRowPatch;
     readonly persist: () => Promise<boolean>;
@@ -298,7 +296,6 @@ function ancestorTrail(
     return [];
 }
 
-/** The trail a dialog shows: the ancestors only, or the ancestors plus the node itself. */
 function trailFor(
     nodes: readonly TreeNode<TaskTreeRow>[],
     targetId: number | null,
@@ -319,7 +316,30 @@ export interface TasksModuleProps {
 }
 
 export function TasksModule({ userId }: TasksModuleProps) {
-    const { items, catalogs, fields, isLoading, isRefreshing, error, capabilities, refresh } = useTasks();
+    /**
+     * The switcher's source, and the owner of the one-shot default-list bootstrap: a department
+     * whose head never ran the configuration seed still gets its "General" list without the task
+     * read having to know about lists at all.
+     */
+    const { lists } = useTaskLists();
+
+    /** The user's explicit choice. `null` means "not chosen yet" — the default list is used. */
+    const [selectedListId, setSelectedListId] = useState<number | null>(null);
+
+    /**
+     * The list the page actually reads: the user's choice while it is still a LIVE list, otherwise
+     * the department's default (the flagged row, else the first). Deriving the fallback instead of
+     * storing it is what makes a list that a head deleted — or any change to the list set — fall
+     * back to the default rather than stranding the page on an empty, unresolvable read.
+     */
+    const activeListId = useMemo(() => {
+        if (selectedListId !== null && lists.some((list) => list.id === selectedListId)) {
+            return selectedListId;
+        }
+        return (lists.find((list) => list.is_default) ?? lists[0])?.id ?? null;
+    }, [selectedListId, lists]);
+
+    const { items, catalogs, fields, isLoading, isRefreshing, error, capabilities, refresh } = useTasks(activeListId);
     const {
         members,
         memberNameById,
@@ -566,6 +586,28 @@ export function TasksModule({ userId }: TasksModuleProps) {
         setIsCreateOpen(true);
     }, []);
 
+    /**
+     * The switcher's selection seam. The resolved fallback stays derived, never stored, and the page
+     * lands on 1 exactly as it does for a search or filter change — the new list's rows have nothing
+     * to do with the old page index.
+     */
+    const handleSelectList = useCallback((id: number): void => {
+        setSelectedListId(id);
+        setPage(1);
+    }, []);
+
+    /**
+     * The create seam the dialogs call. The list in view is stamped onto every new task, so a task
+     * created while a list is selected lands in THAT list instead of the department default — which
+     * is what keeps the refetch that follows the create showing the task that was just made. An
+     * input that already names a list (none does today) still wins.
+     */
+    const persistCreateTask = useCallback(
+        (input: CreateTaskInput) =>
+            createTask({ ...input, list_id: input.list_id ?? activeListId ?? undefined }),
+        [createTask, activeListId],
+    );
+
     // Each dialog's open state is derived from its subject id, so closing is "forget the subject".
     const handleCreateOpenChange = useCallback(
         (next: boolean): void => {
@@ -668,7 +710,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [taskById, catalogs, memberNameById, updateTask, assign, unassign],
     );
 
-    /** Closing the assignees dialog (Cancel, X or the overlay) abandons the change. */
     const handleAssigneeDialogOpenChange = useCallback(
         (next: boolean): void => {
             if (!next) handleCancelCellEdit();
@@ -689,9 +730,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [assigneeEditingTaskId, handleCellCommit],
     );
 
-    /**
-     * The per-row actions the tree renders: open the detail sheet.
-     */
     const renderRowActions = useCallback((node: TreeNode<TaskRowView>) => {
         const detailsLabel = `View details for ${node.title}`;
         return (
@@ -732,14 +770,29 @@ export function TasksModule({ userId }: TasksModuleProps) {
             className="w-full scroll-pt-16 space-y-4 px-4 py-6 md:scroll-pt-20"
         >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 space-y-1">
-                    <h1 className="text-lg font-semibold tracking-tight">Tasks</h1>
-                </div>
+                <h1 className="min-w-0 text-lg font-semibold tracking-tight">Tasks</h1>
 
                 <TasksHeaderActions capabilities={capabilities} onCreateTask={handleCreateTask} />
             </div>
 
-            <TasksViewTabs value={view} onValueChange={setView} />
+            {/*
+             * The view tabs and the list switcher share one row: tabs pinned left, the switcher
+             * pinned right. The switcher is a PAGE-level scope — which list's tasks every view
+             * projects, a different axis from which view — so it rides beside the tabs rather than
+             * in the toolbar's search row or under the page actions. `flex-wrap` is deliberate:
+             * when the six labelled tabs and the switcher cannot both fit — narrow viewports, and
+             * the band just above `sm` where the tab labels reappear — the switcher wraps to its
+             * own right-aligned line instead of squeezing the tabs into slivers. Below `sm` the row
+             * is already stacked.
+             */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                <TasksViewTabs value={view} onValueChange={setView} />
+                <TaskListSwitcher
+                    lists={lists}
+                    selectedId={activeListId}
+                    onSelect={handleSelectList}
+                />
+            </div>
 
             {/*
              * The five extra views are read-only projections of the SAME rows the list renders, so
@@ -852,7 +905,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 members={members}
                 capabilities={capabilities}
                 isSubmitting={isDialogSubmitting}
-                onCreate={createTask}
+                onCreate={persistCreateTask}
                 onUpdate={updateTask}
                 onAssign={assign}
                 onUnassign={unassign}
@@ -868,7 +921,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 members={members}
                 capabilities={capabilities}
                 isSubmitting={isDialogSubmitting}
-                onCreate={createTask}
+                onCreate={persistCreateTask}
                 onUpdate={updateTask}
                 onAssign={assign}
                 onUnassign={unassign}
@@ -887,7 +940,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 members={members}
                 capabilities={capabilities}
                 isSubmitting={isDialogSubmitting}
-                onCreate={createTask}
+                onCreate={persistCreateTask}
                 onUpdate={updateTask}
                 onAssign={assign}
                 onUnassign={unassign}

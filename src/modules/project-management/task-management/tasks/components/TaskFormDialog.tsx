@@ -133,7 +133,6 @@ export interface TaskFormDialogProps {
     readonly descriptionOverride?: string;
 }
 
-/** The department's default row for a kind, falling back to the first live row. */
 function defaultCatalogId(options: readonly TaskCatalogOption[]): number | null {
     if (options.length === 0) return null;
     const flagged = options.find((option) => option.is_default);
@@ -265,13 +264,18 @@ export function TaskFormDialog({
     });
 
     const dialogTitle = titleOverride ?? (isEditing ? "Edit task" : "New task");
-    const dialogDescription =
-        descriptionOverride ??
-        (isEditing
-            ? "Change the title, status, priority, dates or assignees. Re-parenting lives in the Move to… action."
-            : parent === null
-              ? "Add a top-level task to your department's board. Statuses and priorities come from your department's own list."
-              : "Add a sub-task under the parent shown below. Sub-tasks nest as deeply as the work needs.");
+    let dialogFallback: string;
+    if (isEditing) {
+        dialogFallback =
+            "Change the title, status, priority, dates or assignees. Re-parenting lives in the Move to… action.";
+    } else if (parent === null) {
+        dialogFallback =
+            "Add a top-level task to this list. Statuses and priorities come from your department's own catalogs.";
+    } else {
+        dialogFallback =
+            "Add a sub-task under the parent shown below. Sub-tasks nest as deeply as the work needs.";
+    }
+    const dialogDescription = descriptionOverride ?? dialogFallback;
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>

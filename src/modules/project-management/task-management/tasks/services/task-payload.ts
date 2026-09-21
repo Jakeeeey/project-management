@@ -18,7 +18,6 @@ import { normalizeIconName } from "../components/catalog-icon";
  * number coercion, the nested-row grouping, and the per-row catalog resolution and `can_delete`.
  */
 
-/** A live `pm_task_assignee` row as the list payload carries it. */
 export interface TaskAssigneeRow {
     readonly id: number;
     readonly task_id: number;
@@ -40,6 +39,8 @@ export interface TaskClientRow {
     readonly id: number;
     readonly department_id: number;
     readonly parent_id: number | null;
+    /** The task's list — a view dimension the client will switch on; every task carries one. */
+    readonly list_id: number;
     readonly status_id: number;
     readonly priority_id: number;
     readonly title: string;
@@ -83,6 +84,7 @@ export interface RawTaskRow {
     readonly id: number;
     readonly department_id?: unknown;
     readonly parent_id?: unknown;
+    readonly list_id?: unknown;
     readonly status_id?: unknown;
     readonly priority_id?: unknown;
     readonly title?: unknown;
@@ -97,7 +99,6 @@ export interface RawTaskRow {
     readonly [alias: string]: unknown;
 }
 
-/** A task row plus the live nested rows the shaping step attaches to it. */
 export interface TaskRowSource {
     readonly row: RawTaskRow;
     readonly assignees: readonly TaskAssigneeRow[];
@@ -163,7 +164,6 @@ export function groupByTaskId<T extends { readonly task_id: unknown }>(rows: rea
     return grouped;
 }
 
-/** Resolves the shared per-response shaping: both catalog indexes plus the permission context. */
 export function buildShaping(catalogs: CatalogLists, permissions: PermissionContext): RowShaping {
     return {
         statuses: new Map(catalogs.statuses.map((row) => [row.id, row])),
@@ -213,6 +213,7 @@ export function toClientRow(source: TaskRowSource, shaping: RowShaping): TaskCli
         id: row.id,
         department_id: toNumber(row.department_id),
         parent_id: toNumberOrNull(row.parent_id),
+        list_id: toNumber(row.list_id),
         status_id: toNumber(row.status_id),
         priority_id: toNumber(row.priority_id),
         title: typeof row.title === "string" ? row.title : "",

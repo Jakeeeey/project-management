@@ -50,7 +50,6 @@ export function CalendarView({
     error,
     onRetry,
 }: TaskViewProps) {
-    /** The first of the month the grid is showing; local-only, and the only mutable state here. */
     const [viewMonth, setViewMonth] = useState<Date>(() => startOfMonth(new Date()));
 
     /**
@@ -60,11 +59,6 @@ export function CalendarView({
      */
     const todayIso = useMemo(() => toISODate(new Date()), []);
 
-    /**
-     * The whole projection, derived in one pass: every task bucketed by its start day, then the
-     * month's full weeks laid out. Memoised on `items` / `viewMonth` so navigating months re-lays
-     * the grid without re-bucketing the department, and a refetch re-buckets without re-laying it.
-     */
     const calendar = useMemo(() => {
         const tasksByIso = new Map<string, TaskListItem[]>();
         let placed = 0;
@@ -137,7 +131,7 @@ export function CalendarView({
         return (
             <CalendarStatePanel
                 icon={<CalendarDays className="size-8 text-muted-foreground/50" aria-hidden="true" />}
-                message="No tasks in this department yet."
+                message="No tasks in this list yet."
             />
         );
     }
@@ -233,7 +227,6 @@ const WEEKDAY_LABELS: readonly string[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "F
  */
 const MAX_CHIPS_PER_DAY = 4;
 
-/** One resolved cell of the month grid — the day plus the tasks that begin on it. */
 interface CalendarDay {
     readonly date: Date;
     readonly iso: string;
@@ -242,12 +235,10 @@ interface CalendarDay {
     readonly tasks: readonly TaskListItem[];
 }
 
-/** The local midnight of the month a date belongs to; the pivot every navigation step moves. */
 function startOfMonth(date: Date): Date {
     return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-/** A task spans when it has both ends and they differ — only then does the chip earn its arrow. */
 function isSpanning(task: TaskListItem): boolean {
     return task.start_date !== null && task.end_date !== null && task.end_date !== task.start_date;
 }
@@ -297,7 +288,6 @@ interface CalendarDayCellProps {
     memberNameById: ReadonlyMap<number, string>;
 }
 
-/** One day of the month: its number, a distinct treatment for today, and the chips of tasks that begin on it. */
 function CalendarDayCell({ day, memberNameById }: CalendarDayCellProps) {
     const visible = day.tasks.slice(0, MAX_CHIPS_PER_DAY);
     const hiddenCount = day.tasks.length - visible.length;
@@ -440,7 +430,6 @@ function CalendarStatePanel({ icon, message, isAlert = false, onRetry }: Calenda
 /** A fixed 5×7 block of placeholder cells — the cold load has no month to shape from. */
 const SKELETON_DAY_COUNT = 35;
 
-/** The calendar's cold-load skeleton, shaped like the header, the weekday row and the day grid. */
 function CalendarSkeleton() {
     return (
         <div

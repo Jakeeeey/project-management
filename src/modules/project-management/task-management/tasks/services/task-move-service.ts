@@ -6,20 +6,23 @@ import { isDescendant, type TreeSourceRow } from "../utils/tree";
 import { phNow } from "../utils/ph-time";
 import type { MoveTaskInput } from "../types/pm-task.schema";
 import { containsExactlyOnce, isCompletePostMoveChildSet } from "./task-move-rules";
+import { isListCompatible } from "./task-list-policy";
 import { TaskItemService } from "./task-item-service";
 import { TaskService, TaskServiceError } from "./task-service";
 import { TASK_ACTIVITY_FIELD_LABELS, buildActivityChange } from "./task-activity-delta";
 import { TaskActivityService } from "./task-activity-service";
-import type { TaskClientRow } from "./task-payload";
+import { toNumberOrNull, type TaskClientRow } from "./task-payload";
 
 /**
  * One move request as the service applies it: the moved node, the **resolved** destination parent
- * (`null` = root) and the complete ordered sibling list that becomes the stored `sort_order`
- * sequence. The parent id is passed in already validated by `TaskService.resolveParentId`.
+ * (`null` = root), both sides' lists, and the complete ordered sibling list that becomes the stored
+ * `sort_order` sequence. The parent id is passed in already validated by `TaskService.resolveParent`.
  */
 interface MoveTarget {
     readonly movedId: number;
     readonly parentId: number | null;
+    readonly movedListId: number | null;
+    readonly parentListId: number | null;
     readonly siblingIds: readonly number[];
 }
 
@@ -28,13 +31,16 @@ interface MoveTarget {
  *
  * The route has already loaded the moved node through `loadTaskScoped`, so the department guard ran
  * and a miss became a 404 before anything here executes. The target parent is validated with
- * `TaskService.resolveParentId` — the create path's exact rule (live row, actor's department, 400
+ * `TaskService.resolveParent` — the create path's exact rule (live row, actor's department, 400
  * otherwise) — because create and move must never disagree about which parent is referenceable.
  *
  * Two guards the route's contract adds on top of that:
  * - **Self-parenting is refused explicitly.** `utils/tree.isDescendant` is deliberately strict and
  *   answers `false` for `x` against `x`, so relying on the cycle walk alone would let a task become
  *   its own parent — the one cycle the walk cannot see.
+ * - **A cross-list re-parent is refused.** A subtask must share its parent's list, so moving a task
+ *   under a parent in another list would split the subtree; the operation is rejected rather than
+ *   copied, using the same `isListCompatible` predicate the create path enforces.
  * - **The sibling list must be exactly the target parent's complete post-move child set.** The rule
  *   lives in `./task-move-rules` (pure and assertable), and its membership subtlety is the reason
  *   this contract is easy to get wrong: before the write the moved node is still under its old
@@ -65,12 +71,18 @@ export class TaskMoveService {
         task: ScopedTaskRow,
         input: MoveTaskInput,
     ): Promise<TaskClientRow> {
-        const [rows, parentId] = await Promise.all([
+        const [rows, parent] = await Promise.all([
             TaskItemService.readDepartmentTreeRows(actor),
-            TaskService.resolveParentId(actor, input.parent_id),
+            TaskService.resolveParent(actor, input.parent_id),
         ]);
 
-        const target: MoveTarget = { movedId: task.id, parentId, siblingIds: input.sibling_ids };
+        const target: MoveTarget = {
+            movedId: task.id,
+            parentId: parent?.id ?? null,
+            movedListId: toNumberOrNull(task.list_id),
+            parentListId: parent?.listId ?? null,
+            siblingIds: input.sibling_ids,
+        };
         TaskMoveService.assertMoveTarget(rows, target);
         await TaskMoveService.writeSiblingOrder(actor, target);
 
@@ -84,7 +96,7 @@ export class TaskMoveService {
                 field_key: "parent_id",
                 field_label: TASK_ACTIVITY_FIELD_LABELS.parent_id,
                 old_value: task.parent_id,
-                new_value: parentId,
+                new_value: target.parentId,
             }),
             buildActivityChange({
                 field_key: "sort_order",
@@ -94,7 +106,7 @@ export class TaskMoveService {
             }),
         ]);
 
-        const moved = await loadTaskScoped(actor, task.id);
+        const moved = await loadTaskScoped(actor, task.id, task.list_id);
         if (moved === null) {
             throw new TaskServiceError("INTERNAL_FAIL", "The task was moved but could not be read back");
         }
@@ -102,13 +114,21 @@ export class TaskMoveService {
     }
 
     /**
-     * Every 400 of the move contract, in order: the target parent is neither the moved node itself
-     * nor one of its descendants; the sibling list names the moved node exactly once; every entry is
-     * a live task of the actor's department; and the list is exactly the target parent's complete
-     * post-move child set. The target parent itself was validated by `resolveParentId` already.
+     * Every 400 of the move contract, in order: the target parent is in the same list as the moved
+     * task; it is neither the moved node itself nor one of its descendants; the sibling list names
+     * the moved node exactly once; every entry is a live task of the actor's department; and the
+     * list is exactly the target parent's complete post-move child set. The target parent itself was
+     * validated by `resolveParent` already.
      */
     private static assertMoveTarget(rows: readonly TreeSourceRow[], target: MoveTarget): void {
-        const { movedId, parentId, siblingIds } = target;
+        const { movedId, parentId, movedListId, parentListId, siblingIds } = target;
+
+        if (!isListCompatible(parentListId, movedListId)) {
+            throw new TaskServiceError(
+                "VALIDATION_FAILED",
+                "A task cannot be moved under a parent in a different task list; subtasks must stay in their list",
+            );
+        }
 
         if (parentId !== null) {
             if (parentId === movedId) {

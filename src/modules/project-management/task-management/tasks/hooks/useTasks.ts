@@ -32,7 +32,6 @@ import { normalizeIconName } from "../components/catalog-icon";
  * shape) and the code prefix is stripped before a human ever sees it.
  */
 
-/** The one endpoint this hook talks to. */
 const ENDPOINT = "/api/project-management/task-management/tasks";
 
 /** The services throw `CODE: message`; the code prefix never reaches the UI. */
@@ -41,7 +40,6 @@ const UPPERCASE_CODE_PREFIX = /^[A-Z][A-Z0-9_]*:\s*/;
 /** Both catalogs empty until the first successful load — never `undefined`, so consumers can read `.length`. */
 const EMPTY_CATALOGS: TaskCatalogs = { statuses: [], priorities: [] };
 
-/** No custom columns until the first successful load, for the same reason. */
 const EMPTY_FIELDS: TaskField[] = [];
 
 /** A status or priority catalog row as the tasks route returns it (live rows only). */
@@ -130,6 +128,8 @@ export interface TaskFieldValue {
 export interface TaskListItem {
     readonly id: number;
     readonly parent_id: number | null;
+    /** The task's list — the view dimension the switcher will filter on; every task carries one. */
+    readonly list_id: number;
     readonly sort_order: number;
     readonly title: string;
     readonly description: string | null;
@@ -260,7 +260,6 @@ function toCatalogOptions(raw: unknown): TaskCatalogOption[] {
     return options;
 }
 
-/** Both catalog lists from the envelope's `catalogs` block. */
 function toCatalogs(raw: unknown): TaskCatalogs {
     const record = isRecord(raw) ? raw : {};
     return {
@@ -385,6 +384,7 @@ function toTaskListItems(raw: unknown): TaskListItem[] {
         items.push({
             id,
             parent_id: toPositiveInt(entry.parent_id),
+            list_id: toNumber(entry.list_id),
             sort_order: toNumber(entry.sort_order),
             title: typeof entry.title === "string" ? entry.title : "",
             description: toNullableString(entry.description),
@@ -409,7 +409,12 @@ function toTaskListItems(raw: unknown): TaskListItem[] {
 }
 
 /**
- * Loads the department's task list, both catalogs and the actor's capabilities.
+ * Loads ONE task list's rows, both catalogs and the actor's capabilities.
+ *
+ * @param listId The list to scope the read to, or `null` to let the server resolve the department's
+ *               default list. The caller (the tasks module) passes the switcher's resolved list id;
+ *               a change refetches, and the change is a COLD load so the previous list's rows never
+ *               linger under the new selection.
  *
  * The hook fetches once on mount and again after every mutation (through `refresh`, which the
  * mutation hooks call as their `onChanged`). A refetch keeps the current rows on screen —
@@ -419,7 +424,7 @@ function toTaskListItems(raw: unknown): TaskListItem[] {
  * @returns the canonical `{ items, catalogs, isLoading, isRefreshing, error, capabilities, refresh }`
  *          surface.
  */
-export function useTasks(): UseTasksResult {
+export function useTasks(listId: number | null = null): UseTasksResult {
     const [items, setItems] = useState<TaskListItem[]>([]);
     const [catalogs, setCatalogs] = useState<TaskCatalogs>(EMPTY_CATALOGS);
     const [fields, setFields] = useState<TaskField[]>(EMPTY_FIELDS);
@@ -435,13 +440,30 @@ export function useTasks(): UseTasksResult {
      */
     const loadedCountRef = useRef(0);
 
+    /**
+     * The list the current rows were fetched for. A list change is a COLD load, not a background
+     * refetch: the previous list's rows belong to another view, so the tree shows its loading state
+     * instead of keeping them on screen while the new list arrives. The row count is reset too, so a
+     * failed switch retries cold rather than leaving the old rows under an `isRefreshing` indicator.
+     */
+    const loadedListIdRef = useRef(listId);
+
     const fetchTasks = useCallback(async (): Promise<void> => {
+        if (loadedListIdRef.current !== listId) {
+            loadedListIdRef.current = listId;
+            loadedCountRef.current = 0;
+        }
+
         const coldLoad = loadedCountRef.current === 0;
         if (coldLoad) setIsLoading(true);
         else setIsRefreshing(true);
 
         try {
-            const res = await fetch(ENDPOINT, { cache: "no-store" });
+            // `list_id` is the view dimension the route scopes by. An omitted one lets the server
+            // resolve the department's default list, which is the correct first-load behaviour while
+            // the list switcher is still loading its options.
+            const url = listId === null ? ENDPOINT : `${ENDPOINT}?list_id=${encodeURIComponent(String(listId))}`;
+            const res = await fetch(url, { cache: "no-store" });
             const envelope = await readEnvelope(res);
             if (!res.ok) throw new Error(readMessage(envelope, "Failed to load the tasks"));
 
@@ -462,7 +484,7 @@ export function useTasks(): UseTasksResult {
             if (coldLoad) setIsLoading(false);
             else setIsRefreshing(false);
         }
-    }, []);
+    }, [listId]);
 
     const refresh = useCallback(async (): Promise<void> => {
         await fetchTasks();
@@ -471,6 +493,13 @@ export function useTasks(): UseTasksResult {
     useEffect(() => {
         void refresh();
     }, [refresh]);
+
+    /**
+     * The default-list ensure moved to `useTaskLists`, which owns the list resource: it boots the
+     * department's "General" row and refetches the list set, and this read then refetches on its own
+     * because the resolved list id changed. Keeping it here would have left the switcher's list set
+     * stale for a department whose very first visit created the list.
+     */
 
     return {
         items,

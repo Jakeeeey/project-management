@@ -21,18 +21,12 @@ import { parseDateOnly } from "../SingleDatePicker";
  * The Dashboard view of the tasks page: read-only analytics over the department's already-fetched
  * rows.
  *
- * It is presentational by contract — it receives the flat rows, both catalogs and the member
- * directory, derives every number itself, and never fetches or writes. Nothing here is clickable
- * except the error panel's retry, which only asks the shell to refetch.
- *
  * Two semantic choices are deliberate, because the wire carries no completion model:
  * — "Past due" counts any row whose `end_date` is before today **and** whose `status` resolves.
  *   The department's terminal/complete status is data the view does not have, so instead of guessing
  *   a label such as "Done", the tile is named honestly and says so in its own subtitle. A row with
  *   an unresolved status is excluded, because "overdue" is meaningless without a status.
  * — "No dates" means NEITHER a start NOR an end date, not "some date is missing".
- *
- * @param props - the frozen `TaskViewProps` contract; the shell passes already-fetched data.
  */
 export function DashboardView({
     items,
@@ -169,7 +163,7 @@ export function DashboardView({
                 className="flex h-48 flex-col items-center justify-center gap-2 rounded-2xl border border-border/50 bg-card p-6 text-center shadow-sm"
             >
                 <ListTree className="size-8 text-muted-foreground/50" aria-hidden="true" />
-                <p className="text-sm text-muted-foreground">No tasks in this department yet.</p>
+                <p className="text-sm text-muted-foreground">No tasks in this list yet.</p>
             </div>
         );
     }
@@ -266,9 +260,7 @@ export function DashboardView({
     );
 }
 
-/** One chart row: a stable config key, the display label, the count and the resolved fill. */
 interface ChartDatum {
-    /** Unique per series and stable across renders — the `ChartConfig` key and the React/Cell key. */
     readonly configKey: string;
     readonly label: string;
     readonly value: number;
@@ -291,28 +283,23 @@ const SERIES_FALLBACK_COLORS: readonly string[] = [
     "var(--color-accent-foreground)",
 ];
 
-/** The value-end rounding of a horizontal bar, as `[topLeft, topRight, bottomRight, bottomLeft]`. */
 const HORIZONTAL_BAR_RADIUS: [number, number, number, number] = [0, 6, 6, 0];
 
 /** Room reserved for the category labels on the value axis' left; long names are truncated to fit. */
 const CATEGORY_AXIS_WIDTH = 116;
 
-/** A count with no decimals — the tiles, the legend and the footer all read the same way. */
 function countText(value: number): string {
     return formatNumber(value, "en-PH", 0);
 }
 
-/** `true` only for a non-blank date string; the hook already collapses `""` to `null`. */
 function hasDate(value: string | null): boolean {
     return value !== null && value.trim() !== "";
 }
 
-/** A catalog label, or a stable placeholder when the stored label is blank. */
 function labelOrFallback(label: string, fallback: string): string {
     return label.trim() === "" ? fallback : label;
 }
 
-/** Cycles the theme-token palette so an unbounded series count can never run out of colours. */
 function seriesFallback(index: number): string {
     return SERIES_FALLBACK_COLORS[index % SERIES_FALLBACK_COLORS.length];
 }
@@ -322,14 +309,12 @@ function compareLabels(a: string, b: string): number {
     return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
-/** The sum of every bar/segment, i.e. how many rows the chart actually covers. */
 function sumValues(data: readonly ChartDatum[]): number {
     let total = 0;
     for (const datum of data) total += datum.value;
     return total;
 }
 
-/** Indexes the datums by their config key so the tooltip can resolve a label and colour. */
 function buildConfig(data: readonly ChartDatum[]): ChartConfig {
     const config: ChartConfig = {};
     for (const datum of data) {
@@ -360,12 +345,10 @@ interface KpiTileProps {
     icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
     label: string;
     value: number;
-    /** One short line explaining exactly what the number counts, shown under the value. */
     note?: string;
     title?: string;
 }
 
-/** One KPI tile: its label, its count and — where the semantics need it — an honest footnote. */
 function KpiTile({ icon: Icon, label, value, note, title }: KpiTileProps) {
     return (
         <div
@@ -393,7 +376,6 @@ interface ChartCardProps {
     children: React.ReactNode;
 }
 
-/** One chart's card: a heading that says what the bars mean, then the plot itself. */
 function ChartCard({ icon: Icon, title, description, className, children }: ChartCardProps) {
     return (
         <section
@@ -422,7 +404,6 @@ interface CategoryBarChartProps {
     chartLabel: string;
 }
 
-/** A horizontal bar chart: one bar per catalog row (or per assignee), labels on the left. */
 function CategoryBarChart({ data, config, chartLabel }: CategoryBarChartProps) {
     return (
         <ChartContainer
@@ -525,7 +506,6 @@ function PriorityDonut({ data, config, chartLabel }: PriorityDonutProps) {
     );
 }
 
-/** The stand-in for a chart whose rows carry nothing to plot — never an axis without data. */
 function NoDataPanel() {
     return (
         <div
@@ -538,15 +518,12 @@ function NoDataPanel() {
     );
 }
 
-/** A small emphasised value inside the footer sentence. */
 function Metric({ children }: { children: React.ReactNode }) {
     return <span className="font-medium tabular-nums text-foreground">{children}</span>;
 }
 
-/** Fixed placeholder keys — the catalogs are empty during a cold load, so they cannot shape this. */
 const SKELETON_KPIS: readonly string[] = ["one", "two", "three", "four"];
 
-/** The dashboard's cold-load skeleton, shaped like the tiles and the three chart cards. */
 function DashboardSkeleton() {
     return (
         <div
