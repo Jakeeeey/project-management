@@ -72,6 +72,8 @@ export class TaskServiceError extends Error {
     }
 }
 
+const TASK_READ_BACK_FAILED = "The task was created but could not be read back";
+
 /** One department's flat task set plus its nested rows, keyed by `task_id`. */
 interface DepartmentTaskRows {
     readonly tasks: readonly RawTaskRow[];
@@ -258,7 +260,7 @@ export class TaskService {
         const fallback = createdId === null ? await TaskService.readNewestOwnTask(actor) : null;
         const taskId = createdId ?? fallback?.id ?? null;
         if (taskId === null) {
-            throw new TaskServiceError("INTERNAL_FAIL", "The task was created but could not be read back");
+            throw new TaskServiceError("INTERNAL_FAIL", TASK_READ_BACK_FAILED);
         }
 
         // One batch id for the whole create: the task-level rows, the body's custom answers and the
@@ -337,7 +339,7 @@ export class TaskService {
 
         const row = await readItem<RawTaskRow>("pm_task", taskId);
         if (row === null) {
-            throw new TaskServiceError("INTERNAL_FAIL", "The task was created but could not be read back");
+            throw new TaskServiceError("INTERNAL_FAIL", TASK_READ_BACK_FAILED);
         }
 
         return toClientRow(

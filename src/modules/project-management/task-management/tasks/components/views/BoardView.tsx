@@ -15,17 +15,7 @@ import { AssigneeStack, type TaskAssigneeView } from "../AssigneeStack";
 import { formatTaskDateRange } from "../TaskRow";
 import { TaskPriorityBadge } from "../TaskRowBadges";
 
-/**
- * Kanban board of the department's tasks.
- *
- * This is the read-only Board view of the tasks page: every column is one row of the department's
- * live status catalog (in catalog order), and every row in `items` is a card in the column its
- * `status_id` points at. The board never fetches and never writes — there is no drag-and-drop, no
- * reordering and no click target that mutates a task, because the List view stays the only editable
- * surface. Assignee initials are resolved through `memberNameById`, the same directory the list uses.
- *
- * @param props - the frozen `TaskViewProps` contract; the shell passes already-fetched data.
- */
+/** Kanban board of the department's tasks, grouped by status catalog order. */
 export function BoardView({
     items,
     catalogs,
@@ -34,14 +24,12 @@ export function BoardView({
     error,
     onRetry,
 }: TaskViewProps) {
-    /** The parent lookup for the card's "in <parent>" line — subtasks live in the same flat row set. */
     const tasksById = useMemo(() => {
         const byId = new Map<number, TaskListItem>();
         for (const task of items) byId.set(task.id, task);
         return byId;
     }, [items]);
 
-    /** Cards bucketed by status once, so a wide department is not re-scanned per column. */
     const cardsByStatusId = useMemo(() => {
         const grouped = new Map<number, TaskListItem[]>();
         for (const task of items) {
@@ -104,19 +92,10 @@ interface BoardColumnProps {
     memberNameById: ReadonlyMap<number, string>;
 }
 
-/**
- * How many cards a column paints before offering a "Show more".
- *
- * The column's own scroll region is what stops the PAGE from growing with the largest status, but a
- * single status can still own hundreds of rows, and painting every one of them up front would put
- * hundreds of card nodes in the DOM for a column nobody has scrolled yet. Twenty is roughly two
- * viewport-heights of cards, so the first screen is complete and the remainder stays one click away
- * — never silently dropped, only not built until asked for. This mirrors the pagination precedent in
- * `TaskFieldsSection` (whose page cap keeps the settings section's height independent of its rows).
- */
+/** Cards painted per column before offering "Show more". */
 const INITIAL_VISIBLE_CARDS = 20;
 
-/** One status column: its catalog label, its card count, and its cards (or the empty line). */
+/** One status column. */
 function BoardColumn({ status, cards, tasksById, memberNameById }: BoardColumnProps) {
     const [showAllCards, setShowAllCards] = useState(false);
     const countLabel = `${cards.length} task${cards.length === 1 ? "" : "s"}`;
@@ -128,9 +107,6 @@ function BoardColumn({ status, cards, tasksById, memberNameById }: BoardColumnPr
             data-slot="task-board-column"
             data-status-id={status.id}
             aria-label={status.label}
-            // `max-h-[70vh]` caps the column to a viewport-relative height, so the board is a fixed
-            // frame on a laptop and on a large monitor alike; the row keeps its default
-            // `items-stretch`, so every column still matches the tallest one, capped.
             className="flex max-h-[70vh] w-72 shrink-0 flex-col gap-3 rounded-2xl border border-border/50 bg-muted/30 p-3"
         >
             <header className="flex shrink-0 items-center justify-between gap-2">
@@ -158,9 +134,7 @@ function BoardColumn({ status, cards, tasksById, memberNameById }: BoardColumnPr
             ) : (
                 <div
                     data-slot="task-board-card-list"
-                    // `min-h-0` is what lets a flex child actually shrink and scroll; without it the
-                    // list refuses to go below its content height and the column blows past its cap.
-                    // The header sits OUTSIDE this box, so it never scrolls away with the cards.
+                    // min-h-0 lets the list shrink and scroll inside the capped column.
                     className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain"
                 >
                     {visibleCards.map((task) => (
@@ -176,7 +150,7 @@ function BoardColumn({ status, cards, tasksById, memberNameById }: BoardColumnPr
                         />
                     ))}
 
-                    {hiddenCount > 0 && !showAllCards ? (
+                    {hiddenCount > 0 && !showAllCards && (
                         <Button
                             type="button"
                             variant="outline"
@@ -186,7 +160,7 @@ function BoardColumn({ status, cards, tasksById, memberNameById }: BoardColumnPr
                         >
                             Show {hiddenCount} more
                         </Button>
-                    ) : null}
+                    )}
                 </div>
             )}
         </section>
@@ -200,12 +174,7 @@ interface BoardCardProps {
     memberNameById: ReadonlyMap<number, string>;
 }
 
-/**
- * One task as a board card.
- *
- * The row carries user ids only, so the assignee stack is built from the directory here — the same
- * `assigneeName` fallback the rest of the module uses, never a blank avatar name.
- */
+/** One task as a board card. */
 function BoardCard({ task, parentTitle, memberNameById }: BoardCardProps) {
     const assignees: TaskAssigneeView[] = task.assignees.map((assignee) => ({
         user_id: assignee.user_id,
@@ -223,7 +192,7 @@ function BoardCard({ task, parentTitle, memberNameById }: BoardCardProps) {
                 {task.title}
             </p>
 
-            {parentTitle === null ? null : (
+            {parentTitle !== null && (
                 <p className="mt-1 truncate text-xs text-muted-foreground" title={`in ${parentTitle}`}>
                     in {parentTitle}
                 </p>
@@ -251,7 +220,7 @@ interface BoardStatePanelProps {
     onRetry?: () => void;
 }
 
-/** The board's full-width state card, matching the tree's loading / empty / error geometry. */
+/** Full-width state card for loading / empty / error. */
 function BoardStatePanel({ icon, message, isAlert = false, onRetry }: BoardStatePanelProps) {
     return (
         <div
@@ -260,13 +229,11 @@ function BoardStatePanel({ icon, message, isAlert = false, onRetry }: BoardState
         >
             <div
                 role={isAlert ? "alert" : undefined}
-                // The tree's empty panel is the only one that tightens its gap; kept so the two
-                // surfaces stay visually identical.
                 className={cn("flex flex-col items-center justify-center gap-3", !isAlert && "gap-2")}
             >
                 {icon}
                 <p className="text-sm text-muted-foreground">{message}</p>
-                {onRetry === undefined ? null : (
+                {onRetry !== undefined && (
                     <Button type="button" variant="outline" size="sm" onClick={onRetry}>
                         <RotateCcw className="size-4" aria-hidden="true" />
                         Try again
@@ -277,11 +244,9 @@ function BoardStatePanel({ icon, message, isAlert = false, onRetry }: BoardState
     );
 }
 
-/** Fixed placeholder column/card counts — the catalogs are empty on a cold load, so they can't shape this. */
+/** Cold-load skeleton shaped like the columns and cards. */
 const SKELETON_COLUMNS: readonly string[] = ["one", "two", "three", "four"];
 const SKELETON_CARDS: readonly string[] = ["one", "two", "three"];
-
-/** The board's cold-load skeleton, shaped like the rendered columns and cards. */
 function BoardSkeleton() {
     return (
         <div

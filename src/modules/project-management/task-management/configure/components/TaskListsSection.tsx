@@ -35,12 +35,10 @@ import {
     type TaskListSummary,
 } from "../../tasks/hooks/useTaskLists";
 
-/** Which list the create/rename dialog is editing, or `null` when it is closed. */
 interface EditorState {
     readonly item: TaskListSummary | null;
 }
 
-/** The list a delete confirmation is currently holding. */
 interface PendingDelete {
     readonly item: TaskListSummary;
 }
@@ -120,7 +118,6 @@ export function TaskListsSection() {
         void moveList(item.id, direction);
     };
 
-    /** The server's effective default — the flagged row, else the lowest (sort_order, id). */
     const defaultListId = (lists.find((list) => list.is_default) ?? lists[0])?.id ?? null;
 
     return (

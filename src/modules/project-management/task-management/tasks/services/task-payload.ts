@@ -18,7 +18,6 @@ import { normalizeIconName } from "../components/catalog-icon";
  * number coercion, the nested-row grouping, and the per-row catalog resolution and `can_delete`.
  */
 
-/** A live `pm_task_assignee` row as the list payload carries it. */
 export interface TaskAssigneeRow {
     readonly id: number;
     readonly task_id: number;
@@ -100,7 +99,6 @@ export interface RawTaskRow {
     readonly [alias: string]: unknown;
 }
 
-/** A task row plus the live nested rows the shaping step attaches to it. */
 export interface TaskRowSource {
     readonly row: RawTaskRow;
     readonly assignees: readonly TaskAssigneeRow[];
@@ -166,7 +164,6 @@ export function groupByTaskId<T extends { readonly task_id: unknown }>(rows: rea
     return grouped;
 }
 
-/** Resolves the shared per-response shaping: both catalog indexes plus the permission context. */
 export function buildShaping(catalogs: CatalogLists, permissions: PermissionContext): RowShaping {
     return {
         statuses: new Map(catalogs.statuses.map((row) => [row.id, row])),

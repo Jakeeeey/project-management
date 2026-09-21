@@ -35,12 +35,10 @@ interface TeamSection {
     readonly tasks: readonly TaskListItem[];
 }
 
-/** The two-value label for a section's task count, pluralised by the data itself. */
 function taskCountLabel(count: number): string {
     return `${count} task${count === 1 ? "" : "s"}`;
 }
 
-/** A stable title/name ordering — locale-aware, case-insensitive, and numeric-safe. */
 function compareLabels(a: string, b: string): number {
     return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
@@ -57,7 +55,6 @@ function initialsOf(name: string): string {
 /** Caps an open member's list at ~5 rows so one prolific member cannot stretch the page either. */
 const TASK_LIST_MAX_HEIGHT_CLASS = "max-h-80";
 
-/** The unassigned bucket's heading, kept in one place so the summary and the section never disagree. */
 const UNASSIGNED_TITLE = "Unassigned";
 
 /**
@@ -208,9 +205,7 @@ export function TeamView({
 
 interface TeamSectionCardProps {
     section: TeamSection;
-    /** Whether this member's task list is open; the parent owns the open set. */
     isExpanded: boolean;
-    /** Flips this member's section open/closed. */
     onToggle: () => void;
 }
 
@@ -232,9 +227,10 @@ function TeamSectionCard({ section, isExpanded, onToggle }: TeamSectionCardProps
     // derived assignee colour, matching their chip everywhere else in the module.
     const memberColor = section.userId === null ? null : assigneeColorFor(section.userId);
 
+    const toggleAction = isExpanded ? "Collapse" : "Expand";
     const toggleLabel = isUnassigned
-        ? `${isExpanded ? "Collapse" : "Expand"} unassigned tasks (${section.tasks.length})`
-        : `${isExpanded ? "Collapse" : "Expand"} ${section.name}'s tasks (${section.tasks.length})`;
+        ? `${toggleAction} unassigned tasks (${section.tasks.length})`
+        : `${toggleAction} ${section.name}'s tasks (${section.tasks.length})`;
 
     return (
         <section
@@ -350,7 +346,6 @@ interface TeamTaskRowProps {
     isMuted: boolean;
 }
 
-/** One task on a workload card: its title, both catalog badges and its date range. */
 function TeamTaskRow({ task, isMuted }: TeamTaskRowProps) {
     const rangeText = formatTaskDateRange(task.start_date, task.end_date);
     const rangeTitle = `Start: ${formatTaskDate(task.start_date)} · Due: ${formatTaskDate(task.end_date)}`;
@@ -381,7 +376,6 @@ function TeamTaskRow({ task, isMuted }: TeamTaskRowProps) {
     );
 }
 
-/** Fixed placeholder counts — the assignees are unknown during a cold load, so the shape is faked. */
 const SKELETON_SECTIONS: readonly string[] = ["one", "two", "three"];
 
 /** The team view's cold-load skeleton, shaped like the stacked, all-collapsed accordion. */

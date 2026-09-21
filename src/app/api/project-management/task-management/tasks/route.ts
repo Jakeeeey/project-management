@@ -42,12 +42,10 @@ export const dynamic = "force-dynamic";
  * reaches a client.
  */
 
-/** The actor, or the envelope the handler must return instead: 401 without a session, 403 without a department. */
 type ActorResolution =
     | { readonly resolved: true; readonly actor: ScopedActor }
     | { readonly resolved: false; readonly response: NextResponse };
 
-/** A parsed body, or the 400 envelope explaining why it could not be parsed. */
 type BodyResult<T> =
     | { readonly ok: true; readonly data: T }
     | { readonly ok: false; readonly response: NextResponse };
@@ -86,7 +84,6 @@ async function resolveTaskActor(): Promise<ActorResolution> {
     return { resolved: true, actor };
 }
 
-/** Resolves the read scope's list: the requested live list, else the department's default list. */
 async function resolveListScope(actor: ScopedActor, requested: string | null): Promise<ListScope> {
     if (requested === null) {
         return { found: true, listId: await TaskListService.resolveDefaultListId(actor) };

@@ -196,10 +196,6 @@ export function TaskCombobox({
                             density="comfortable"
                         />
                     )}
-                    {/*
-                     * The label truncates inside the trigger's flexible middle, so a long catalog
-                     * name can never widen the control past the caller's `w-*` cap.
-                     */}
                     <span className="min-w-0 flex-1 truncate">
                         <ComboboxValue placeholder={placeholder} />
                     </span>

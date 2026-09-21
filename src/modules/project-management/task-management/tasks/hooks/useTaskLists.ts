@@ -31,10 +31,8 @@ import { CapabilitiesSchema, type Capabilities } from "../types/capabilities";
  * optimistically, so the list set can never drift from the server's answer.
  */
 
-/** The one endpoint this hook reads and writes. */
 const ENDPOINT = "/api/project-management/task-management/lists";
 
-/** The idempotent ensure for the department's default task list — POSTed once per mount. */
 const BOOTSTRAP_ENDPOINT = "/api/project-management/task-management/tasks/bootstrap";
 
 /** The services throw `CODE: message`; the code prefix never reaches the UI. */
@@ -89,7 +87,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** The envelope's message when it is a usable string, else the caller's fallback. */
 function readMessage(envelope: Record<string, unknown>, fallback: string): string {
     return typeof envelope.message === "string" && envelope.message.trim() !== ""
         ? envelope.message
@@ -160,7 +157,6 @@ export function useTaskLists(): UseTaskListsResult {
         await fetchLists(true);
     }, [fetchLists]);
 
-    /** One write request: envelope read defensively, the server's message thrown when it failed. */
     const request = useCallback(
         async (method: HttpMethod, body: unknown): Promise<Record<string, unknown>> => {
             const res = await fetch(ENDPOINT, {
@@ -177,7 +173,6 @@ export function useTaskLists(): UseTaskListsResult {
         [],
     );
 
-    /** Every mutation runs through here: act, refetch, toast, and record the persistent error. */
     const runMutation = useCallback(
         async (action: () => Promise<unknown>, successMessage: string): Promise<boolean> => {
             setIsSubmitting(true);
