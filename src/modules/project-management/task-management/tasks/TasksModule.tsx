@@ -86,7 +86,6 @@ import type { CreateTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
  * answer is the row's own server-computed `can_delete` — never a session flag, never an id comparison.
  */
 
-/** Case- and whitespace-insensitive search term, used for the match and the empty copy. */
 function normaliseSearch(value: string): string {
     return value.trim().toLowerCase();
 }
@@ -109,7 +108,6 @@ function rowMatches(
     return rowMatchesClauses(row, clauses, fields);
 }
 
-/** The `"<taskId>:<column>"` key the open cell, its in-flight guard and its optimistic patch share. */
 function cellKey(taskId: number, column: string): string {
     return `${taskId}:${column}`;
 }
@@ -123,7 +121,6 @@ function catalogRefFor(options: readonly TaskCatalogOption[], id: number): TaskC
     return option === undefined ? null : { label: option.label, color: option.color, icon: option.icon };
 }
 
-/** Everything `resolveCellEdit` needs beyond the row and the request. */
 interface CellEditContext {
     readonly catalogs: TaskCatalogs;
     readonly memberNameById: ReadonlyMap<number, string>;
@@ -132,7 +129,6 @@ interface CellEditContext {
     readonly unassign: (taskId: number, userId: number, label: string) => Promise<boolean>;
 }
 
-/** A resolved cell edit: the value to show immediately, and the write that makes it true. */
 interface CellEditOutcome {
     readonly patch: TaskRowPatch;
     readonly persist: () => Promise<boolean>;
@@ -300,7 +296,6 @@ function ancestorTrail(
     return [];
 }
 
-/** The trail a dialog shows: the ancestors only, or the ancestors plus the node itself. */
 function trailFor(
     nodes: readonly TreeNode<TaskTreeRow>[],
     targetId: number | null,
@@ -715,7 +710,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [taskById, catalogs, memberNameById, updateTask, assign, unassign],
     );
 
-    /** Closing the assignees dialog (Cancel, X or the overlay) abandons the change. */
     const handleAssigneeDialogOpenChange = useCallback(
         (next: boolean): void => {
             if (!next) handleCancelCellEdit();
@@ -736,9 +730,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [assigneeEditingTaskId, handleCellCommit],
     );
 
-    /**
-     * The per-row actions the tree renders: open the detail sheet.
-     */
     const renderRowActions = useCallback((node: TreeNode<TaskRowView>) => {
         const detailsLabel = `View details for ${node.title}`;
         return (

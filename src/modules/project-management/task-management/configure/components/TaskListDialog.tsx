@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { Loader2 } from "lucide-react";
@@ -43,10 +43,6 @@ export interface TaskListDialogProps {
  *
  * Validation reuses the SERVER's own `CreateTaskListSchema` rather than restating the bound, so the
  * client and the route can never disagree about what a valid name is (`VARCHAR(100)`, non-blank).
- *
- * Width is the QA checklist's `S` tier (`sm:max-w-[500px]`) plus `w-[95vw]` so it always fits a
- * phone; the body scrolls inside a capped `max-h` while the header and footer stay pinned. Cancel
- * comes before Submit, and Submit carries a `disabled` gate for the whole in-flight window.
  */
 export function TaskListDialog({
     open,
@@ -70,6 +66,20 @@ export function TaskListDialog({
     const handleSubmit = form.handleSubmit(async (values) => {
         await onSubmit(values.name.trim());
     });
+
+    let submitContent: ReactNode;
+    if (isSubmitting) {
+        submitContent = (
+            <>
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                Saving…
+            </>
+        );
+    } else if (isEditing) {
+        submitContent = "Save changes";
+    } else {
+        submitContent = "Add list";
+    }
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -124,16 +134,7 @@ export function TaskListDialog({
                                 Cancel
                             </Button>
                             <Button type="submit" disabled={isSubmitting} className="min-h-11 md:min-h-0">
-                                {isSubmitting ? (
-                                    <>
-                                        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                                        Saving…
-                                    </>
-                                ) : isEditing ? (
-                                    "Save changes"
-                                ) : (
-                                    "Add list"
-                                )}
+                                {submitContent}
                             </Button>
                         </DialogFooter>
                     </form>

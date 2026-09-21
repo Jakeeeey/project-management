@@ -45,13 +45,10 @@ export const dynamic = "force-dynamic";
 
 const CatalogRowIdSchema = z.number().int().positive();
 
-/** POST body: the discriminator plus a new catalog row. */
 const CreateCatalogBodySchema = CreateCatalogItemSchema.extend({ kind: CatalogKindSchema });
 
-/** PATCH body: the discriminator, the row to address, and only the fields that changed. */
 const UpdateCatalogBodySchema = UpdateCatalogItemSchema.extend({ kind: CatalogKindSchema, id: CatalogRowIdSchema });
 
-/** DELETE body: the discriminator plus the row to soft-delete. */
 const DeleteCatalogBodySchema = z.object({ kind: CatalogKindSchema, id: CatalogRowIdSchema });
 
 /** The actor, or the envelope the handler must return instead: 401 without a session, 403 without a department. */

@@ -32,7 +32,6 @@ import { normalizeIconName } from "../components/catalog-icon";
  * shape) and the code prefix is stripped before a human ever sees it.
  */
 
-/** The one endpoint this hook talks to. */
 const ENDPOINT = "/api/project-management/task-management/tasks";
 
 /** The services throw `CODE: message`; the code prefix never reaches the UI. */
@@ -41,7 +40,6 @@ const UPPERCASE_CODE_PREFIX = /^[A-Z][A-Z0-9_]*:\s*/;
 /** Both catalogs empty until the first successful load — never `undefined`, so consumers can read `.length`. */
 const EMPTY_CATALOGS: TaskCatalogs = { statuses: [], priorities: [] };
 
-/** No custom columns until the first successful load, for the same reason. */
 const EMPTY_FIELDS: TaskField[] = [];
 
 /** A status or priority catalog row as the tasks route returns it (live rows only). */
@@ -262,7 +260,6 @@ function toCatalogOptions(raw: unknown): TaskCatalogOption[] {
     return options;
 }
 
-/** Both catalog lists from the envelope's `catalogs` block. */
 function toCatalogs(raw: unknown): TaskCatalogs {
     const record = isRecord(raw) ? raw : {};
     return {

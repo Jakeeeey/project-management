@@ -7,24 +7,13 @@ export const dynamic = "force-dynamic";
 
 /**
  * The task-list bootstrap route — ensures the department's default "General" list exists.
+ * Idempotent: first call inserts the fixed "General" row (`created: true`); later calls
+ * return the existing default (`created: false`). The request body is never read.
  *
- * Contract:
- * - `POST` -> 200 `{ success, data: { created, list } }`. Idempotent: the first call of a department
- *   with no live list inserts the fixed "General" row and reports `created: true`; every later call
- *   is a no-op that reports `created: false` and returns the existing default. The request body is
- *   never read.
- *
- * The actor resolves first (401 without a session, 403 without a department), and the route sits
- * under the same middleware/module-grant gate as its siblings. It deliberately carries NO head
- * capability check: the bootstrap writes ONE fixed row — the name, order and default flag are all
- * decided in code — so the actor chooses nothing. The catalog seed is the opposite case and stays
- * explicit and head-gated, because it writes a whole fixture and expresses policy.
- *
- * The department always comes from the resolved actor, never from the request. Directus failures are
- * logged here and answered with the module's own envelope, never raw Directus text.
+ * Deliberately carries NO head capability check: the bootstrap writes ONE fixed row — the
+ * name, order and default flag are all decided in code — so the actor chooses nothing.
  */
 
-/** The actor, or the envelope the handler must return instead: 401 without a session, 403 without a department. */
 type ActorResolution =
     | { readonly resolved: true; readonly actor: ScopedActor }
     | { readonly resolved: false; readonly response: NextResponse };
@@ -46,7 +35,6 @@ async function resolveBootstrapActor(): Promise<ActorResolution> {
     return { resolved: true, actor };
 }
 
-/** Maps a thrown error to the envelope. Raw Directus text is logged server-side, never returned. */
 function failureResponse(error: unknown): NextResponse {
     if (error instanceof TaskListError) {
         if (error.code === "NOT_FOUND") {

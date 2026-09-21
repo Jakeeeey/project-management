@@ -49,12 +49,10 @@ export const dynamic = "force-dynamic";
  * never raw Directus text.
  */
 
-/** The actor, or the envelope the handler must return instead: 401 without a session, 403 without a department. */
 type ActorResolution =
     | { readonly resolved: true; readonly actor: ScopedActor }
     | { readonly resolved: false; readonly response: NextResponse };
 
-/** A parsed body, or the 400 envelope explaining why it could not be parsed. */
 type BodyResult<T> =
     | { readonly ok: true; readonly data: T }
     | { readonly ok: false; readonly response: NextResponse };

@@ -42,10 +42,8 @@ export const dynamic = "force-dynamic";
 
 const ListRowIdSchema = z.number().int().positive();
 
-/** PATCH body: the row to address plus only the fields that changed. */
 const UpdateTaskListBodySchema = UpdateTaskListSchema.extend({ id: ListRowIdSchema });
 
-/** DELETE body: the row to soft-delete. */
 const DeleteTaskListBodySchema = z.object({ id: ListRowIdSchema });
 
 /** The actor, or the envelope the handler must return instead: 401 without a session, 403 without a department. */
