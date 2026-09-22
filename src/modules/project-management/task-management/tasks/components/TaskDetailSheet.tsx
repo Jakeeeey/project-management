@@ -31,12 +31,11 @@ import { TaskActivityTimeline } from "./TaskActivityTimeline";
 import { isVisuallyEmptyHtml } from "./description-html";
 import { formatTaskDate } from "./TaskRow";
 import { TaskPriorityBadge, TaskStatusBadge } from "./TaskRowBadges";
-import type { TaskBreadcrumb } from "./TaskFormDialog";
 
 /**
  * The read view for one task, opened from a tree row.
  *
- * It is a view first and an action surface second: the whole record (breadcrumb, status, priority,
+ * It is a view first and an action surface second: the whole record (status, priority,
  * assignees, dates, description and the audit trail) renders without a single write, and the footer
  * carries the three actions the actor is actually allowed to take.
  *
@@ -66,8 +65,6 @@ export interface TaskDetailSheetProps {
     readonly onOpenChange: (open: boolean) => void;
     /** The row being viewed; `null` renders nothing (the parent keeps the id stable across refetches). */
     readonly task: TaskListItem | null;
-    /** The chain from the root down to this task's parent, root-first. */
-    readonly parentTrail: readonly TaskBreadcrumb[];
     /** How many direct children this task has, shown next to the Add sub-task action. */
     readonly childCount: number;
     readonly memberNameById: ReadonlyMap<number, string>;
@@ -90,7 +87,6 @@ export function TaskDetailSheet({
     open,
     onOpenChange,
     task,
-    parentTrail,
     childCount,
     memberNameById,
     capabilities,
@@ -161,31 +157,6 @@ export function TaskDetailSheet({
                                 data-slot="task-detail-main"
                                 className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-4"
                             >
-                                <div className="space-y-1">
-                                    <p className="text-xs font-medium text-muted-foreground">Parent</p>
-                                    <div
-                                        data-slot="task-detail-parent-breadcrumb"
-                                        className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm"
-                                    >
-                                        {parentTrail.length === 0 ? (
-                                            <span className="text-muted-foreground">Top-level task</span>
-                                        ) : (
-                                            parentTrail.map((ancestor, index) => (
-                                                <span key={ancestor.id} className="flex min-w-0 items-center gap-1">
-                                                    {index > 0 ? (
-                                                        <span className="text-muted-foreground" aria-hidden="true">
-                                                            ›
-                                                        </span>
-                                                    ) : null}
-                                                    <span className="max-w-[220px] truncate" title={ancestor.title}>
-                                                        {ancestor.title}
-                                                    </span>
-                                                </span>
-                                            ))
-                                        )}
-                                    </div>
-                                </div>
-
                                 <div className="flex flex-wrap items-center gap-2">
                                     <TaskStatusBadge status={task.status} />
                                     <TaskPriorityBadge priority={task.priority} />
