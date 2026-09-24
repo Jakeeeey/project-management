@@ -1,6 +1,6 @@
 /.github/ @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
 
-/src/app/(project-management)/project-management/ @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
+/src/app/(project-management)/project-management/_components/ @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
 
 /src/app/(project-management)/layout.tsx @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
 
@@ -26,7 +26,7 @@
 
 /src/lib @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
 
-/src/modules/project-management/ @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
+/src/modules/cms/ @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
 
 /src/types/ @Jakeeeey @ECuerdo @Xerman09 @Erwinrillorta0830
 
