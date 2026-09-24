@@ -420,10 +420,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [assigneeEditingTask],
     );
 
-    const detailTrail = useMemo(
-        () => trailFor(roots, detailTaskId, false),
-        [roots, detailTaskId],
-    );
     const editingTrail = useMemo(
         () => trailFor(roots, editingTaskId, false),
         [roots, editingTaskId],
@@ -950,7 +946,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 open={detailTaskId !== null}
                 onOpenChange={handleDetailOpenChange}
                 task={detailTask}
-                parentTrail={detailTrail}
                 childCount={detailTaskId === null ? 0 : (childCountById.get(detailTaskId) ?? 0)}
                 memberNameById={memberNameById}
                 fields={fields}

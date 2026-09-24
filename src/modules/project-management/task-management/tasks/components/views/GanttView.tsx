@@ -1159,9 +1159,6 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry }: 
     const isEmpty = !isLoading && !showError && projection.tasks.length === 0;
     const skipMessage = skippedLabel(projection.withoutDates, projection.invertedRange);
 
-    /** The modal's zoom readout, matching the inline skipped line's muted status-line styling. */
-    const modalZoomLabel = `Day width ${modalCellWidth} pixels, row height ${modalCellHeight} pixels`;
-
     /**
      * Whether the day-number row is blanked. Derived from the React-held zoom width (never the
      * vendor's internal zoom): below `MODAL_DAY_LABEL_MIN_CELL_WIDTH` the labels would overlap,
@@ -1491,14 +1488,6 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry }: 
                             </GanttTooltip>
                         </GanttErrorBoundary>
                     </div>
-
-                    <p
-                        data-slot="task-gantt-modal-status"
-                        className="text-center text-xs text-muted-foreground"
-                        aria-live="polite"
-                    >
-                        {modalZoomLabel}
-                    </p>
                 </div>
             ) : null}
         </section>
