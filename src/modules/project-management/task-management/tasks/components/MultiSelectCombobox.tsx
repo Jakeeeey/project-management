@@ -113,6 +113,13 @@ export interface MultiSelectComboboxProps {
      * to `true`, mirroring `TaskCombobox`, so the two behave alike. Set `false` for a required choice.
      */
     readonly clearable?: boolean;
+    /**
+     * Replaces the trigger's chip row with the caller's own summary of the current selection.
+     * Omitted keeps the default removable chips; a caller whose values are people passes the same
+     * overlapping avatar stack the table's assignee cell uses, so a long selection stays one line
+     * instead of wrapping the trigger into a tower of chips.
+     */
+    readonly renderSelectionSummary?: (values: readonly string[]) => React.ReactNode;
 }
 
 /** The searchable text for one option: its label, any hidden keywords, then its unique value. */
@@ -356,6 +363,7 @@ export function MultiSelectCombobox({
     disabled = false,
     className,
     clearable = true,
+    renderSelectionSummary,
 }: MultiSelectComboboxProps) {
     const [open, setOpen] = React.useState(false);
     const hasSelection = values.length > 0;
@@ -402,12 +410,18 @@ export function MultiSelectCombobox({
                     }}
                 >
                     {hasSelection ? (
-                        <MultiSelectChipRow
-                            options={options}
-                            values={values}
-                            onRemove={toggle}
-                            className="flex-1 text-left"
-                        />
+                        renderSelectionSummary !== undefined ? (
+                            <span className="min-w-0 overflow-hidden text-left">
+                                {renderSelectionSummary(values)}
+                            </span>
+                        ) : (
+                            <MultiSelectChipRow
+                                options={options}
+                                values={values}
+                                onRemove={toggle}
+                                className="flex-1 text-left"
+                            />
+                        )
                     ) : (
                         <span className="min-w-0 flex-1 truncate text-left">{placeholder}</span>
                     )}
@@ -446,7 +460,7 @@ export function MultiSelectCombobox({
             </PopoverTrigger>
 
             <PopoverContent
-                className="w-(--radix-popover-trigger-width) max-w-[calc(100vw-2rem)] overflow-hidden p-0"
+                className="w-(--radix-popover-trigger-width) min-w-56 max-w-[calc(100vw-2rem)] overflow-hidden p-0"
                 align="start"
             >
                 <Command>
