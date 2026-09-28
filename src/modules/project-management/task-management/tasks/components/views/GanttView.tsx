@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import {
     CalendarDays,
@@ -233,6 +233,11 @@ function GanttTooltipCard({ data, taskById, memberNameById }: GanttTooltipCardPr
 interface GanttTaskRow extends ITask {
     /** The task's resolved status catalog row, or `null`; the label glyph's only source. */
     readonly statusRef: TaskCatalogRef | null;
+    /**
+     * The bound detail opener for this row, or `undefined` when the shell passed no `onOpenTask`.
+     * Rides the row for the same reason as `statusRef`: a module-scope cell cannot close over locals.
+     */
+    readonly openTask?: () => void;
 }
 
 /** The vendor calls a label cell with the row (and column) only — see {@link GanttTaskLabelCell}. */
@@ -259,8 +264,33 @@ interface GanttTaskLabelCellProps {
  * A `null` status renders no glyph rather than a placeholder, matching the tree.
  */
 function GanttTaskLabelCell({ row }: GanttTaskLabelCellProps) {
+    const open = row.openTask;
+    const interactive = open !== undefined;
+    const label =
+        typeof row.text === "string" && row.text !== "" ? row.text : `Task #${String(row.id ?? "")}`;
+
     return (
-        <span className="flex min-w-0 items-center gap-1.5">
+        <span
+            className={cn(
+                "flex min-w-0 items-center gap-1.5",
+                interactive &&
+                    "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+            role={interactive ? "button" : undefined}
+            tabIndex={interactive ? 0 : undefined}
+            aria-label={interactive ? `Open task ${label}` : undefined}
+            onClick={interactive ? open : undefined}
+            onKeyDown={
+                interactive
+                    ? (event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              open?.();
+                          }
+                      }
+                    : undefined
+            }
+        >
             {row.statusRef === null ? null : (
                 <CatalogStatusIcon
                     icon={row.statusRef.icon}
@@ -864,7 +894,7 @@ function buildBarColourCss(items: readonly TaskListItem[]): string {
  * @param props - the frozen `TaskViewProps` contract; the shell passes already-fetched data and the
  *                retry callback, and this view never fetches.
  */
-export function GanttView({ items, memberNameById, isLoading, error, onRetry }: TaskViewProps) {
+export function GanttView({ items, memberNameById, isLoading, error, onRetry, onOpenTask }: TaskViewProps) {
     /**
      * The assignee filter, held as the picked user ids rendered to decimal strings (the option
      * contract). Empty means "no filter", so the chart shows every task — that is both the initial
@@ -910,13 +940,15 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry }: 
                 end,
                 type: "task",
                 // The label glyph's source rides on the task: the vendor's cell slot hands the row
-                // back to a module-scope component that cannot close over `items`.
+                // back to a module-scope component that cannot close over `items`. The bound detail
+                // opener rides along the same way; without the seam no handler is attached.
                 statusRef: item.status,
+                ...(onOpenTask === undefined ? {} : { openTask: () => onOpenTask(item.id) }),
             });
         }
 
         return { tasks, withoutDates, invertedRange };
-    }, [visibleItems]);
+    }, [visibleItems, onOpenTask]);
 
     const range = useMemo(() => buildRange(visibleItems), [visibleItems]);
     const barColourRules = useMemo(() => buildBarColourCss(visibleItems), [visibleItems]);
@@ -1138,6 +1170,37 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry }: 
     }, []);
 
     /**
+     * Opens the task a BAR click landed on.
+     *
+     * The vendor has no bar-click event. Its `select-task` action cannot stand in: it carries no
+     * `eventSource` to tell a click from keyboard selection, and the chart dispatches it from the
+     * HOVER path too, so consuming it would pop the sheet on mouse-move.
+     *
+     * So the bar is read off the DOM instead. Each bar renders as `.wx-bar[data-task-id]`, and the
+     * vendor writes that attribute through its own `setID`, which passes a numeric id through
+     * verbatim — so the attribute IS the task id. Anchoring on `.wx-bar` is what keeps this to bars:
+     * a click anywhere in the tree pane has no `.wx-bar` ancestor and is ignored.
+     */
+    const handleChartClick = useCallback(
+        (event: MouseEvent<HTMLDivElement>) => {
+            if (onOpenTask === undefined) return;
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            if (target.closest(".wx-delete-button") !== null) return;
+
+            const bar = target.closest(".wx-bar");
+            if (bar === null) return;
+
+            const raw = bar.closest("[data-task-id]")?.getAttribute("data-task-id") ?? null;
+            if (raw === null) return;
+
+            const taskId = Number(raw);
+            if (Number.isInteger(taskId) && taskId > 0) onOpenTask(taskId);
+        },
+        [onOpenTask],
+    );
+
+    /**
      * Scrolls the modal chart onto its visible month.
      *
      * This is the minimum the modal needs for Fit to land: Fit moves the anchor AND the zoom
@@ -1318,6 +1381,7 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry }: 
                 375px viewport never gains a page-level horizontal scrollbar. */}
             <div
                 data-slot="task-gantt-chart"
+                onClick={handleChartClick}
                 className="pm-task-gantt h-[70vh] max-h-[720px] min-h-[360px] w-full overflow-hidden rounded-2xl border border-border/50 bg-card shadow-sm"
             >
                 <GanttErrorBoundary
@@ -1329,8 +1393,9 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry }: 
                         />
                     }
                 >
-                    {/* `readonly` removes the add-task column and every editor; no `on*` write
-                        callback is passed, so there is no path from this view back to a mutation.
+                    {/* `readonly` removes the add-task column and every editor; the wrapper's click
+                        handler only OPENS the read view and writes nothing, so there is still no path
+                        from this view back to a mutation.
 
                         `autoScale` is switched off so the visible span is the one computed from the
                         rows (plus padding), not one fitted to the tasks — without that, the range

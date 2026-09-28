@@ -49,6 +49,7 @@ export function CalendarView({
     isLoading,
     error,
     onRetry,
+    onOpenTask,
 }: TaskViewProps) {
     const [viewMonth, setViewMonth] = useState<Date>(() => startOfMonth(new Date()));
 
@@ -200,6 +201,7 @@ export function CalendarView({
                                     key={day.iso}
                                     day={day}
                                     memberNameById={memberNameById}
+                                    onOpenTask={onOpenTask}
                                 />
                             ))}
                         </div>
@@ -286,9 +288,10 @@ function undatedLabel(undated: number): string {
 interface CalendarDayCellProps {
     day: CalendarDay;
     memberNameById: ReadonlyMap<number, string>;
+    onOpenTask?: (taskId: number) => void;
 }
 
-function CalendarDayCell({ day, memberNameById }: CalendarDayCellProps) {
+function CalendarDayCell({ day, memberNameById, onOpenTask }: CalendarDayCellProps) {
     const visible = day.tasks.slice(0, MAX_CHIPS_PER_DAY);
     const hiddenCount = day.tasks.length - visible.length;
     const hiddenTitle = day.tasks
@@ -330,7 +333,7 @@ function CalendarDayCell({ day, memberNameById }: CalendarDayCellProps) {
 
             <div className="flex min-w-0 flex-col gap-0.5">
                 {visible.map((task) => (
-                    <CalendarTaskChip key={task.id} task={task} memberNameById={memberNameById} />
+                    <CalendarTaskChip key={task.id} task={task} memberNameById={memberNameById} onOpenTask={onOpenTask} />
                 ))}
 
                 {hiddenCount > 0 ? (
@@ -350,6 +353,7 @@ function CalendarDayCell({ day, memberNameById }: CalendarDayCellProps) {
 interface CalendarTaskChipProps {
     task: TaskListItem;
     memberNameById: ReadonlyMap<number, string>;
+    onOpenTask?: (taskId: number) => void;
 }
 
 /**
@@ -361,10 +365,11 @@ interface CalendarTaskChipProps {
  * luminance-derived label, so it matches the catalog chips elsewhere. A task whose status has no
  * colour keeps the neutral border and the muted dot instead.
  */
-function CalendarTaskChip({ task, memberNameById }: CalendarTaskChipProps) {
+function CalendarTaskChip({ task, memberNameById, onOpenTask }: CalendarTaskChipProps) {
     const spanning = isSpanning(task);
     const end = parseDateOnly(task.end_date);
     const hex = resolveCatalogHex(task.status?.color);
+    const interactive = onOpenTask !== undefined;
 
     return (
         <span
@@ -373,12 +378,28 @@ function CalendarTaskChip({ task, memberNameById }: CalendarTaskChipProps) {
             data-spanning={spanning ? "true" : undefined}
             title={buildChipTitle(task, memberNameById)}
             style={hex === null ? undefined : catalogSolidStyle(hex)}
+            role={interactive ? "button" : undefined}
+            tabIndex={interactive ? 0 : undefined}
+            aria-label={interactive ? `Open task ${task.title}` : undefined}
+            onClick={interactive ? () => onOpenTask(task.id) : undefined}
+            onKeyDown={
+                interactive
+                    ? (event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              onOpenTask(task.id);
+                          }
+                      }
+                    : undefined
+            }
             className={cn(
                 "flex min-w-0 items-center gap-1 rounded-md border px-1 py-0.5 text-[11px] font-semibold uppercase leading-tight tracking-wide",
                 hex === null &&
                     (spanning
                         ? "border-border/70 bg-muted/40 text-foreground"
                         : "border-border/60 bg-background/80 text-foreground"),
+                interactive &&
+                    "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             )}
         >
             {hex === null ? <CatalogChipDot density="dense" /> : null}

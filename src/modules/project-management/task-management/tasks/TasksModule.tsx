@@ -24,10 +24,6 @@ import {
     type SavedTaskFilter,
 } from "./components/task-filter";
 import { TasksViewTabs } from "./components/TasksViewTabs";
-import {
-    AssigneeFilterCombobox,
-    filterItemsByAssignees,
-} from "./components/AssigneeFilterCombobox";
 import { BoardView } from "./components/views/BoardView";
 import { CalendarView } from "./components/views/CalendarView";
 import { DashboardView } from "./components/views/DashboardView";
@@ -390,12 +386,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
     const [subtaskParentId, setSubtaskParentId] = useState<number | null>(null);
 
     /**
-     * The Board's assignee filter. It lives in the shell (unlike the Gantt view's own) because the
-     * control rides the shell's view-tabs row; the board receives already-narrowed rows.
-     */
-    const [boardAssigneeFilter, setBoardAssigneeFilter] = useState<readonly string[]>([]);
-
-    /**
      * The ONE cell currently open for in-place editing, or `null`. Kept here rather than in the row
      * so only a single cell is ever open: opening a second one replaces it, which cancels the first.
      */
@@ -558,20 +548,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
     const handleRefresh = useCallback(() => {
         void refresh();
     }, [refresh]);
-
-    /**
-     * The shared contract every non-list view reads. Built once here so the five views cannot drift
-     * in what they are handed — they all see the same flat rows, catalogs, directory and retry.
-     */
-    const viewProps = useMemo<TaskViewProps>(
-        () => ({ items, catalogs, memberNameById, fields, isLoading, error, onRetry: handleRefresh }),
-        [items, catalogs, memberNameById, fields, isLoading, error, handleRefresh],
-    );
-
-    const boardViewProps = useMemo<TaskViewProps>(
-        () => ({ ...viewProps, items: filterItemsByAssignees(items, boardAssigneeFilter) }),
-        [viewProps, items, boardAssigneeFilter],
-    );
 
     const handlePageChange = useCallback(
         (next: number) => {
@@ -741,6 +717,10 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [assigneeEditingTaskId, handleCellCommit],
     );
 
+    const handleOpenTask = useCallback((taskId: number): void => {
+        setDetailTaskId(taskId);
+    }, []);
+
     const renderRowActions = useCallback((node: TreeNode<TaskRowView>) => {
         const detailsLabel = `View details for ${node.title}`;
         return (
@@ -752,13 +732,47 @@ export function TasksModule({ userId }: TasksModuleProps) {
                     aria-label={detailsLabel}
                     title={detailsLabel}
                     data-slot="task-row-details"
-                    onClick={() => setDetailTaskId(node.id)}
+                    onClick={() => handleOpenTask(node.id)}
                 >
                     <Eye className="size-4" aria-hidden="true" />
                 </Button>
             </div>
         );
-    }, []);
+    }, [handleOpenTask]);
+
+    /**
+     * The shared contract every non-list view reads. Built once here so the five views cannot drift
+     * in what they are handed — the same flat rows, catalogs, directory and retry, plus the two
+     * seams a view may opt into: opening the read view, and committing one field change.
+     *
+     * Both are OPTIONAL. A view handed neither is exactly as read-only as before; only the board is
+     * handed `onCellCommit`, and that is what makes its cards draggable — so the capability and the
+     * contract cannot disagree.
+     */
+    const viewProps = useMemo<TaskViewProps>(
+        () => ({
+            items,
+            catalogs,
+            memberNameById,
+            fields,
+            isLoading,
+            error,
+            onRetry: handleRefresh,
+            onOpenTask: handleOpenTask,
+            onCellCommit: handleCellCommit,
+        }),
+        [
+            items,
+            catalogs,
+            memberNameById,
+            fields,
+            isLoading,
+            error,
+            handleRefresh,
+            handleOpenTask,
+            handleCellCommit,
+        ],
+    );
 
     const surfaceError = error ?? mutationError ?? assigneeError;
     const showError = surfaceError !== null && surfaceError !== "";
@@ -798,24 +812,11 @@ export function TasksModule({ userId }: TasksModuleProps) {
              */}
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                 <TasksViewTabs value={view} onValueChange={setView} />
-
-                <div className="flex flex-col gap-3 sm:ml-auto sm:flex-row sm:items-center">
-                    {view === "board" ? (
-                        <AssigneeFilterCombobox
-                            items={items}
-                            memberNameById={memberNameById}
-                            values={boardAssigneeFilter}
-                            onValuesChange={setBoardAssigneeFilter}
-                            className="sm:w-fit"
-                        />
-                    ) : null}
-
-                    <TaskListSwitcher
-                        lists={lists}
-                        selectedId={activeListId}
-                        onSelect={handleSelectList}
-                    />
-                </div>
+                <TaskListSwitcher
+                    lists={lists}
+                    selectedId={activeListId}
+                    onSelect={handleSelectList}
+                />
             </div>
 
             {/*
@@ -826,7 +827,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
              */}
             {view !== "list" ? (
                 <>
-                    {view === "board" ? <BoardView {...boardViewProps} /> : null}
+                    {view === "board" ? <BoardView {...viewProps} /> : null}
                     {view === "calendar" ? <CalendarView {...viewProps} /> : null}
                     {view === "team" ? <TeamView {...viewProps} /> : null}
                     {view === "gantt" ? <GanttView {...viewProps} /> : null}

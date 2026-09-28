@@ -15,9 +15,8 @@ import type { TaskListSummary } from "../hooks/useTaskLists";
  * PAGE-level scope: it decides which list's rows every view (List, Board, Calendar, Team, Gantt,
  * Dashboard) projects. That is a different axis from the tabs, which pick the REPRESENTATION of
  * those already-chosen rows, from the toolbar's search box, which only narrows them further, and
- * from the page actions, which stay on the heading row. The switcher no longer right-aligns itself;
- * the caller wraps it (with any view-scoped control that must sit before it) in the right-aligned
- * group, so the group — not one control — is what the row pins to the end.
+ * from the page actions, which stay on the heading row. `sm:ml-auto` is what right-aligns it on
+ * that row, and it also pins the control right when the row wraps it onto its own line.
  *
  * The control owns its own width rather than inheriting a caller's. A list name is not a fixed-width
  * catalog label, and a shrink-to-content row would collapse the trigger until realistic names
@@ -44,7 +43,7 @@ export function TaskListSwitcher({ lists, selectedId, onSelect }: TaskListSwitch
     return (
         <div
             data-slot="task-list-switcher"
-            className="flex w-full min-w-0 items-center gap-2 sm:w-64 lg:w-72"
+            className="flex w-full min-w-0 items-center gap-2 sm:ml-auto sm:w-64 lg:w-72"
         >
             <TaskCombobox
                 /*
