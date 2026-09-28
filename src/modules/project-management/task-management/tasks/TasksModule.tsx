@@ -24,6 +24,10 @@ import {
     type SavedTaskFilter,
 } from "./components/task-filter";
 import { TasksViewTabs } from "./components/TasksViewTabs";
+import {
+    AssigneeFilterCombobox,
+    filterItemsByAssignees,
+} from "./components/AssigneeFilterCombobox";
 import { BoardView } from "./components/views/BoardView";
 import { CalendarView } from "./components/views/CalendarView";
 import { DashboardView } from "./components/views/DashboardView";
@@ -386,6 +390,12 @@ export function TasksModule({ userId }: TasksModuleProps) {
     const [subtaskParentId, setSubtaskParentId] = useState<number | null>(null);
 
     /**
+     * The Board's assignee filter. It lives in the shell (unlike the Gantt view's own) because the
+     * control rides the shell's view-tabs row; the board receives already-narrowed rows.
+     */
+    const [boardAssigneeFilter, setBoardAssigneeFilter] = useState<readonly string[]>([]);
+
+    /**
      * The ONE cell currently open for in-place editing, or `null`. Kept here rather than in the row
      * so only a single cell is ever open: opening a second one replaces it, which cancels the first.
      */
@@ -556,6 +566,11 @@ export function TasksModule({ userId }: TasksModuleProps) {
     const viewProps = useMemo<TaskViewProps>(
         () => ({ items, catalogs, memberNameById, fields, isLoading, error, onRetry: handleRefresh }),
         [items, catalogs, memberNameById, fields, isLoading, error, handleRefresh],
+    );
+
+    const boardViewProps = useMemo<TaskViewProps>(
+        () => ({ ...viewProps, items: filterItemsByAssignees(items, boardAssigneeFilter) }),
+        [viewProps, items, boardAssigneeFilter],
     );
 
     const handlePageChange = useCallback(
@@ -783,11 +798,24 @@ export function TasksModule({ userId }: TasksModuleProps) {
              */}
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                 <TasksViewTabs value={view} onValueChange={setView} />
-                <TaskListSwitcher
-                    lists={lists}
-                    selectedId={activeListId}
-                    onSelect={handleSelectList}
-                />
+
+                <div className="flex flex-col gap-3 sm:ml-auto sm:flex-row sm:items-center">
+                    {view === "board" ? (
+                        <AssigneeFilterCombobox
+                            items={items}
+                            memberNameById={memberNameById}
+                            values={boardAssigneeFilter}
+                            onValuesChange={setBoardAssigneeFilter}
+                            className="sm:w-fit"
+                        />
+                    ) : null}
+
+                    <TaskListSwitcher
+                        lists={lists}
+                        selectedId={activeListId}
+                        onSelect={handleSelectList}
+                    />
+                </div>
             </div>
 
             {/*
@@ -798,7 +826,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
              */}
             {view !== "list" ? (
                 <>
-                    {view === "board" ? <BoardView {...viewProps} /> : null}
+                    {view === "board" ? <BoardView {...boardViewProps} /> : null}
                     {view === "calendar" ? <CalendarView {...viewProps} /> : null}
                     {view === "team" ? <TeamView {...viewProps} /> : null}
                     {view === "gantt" ? <GanttView {...viewProps} /> : null}

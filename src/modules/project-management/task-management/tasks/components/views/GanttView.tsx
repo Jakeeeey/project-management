@@ -25,6 +25,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn, formatDateLong } from "@/lib/utils";
 
 import { assigneeColorFor, assigneeForegroundFor } from "../assignee-color";
+import { AssigneeFilterCombobox, filterItemsByAssignees } from "../AssigneeFilterCombobox";
 import { CatalogStatusIcon } from "../CatalogStatusIcon";
 import { NO_STATUS_LABEL } from "../TaskRowBadges";
 
@@ -579,8 +580,7 @@ function GanttStatePanel({
 }
 
 /** One row per task that cannot be placed, with the reason it was dropped. */
-function skippedLabel(withoutDates: number, invertedRange: number): string {
-    const parts: string[] = [];
+function skippedLabel(withoutDates: number, invertedRange: number): string {    const parts: string[] = [];
 
     if (withoutDates > 0) {
         parts.push(
@@ -603,6 +603,18 @@ function skippedLabel(withoutDates: number, invertedRange: number): string {
     }
 
     return `${parts.join(", and ")} — not shown on the timeline.`;
+}
+
+function emptyTimelineMessage(totalRows: number, visibleRows: number, hasFilter: boolean): string {
+    if (totalRows === 0) {
+        return "No tasks in this list yet.";
+    }
+
+    if (hasFilter && visibleRows === 0) {
+        return "No task is assigned to the selected people.";
+    }
+
+    return "No task has both a start date and a due date, so there is nothing to place on the timeline.";
 }
 
 /** Months of empty timeline left reachable before the first and after the last task. */
@@ -854,16 +866,28 @@ function buildBarColourCss(items: readonly TaskListItem[]): string {
  */
 export function GanttView({ items, memberNameById, isLoading, error, onRetry }: TaskViewProps) {
     /**
+     * The assignee filter, held as the picked user ids rendered to decimal strings (the option
+     * contract). Empty means "no filter", so the chart shows every task — that is both the initial
+     * state and the state the clear (X) returns to.
+     */
+    const [assigneeFilter, setAssigneeFilter] = useState<readonly string[]>([]);
+
+    const visibleItems = useMemo<readonly TaskListItem[]>(
+        () => filterItemsByAssignees(items, assigneeFilter),
+        [items, assigneeFilter],
+    );
+
+    /**
      * The library's task list, derived in one pass from the department's flat rows. Kept as
      * `GanttTaskRow[]` (an `ITask` plus the label glyph's `statusRef`) so the `cell` slot can read
-     * the status back off the row, and rebuilt only when `items` changes.
+     * the status back off the row, and rebuilt only when the visible rows change.
      */
     const projection = useMemo(() => {
         const tasks: GanttTaskRow[] = [];
         let withoutDates = 0;
         let invertedRange = 0;
 
-        for (const item of items) {
+        for (const item of visibleItems) {
             const start = parseDateOnly(item.start_date);
             const end = parseDateOnly(item.end_date);
 
@@ -892,10 +916,10 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry }: 
         }
 
         return { tasks, withoutDates, invertedRange };
-    }, [items]);
+    }, [visibleItems]);
 
-    const range = useMemo(() => buildRange(items), [items]);
-    const barColourRules = useMemo(() => buildBarColourCss(items), [items]);
+    const range = useMemo(() => buildRange(visibleItems), [visibleItems]);
+    const barColourRules = useMemo(() => buildBarColourCss(visibleItems), [visibleItems]);
 
     /** The month the user navigated to, or `null` while the view still follows the data. */
     const [anchor, setAnchor] = useState<Date | null>(null);
@@ -1159,6 +1183,8 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry }: 
     const isEmpty = !isLoading && !showError && projection.tasks.length === 0;
     const skipMessage = skippedLabel(projection.withoutDates, projection.invertedRange);
 
+    const hasAssigneeFilter = assigneeFilter.length > 0;
+
     /**
      * Whether the day-number row is blanked. Derived from the React-held zoom width (never the
      * vendor's internal zoom): below `MODAL_DAY_LABEL_MIN_CELL_WIDTH` the labels would overlap,
@@ -1193,11 +1219,11 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry }: 
             <section data-slot="task-gantt" aria-label="Task timeline" className="w-full min-w-0 space-y-3">
                 <GanttStatePanel
                     icon={<ChartGantt className="size-8 text-muted-foreground/50" aria-hidden="true" />}
-                    message={
-                        items.length === 0
-                            ? "No tasks in this list yet."
-                            : "No task has both a start date and a due date, so there is nothing to place on the timeline."
-                    }
+                    message={emptyTimelineMessage(
+                        items.length,
+                        visibleItems.length,
+                        hasAssigneeFilter,
+                    )}
                 />
                 <p
                     data-slot="task-gantt-skipped"
@@ -1214,57 +1240,78 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry }: 
         <section data-slot="task-gantt" aria-label="Task timeline" className="w-full min-w-0 space-y-3">
             <style>{GANTT_THEME_CSS + GANTT_TODAY_CSS + GANTT_MODAL_DAY_LABELS_CSS + GANTT_MODAL_SCROLL_CSS + GANTT_QUIET_GRID_CSS + barColourRules}</style>
 
-            {/* The library exposes the store action but renders no toolbar of its own, so the month
-                stepper is hosted here. Its buttons use the app's own Lucide icons and are therefore
-                never blank, independent of the vendor font. */}
-            <div
-                data-slot="task-gantt-nav"
-                role="group"
-                aria-label="Timeline navigation"
-                className="flex flex-wrap items-center justify-center gap-2"
-            >
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    aria-label="Show the previous month"
-                    onClick={showPreviousMonth}
-                >
-                    <ChevronLeft className="size-4" aria-hidden="true" />
-                </Button>
+            {/* One row: the month stepper centred by the two equal side columns, the assignee filter
+                parked in the right one. The library exposes the store action but renders no toolbar
+                of its own, so the stepper is hosted here — its buttons use the app's own Lucide icons
+                and are therefore never blank, independent of the vendor font.
 
-                <p
-                    data-slot="task-gantt-period"
-                    aria-live="polite"
-                    className="min-w-36 text-center text-sm font-medium tabular-nums text-muted-foreground"
-                >
-                    {monthLabel(visibleMonth)}
-                </p>
+                The filter widens by OR, not intersect: picking a second assignee adds their tasks,
+                and the clear (X) returns to everyone. Below `sm` the row stacks, stepper first. */}
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+                <div aria-hidden="true" className="hidden sm:block" />
 
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    aria-label="Show the next month"
-                    onClick={showNextMonth}
+                <div
+                    data-slot="task-gantt-nav"
+                    role="group"
+                    aria-label="Timeline navigation"
+                    className="flex flex-wrap items-center justify-center gap-2"
                 >
-                    <ChevronRight className="size-4" aria-hidden="true" />
-                </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-label="Show the previous month"
+                        onClick={showPreviousMonth}
+                    >
+                        <ChevronLeft className="size-4" aria-hidden="true" />
+                    </Button>
 
-                <Button type="button" variant="outline" size="sm" onClick={showToday}>
-                    <CalendarDays className="size-4" aria-hidden="true" />
-                    Today
-                </Button>
+                    <p
+                        data-slot="task-gantt-period"
+                        aria-live="polite"
+                        className="min-w-36 text-center text-sm font-medium tabular-nums text-muted-foreground"
+                    >
+                        {monthLabel(visibleMonth)}
+                    </p>
 
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    aria-label="Open fullscreen timeline"
-                    onClick={openModal}
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-label="Show the next month"
+                        onClick={showNextMonth}
+                    >
+                        <ChevronRight className="size-4" aria-hidden="true" />
+                    </Button>
+
+                    <Button type="button" variant="outline" size="sm" onClick={showToday}>
+                        <CalendarDays className="size-4" aria-hidden="true" />
+                        Today
+                    </Button>
+
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-label="Open fullscreen timeline"
+                        onClick={openModal}
+                    >
+                        <Maximize2 className="size-4" aria-hidden="true" />
+                    </Button>
+                </div>
+
+                <div
+                    data-slot="task-gantt-assignee-filter"
+                    className="flex items-center justify-center sm:justify-end"
                 >
-                    <Maximize2 className="size-4" aria-hidden="true" />
-                </Button>
+                    <AssigneeFilterCombobox
+                        items={items}
+                        memberNameById={memberNameById}
+                        values={assigneeFilter}
+                        onValuesChange={setAssigneeFilter}
+                        className="sm:w-fit"
+                    />
+                </div>
             </div>
 
             {/* `overflow-hidden` + a bounded height keep the chart's own scrolling inside this box, so a
