@@ -29,11 +29,12 @@
  * and self-heals if it changes under a running process — see `./access-table`.
  */
 
-import { createItem, readItems, updateItem } from "./directus-client";
+import { createItem, DirectusRequestError, getDirectusBaseUrl, readItems, updateItem } from "./directus-client";
 import { assertCanGrant } from "./permission-service";
 import type { ScopedActor } from "./actor-service";
 import { phNow } from "../utils/ph-time";
 import type { GrantAccessInput } from "../types/access.schema";
+import { DEFAULT_ACCESS_PAGE, DEFAULT_ACCESS_PAGE_SIZE, MAX_ACCESS_PAGE_SIZE, MAX_ACCESS_SEARCH_LENGTH } from "../types/access-query.schema";
 import { withAccessTable } from "./access-table";
 import { AccessError, findExistingAccessRow, isTrueFlag, mergeMemberAccessState, toPhTimestamp, toPositiveInt, type AccessRow } from "./access-policy";
 
@@ -95,26 +96,113 @@ export interface MemberAccessRow {
     readonly is_self: boolean;
 }
 
+/** Server-side paging for the roster: 1-based `page` plus `pageSize`, with an optional picker search. */
+export interface MemberAccessPaging {
+    readonly page: number;
+    readonly pageSize: number;
+    /** Trimmed server-side match on first name, last name or email; empty/absent means no search. */
+    readonly q?: string;
+}
+
+/** One roster page: the page's rows plus the department's total member count. */
+export interface MemberAccessPage {
+    readonly items: MemberAccessRow[];
+    readonly total: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** A non-negative integer, else `null` — the defensive read for `meta.filter_count`. */
+function toNonNegativeInt(value: unknown): number | null {
+    const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+/**
+ * The actor's department members for one page, with the true total from the same Directus call:
+ * `meta=filter_count` counts the rows matching the department + live-member filter, and Directus answers
+ * `{ data, meta }` when asked. `readItems` discards `meta`, so this reads the endpoint directly
+ * with the same filter, fields and sort the unbounded query used — only `limit`/`page` change.
+ * `is_deleted` is nullable on this instance, so live means (`_eq` 0 OR `_null`); the merge keeps
+ * its own drop as defence in depth. An optional trimmed `q` adds a case-insensitive first/last/email match.
+ */
+async function readDepartmentUserPage(
+    actor: ScopedActor,
+    paging: MemberAccessPaging,
+): Promise<{ readonly members: UserDirectoryRow[]; readonly total: number }> {
+    const search = typeof paging.q === "string" ? paging.q.trim().slice(0, MAX_ACCESS_SEARCH_LENGTH) : "";
+    const liveFilter = { _or: [{ is_deleted: { _eq: 0 } }, { is_deleted: { _null: true } }] };
+    const departmentFilter = { user_department: { _eq: actor.departmentId } };
+    const filter = search === ""
+        ? { _and: [departmentFilter, liveFilter] }
+        : {
+            _and: [
+                departmentFilter,
+                liveFilter,
+                {
+                    _or: [
+                        { user_fname: { _icontains: search } },
+                        { user_lname: { _icontains: search } },
+                        { user_email: { _icontains: search } },
+                    ],
+                },
+            ],
+        };
+    const params = [
+        `filter=${encodeURIComponent(JSON.stringify(filter))}`,
+        `fields=${encodeURIComponent(["user_id", "user_fname", "user_lname", "user_email", "is_deleted"].join(","))}`,
+        `sort=${encodeURIComponent(["user_fname", "user_lname"].join(","))}`,
+        `limit=${paging.pageSize}`,
+        `page=${paging.page}`,
+        `meta=${encodeURIComponent("filter_count")}`,
+    ].join("&");
+
+    const response = await fetch(`${getDirectusBaseUrl()}/items/user?${params}`, {
+        method: "GET",
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${process.env.DIRECTUS_STATIC_TOKEN ?? ""}` },
+    });
+    if (!response.ok) {
+        const body = await response.text().catch(() => "Unreadable error body");
+        throw new DirectusRequestError("user", response.status, body);
+    }
+
+    const text = await response.text();
+    const payload: unknown = text === "" ? null : (JSON.parse(text) as unknown);
+    const members = isRecord(payload) && Array.isArray(payload.data) ? (payload.data as UserDirectoryRow[]) : [];
+    const meta = isRecord(payload) && isRecord(payload.meta) ? payload.meta : null;
+    // Absent `meta` cannot happen when requested; the page length keeps the
+    // contract a number rather than failing the roster.
+    const total = (meta === null ? null : toNonNegativeInt(meta.filter_count)) ?? members.length;
+    return { members, total };
+}
+
 export class AccessService {
     /**
-     * The actor's department members, each with their active-access state — the access list's data.
+     * One page of the actor's department members, each with their active-access state.
      *
-     * Both queries are department-filtered, so the result can only ever contain this department's
-     * users and this department's grants; a soft-deleted member is dropped by the pure join, and a
-     * revoked grant simply reads as `is_granted: false` (the row itself is kept for revival).
+     * The member query carries Directus `limit` + `page` and asks for `meta.filter_count`, so the
+     * fetch is bounded server-side and the true total arrives in the same call — rows are never
+     * fetched whole and sliced in memory. Grants join from the department's live rows, as before;
+     * rows for members outside the page contribute nothing through the pure merge. The department
+     * filter, `is_deleted` handling, `grant_id` only when granted, `is_self` and the `granted_by`
+     * provenance are unchanged.
      */
-    static async listMembers(actor: ScopedActor): Promise<MemberAccessRow[]> {
-        const [members, grants] = await Promise.all([
-            readItems<UserDirectoryRow>("user", {
-                filter: { user_department: { _eq: actor.departmentId } },
-                fields: ["user_id", "user_fname", "user_lname", "user_email", "is_deleted"],
-                sort: ["user_fname", "user_lname"],
-                limit: -1,
-            }),
+    static async listMembers(actor: ScopedActor, paging: MemberAccessPaging): Promise<MemberAccessPage> {
+        const page = Number.isInteger(paging.page) && paging.page > 0 ? paging.page : DEFAULT_ACCESS_PAGE;
+        const pageSize = Number.isInteger(paging.pageSize) && paging.pageSize > 0
+            ? Math.min(paging.pageSize, MAX_ACCESS_PAGE_SIZE)
+            : DEFAULT_ACCESS_PAGE_SIZE;
+        const rawSearch = typeof paging.q === "string" ? paging.q.trim() : "";
+        const q = rawSearch === "" ? undefined : rawSearch.slice(0, MAX_ACCESS_SEARCH_LENGTH);
+        const [userPage, grants] = await Promise.all([
+            readDepartmentUserPage(actor, q === undefined ? { page, pageSize } : { page, pageSize, q }),
             AccessService.listGrantRows(actor),
         ]);
 
-        return mergeMemberAccessState(members, grants).map((member) => ({
+        const items = mergeMemberAccessState(userPage.members, grants).map((member) => ({
             user_id: member.user_id,
             user_fname: member.user_fname,
             user_lname: member.user_lname,
@@ -124,6 +212,7 @@ export class AccessService {
             granted_by: member.granted_by,
             is_self: member.user_id === actor.userId,
         }));
+        return { items, total: userPage.total };
     }
 
     /**
