@@ -1,21 +1,20 @@
 "use client";
 
+import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 
 /**
- * The department's access policy control.
+ * The department's access policy: whether every member HAS Edit access, or only the head and the
+ * members individually granted it.
  *
- * One decision, one switch: whether every member of the department HAS Edit access, or only the head
- * and the members individually granted it. It is rendered ONLY for the head — `AccessPage` mounts it
- * on the server-resolved `capabilities.canManageDepartmentSetting`, so a member who gains access from
- * this policy still never sees the control, and the server's PATCH refuses them regardless.
+ * The head gets the switch. Everyone else gets the same card READ-ONLY, because the state is
+ * information the whole department needs — it decides whether granting access is even meaningful —
+ * while only the CHANGE is head-only, which the server's PATCH enforces regardless of what is
+ * rendered here.
  *
- * Because ON grants everyone access outright, the per-member grant control below it becomes moot;
- * `AccessPage` mutes that card while this is on rather than pretending it still does something.
- *
- * The component owns no state and performs no fetch: the checked value comes from the route payload
- * and `onChange` runs the mutation, which refetches the page's data on success. While a mutation is
- * in flight the switch is disabled, so a value cannot be flipped twice before the server answers.
+ * The component owns no state and performs no fetch: the value comes from the route payload and
+ * `onChange` runs the mutation, which refetches on success. While a mutation is in flight the switch
+ * is disabled, so a value cannot be flipped twice before the server answers.
  */
 export interface AccessPolicyCardProps {
     /** Server-resolved policy, ON by default for a department with no setting row. */
@@ -24,9 +23,16 @@ export interface AccessPolicyCardProps {
     isSaving: boolean;
     /** Runs the policy mutation; the page refetches on success, so no local state is kept here. */
     onChange: (enabled: boolean) => void;
+    /** False for a non-head: the policy renders as a read-only indicator, with no switch at all. */
+    canManage: boolean;
 }
 
-export function AccessPolicyCard({ allowAllMembersGrant, isSaving, onChange }: AccessPolicyCardProps) {
+export function AccessPolicyCard({
+    allowAllMembersGrant,
+    isSaving,
+    onChange,
+    canManage,
+}: AccessPolicyCardProps) {
     return (
         <div
             data-slot="access-policy"
@@ -34,29 +40,40 @@ export function AccessPolicyCard({ allowAllMembersGrant, isSaving, onChange }: A
         >
             <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
                 <div className="min-w-0 space-y-1">
-                    <label
-                        htmlFor="allow-all-members-grant"
-                        className="block cursor-pointer text-sm font-medium"
-                    >
-                        Allow all members Edit access
-                    </label>
+                    {canManage ? (
+                        <label
+                            htmlFor="allow-all-members-grant"
+                            className="block cursor-pointer text-sm font-medium"
+                        >
+                            Allow all members Edit access
+                        </label>
+                    ) : (
+                        <p className="text-sm font-medium">Edit access</p>
+                    )}
                     <p
-                        id="allow-all-members-grant-description"
+                        id={canManage ? "allow-all-members-grant-description" : undefined}
                         className="text-xs text-muted-foreground"
                     >
-                        On: every member can edit tasks. Off: only you and the members you grant. A
-                        task&apos;s creator can always edit it.
+                        {allowAllMembersGrant
+                            ? "Every member can edit tasks."
+                            : "Only the head and granted members can edit tasks."}
                     </p>
                 </div>
 
-                <Switch
-                    id="allow-all-members-grant"
-                    checked={allowAllMembersGrant}
-                    onCheckedChange={onChange}
-                    disabled={isSaving}
-                    aria-describedby="allow-all-members-grant-description"
-                    className="shrink-0 sm:mt-0.5"
-                />
+                {canManage ? (
+                    <Switch
+                        id="allow-all-members-grant"
+                        checked={allowAllMembersGrant}
+                        onCheckedChange={onChange}
+                        disabled={isSaving}
+                        aria-describedby="allow-all-members-grant-description"
+                        className="shrink-0 sm:mt-0.5"
+                    />
+                ) : (
+                    <Badge variant="secondary" className="shrink-0">
+                        {allowAllMembersGrant ? "All members" : "Head + granted"}
+                    </Badge>
+                )}
             </div>
         </div>
     );

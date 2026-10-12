@@ -26,6 +26,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { cn } from "@/lib/utils";
 
 import type { MemberAccessItem } from "../hooks/useAccess";
@@ -61,6 +62,14 @@ export interface AccessListProps {
     onGrant: (userId: number, label: string) => Promise<boolean>;
     onRevoke: (grantId: number, label: string) => Promise<boolean>;
     onRefresh: () => void;
+    /** The 1-based page `items` was read from — threaded from the page orchestrator. */
+    page: number;
+    /** The page size `items` was read with. */
+    pageSize: number;
+    /** The department's total member count, so the pager can render a page count. */
+    total: number;
+    onPageChange: (page: number) => void;
+    onPageSizeChange: (pageSize: number) => void;
 }
 
 /** "Maria Santos" → "MS"; a single-word name keeps its first letter. */
@@ -175,21 +184,23 @@ export function AccessList({
     onGrant,
     onRevoke,
     onRefresh,
+    page,
+    pageSize,
+    total,
+    onPageChange,
+    onPageSizeChange,
 }: AccessListProps) {
     const [isGrantDialogOpen, setIsGrantDialogOpen] = useState(false);
     const [pendingRevoke, setPendingRevoke] = useState<MemberAccessItem | null>(null);
 
     const columnCount = canGrant ? BASE_COLUMN_COUNT + 1 : BASE_COLUMN_COUNT;
-    // Nobody grants themselves, so the actor is excluded from the picker: `is_self` comes from the
-    // server (the roster still lists them, because they are a member). The service refuses a
-    // self-grant regardless — this only keeps a moot choice out of the UI.
-    const candidates = items.filter((member) => !member.is_granted && !member.is_self);
     const showError = error !== null && error !== "";
     const isEmpty = !isLoading && !showError && items.length === 0;
+    // The pager needs a live count: hidden while loading, on error, or with no members at all.
+    const showPager = !isLoading && !showError && total > 0;
 
-    const handleGrantSubmit = async (userId: number) => {
-        const member = items.find((entry) => entry.user_id === userId);
-        const saved = await onGrant(userId, member?.full_name ?? "The member");
+    const handleGrantSubmit = async (userId: number, label: string) => {
+        const saved = await onGrant(userId, label);
         if (saved) setIsGrantDialogOpen(false);
     };
 
@@ -213,17 +224,6 @@ export function AccessList({
             <div className="flex flex-col gap-3 border-b bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                     <h2 className="text-sm font-medium">Department members</h2>
-                    <p className="text-xs text-muted-foreground">
-                                Everyone in your department and whether they have Edit access
-                                — including assigning people, setting status and priority, and changing
-                                dates and custom fields.
-                            </p>
-                            {policyOpen ? (
-                                <p className="text-xs text-muted-foreground">
-                                    Every member already has Edit access, so there is nothing to grant
-                                    individually. Turn the switch off to grant it member by member.
-                                </p>
-                            ) : null}
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">
@@ -244,12 +244,8 @@ export function AccessList({
                             type="button"
                             size="sm"
                             onClick={() => setIsGrantDialogOpen(true)}
-                            disabled={isSubmitting || candidates.length === 0}
-                            title={
-                                candidates.length === 0
-                            ? "Every member already has Edit access"
-                            : "Grant Edit access to a member"
-                            }
+                            disabled={isSubmitting}
+                            title="Grant Edit access to a member"
                             className="min-h-11 md:min-h-0"
                         >
                             <UserPlus className="size-4" aria-hidden="true" />
@@ -343,6 +339,17 @@ export function AccessList({
                         ))}
                     </ul>
                 )}
+                {showPager ? (
+                    <div className="border-t px-4 py-3">
+                        <DataTablePagination
+                            pageIndex={page}
+                            pageSize={pageSize}
+                            rowCount={total}
+                            onPageChange={onPageChange}
+                            onPageSizeChange={onPageSizeChange}
+                        />
+                    </div>
+                ) : null}
             </div>
 
             <div className="hidden xl:block">
@@ -489,13 +496,23 @@ export function AccessList({
                         )}
                     </TableBody>
                 </Table>
+                {showPager ? (
+                    <div className="border-t px-4 py-3">
+                        <DataTablePagination
+                            pageIndex={page}
+                            pageSize={pageSize}
+                            rowCount={total}
+                            onPageChange={onPageChange}
+                            onPageSizeChange={onPageSizeChange}
+                        />
+                    </div>
+                ) : null}
             </div>
 
             {canGrant ? (
                 <AccessGrantDialog
                     open={isGrantDialogOpen}
                     onOpenChange={setIsGrantDialogOpen}
-                    candidates={candidates}
                     isSubmitting={isSubmitting}
                     onSubmit={handleGrantSubmit}
                 />

@@ -14,6 +14,12 @@ import {
 } from "@/modules/project-management/task-management/access/types/access.schema";
 import { AccessError, AccessService } from "@/modules/project-management/task-management/access/services/access-service";
 import { DepartmentSettingService } from "@/modules/project-management/task-management/access/services/department-setting-service";
+import {
+    AccessListQuerySchema,
+    clampAccessListQuery,
+    DEFAULT_ACCESS_PAGE,
+    DEFAULT_ACCESS_PAGE_SIZE,
+} from "@/modules/project-management/task-management/access/types/access-query.schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,8 +28,13 @@ export const dynamic = "force-dynamic";
  * The access route — the department's Edit-access policy and the roster of who holds it.
  *
  * Contract:
- * - `GET` -> 200 `{ success, data, setting, capabilities }` where `data` is the department's live
- *   members (`AccessService.listMembers`), each carrying `is_granted`, `grant_id` and `granted_by`;
+ * - `GET ?page=&pageSize=&q=` -> 200 `{ success, data, total, setting, capabilities }` where `data`
+ *   is the department's live members for the requested page (`AccessService.listMembers`), each
+ *   carrying `is_granted`, `grant_id` and `granted_by`; `total` is the department's total live-member
+ *   count, so the client can render a page count. `page` is 1-based and `pageSize` is clamped to
+ *   a sane maximum; bad or absent values fall back to safe defaults, never a 400. `q` is an
+ *   optional trimmed picker search (first name, last name or email, case-insensitive); it is
+ *   length-capped and never fails validation, and empty/absent means no search.
  *   `setting` is the resolved `{ allow_all_members_grant }` policy (an absent setting row means ON);
  *   and `capabilities` is the coarse session answer (the `Capabilities` block the Tasks and
  *   Task-Configuration routes also return). The Access page gates its grant trigger on
@@ -136,21 +147,31 @@ function failureResponse(scope: string, error: unknown): NextResponse {
     );
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(req: NextRequest): Promise<NextResponse> {
     try {
         const resolution = await resolveGrantActor();
         if (!resolution.resolved) return resolution.response;
         const { actor } = resolution;
 
+        const parsed = AccessListQuerySchema.safeParse({
+            page: req.nextUrl.searchParams.get("page"),
+            pageSize: req.nextUrl.searchParams.get("pageSize"),
+            q: req.nextUrl.searchParams.get("q"),
+        });
+        const paging = parsed.success
+            ? clampAccessListQuery(parsed.data)
+            : { page: DEFAULT_ACCESS_PAGE, pageSize: DEFAULT_ACCESS_PAGE_SIZE };
+
         const [members, permissions, setting] = await Promise.all([
-            AccessService.listMembers(actor),
+            AccessService.listMembers(actor, paging),
             getPermissionContext(actor),
             DepartmentSettingService.getSetting(actor),
         ]);
 
         return NextResponse.json({
             success: true,
-            data: members,
+            data: members.items,
+            total: members.total,
             setting,
             capabilities: permissions.capabilitiesForClient(),
         });
