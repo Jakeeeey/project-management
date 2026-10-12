@@ -79,6 +79,7 @@ export function TeamView({
     isLoading,
     error,
     onRetry,
+    onOpenTask,
 }: TaskViewProps) {
     /**
      * The sections plus the two summary totals, derived in ONE pass so the layout and the summary
@@ -196,6 +197,7 @@ export function TeamView({
                         section={section}
                         isExpanded={expandedKeys.has(section.key)}
                         onToggle={() => toggleSection(section.key)}
+                        onOpenTask={onOpenTask}
                     />
                 ))}
             </div>
@@ -207,6 +209,7 @@ interface TeamSectionCardProps {
     section: TeamSection;
     isExpanded: boolean;
     onToggle: () => void;
+    onOpenTask?: (taskId: number) => void;
 }
 
 /**
@@ -216,7 +219,7 @@ interface TeamSectionCardProps {
  * `aria-expanded` for free. The task list renders ONLY while open, so a collapsed department costs
  * one header per member rather than one list per member.
  */
-function TeamSectionCard({ section, isExpanded, onToggle }: TeamSectionCardProps) {
+function TeamSectionCard({ section, isExpanded, onToggle, onOpenTask }: TeamSectionCardProps) {
     const isUnassigned = section.kind === "unassigned";
     const countLabel = taskCountLabel(section.tasks.length);
     const hasTasks = section.tasks.length > 0;
@@ -326,7 +329,7 @@ function TeamSectionCard({ section, isExpanded, onToggle }: TeamSectionCardProps
                     {hasTasks ? (
                         <ul className="flex min-w-0 flex-col gap-2">
                             {section.tasks.map((task) => (
-                                <TeamTaskRow key={task.id} task={task} isMuted={isUnassigned} />
+                                <TeamTaskRow key={task.id} task={task} isMuted={isUnassigned} onOpenTask={onOpenTask} />
                             ))}
                         </ul>
                     ) : (
@@ -344,19 +347,37 @@ interface TeamTaskRowProps {
     task: TaskListItem;
     /** Inside the muted unassigned card, rows flip to the raised surface so they stay legible. */
     isMuted: boolean;
+    onOpenTask?: (taskId: number) => void;
 }
 
-function TeamTaskRow({ task, isMuted }: TeamTaskRowProps) {
+function TeamTaskRow({ task, isMuted, onOpenTask }: TeamTaskRowProps) {
     const rangeText = formatTaskDateRange(task.start_date, task.end_date);
     const rangeTitle = `Start: ${formatTaskDate(task.start_date)} · Due: ${formatTaskDate(task.end_date)}`;
+    const interactive = onOpenTask !== undefined;
 
     return (
         <li
             data-slot="task-team-card"
             data-task-id={task.id}
+            role={interactive ? "button" : undefined}
+            tabIndex={interactive ? 0 : undefined}
+            aria-label={interactive ? `Open task ${task.title}` : undefined}
+            onClick={interactive ? () => onOpenTask(task.id) : undefined}
+            onKeyDown={
+                interactive
+                    ? (event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              onOpenTask(task.id);
+                          }
+                      }
+                    : undefined
+            }
             className={cn(
                 "min-w-0 rounded-xl border border-border/50 p-2.5",
                 isMuted ? "bg-card" : "bg-muted/30",
+                interactive &&
+                    "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             )}
         >
             <p className="truncate text-sm font-medium" title={task.title}>

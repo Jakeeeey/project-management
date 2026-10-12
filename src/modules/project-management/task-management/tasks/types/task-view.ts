@@ -1,3 +1,4 @@
+import type { CellEditRequest } from "../components/TaskCellEditor";
 import type { TaskCatalogs, TaskField, TaskListItem } from "../hooks/useTasks";
 
 /**
@@ -58,6 +59,24 @@ export interface TaskViewProps {
     readonly error: string | null;
     /** Retries the load; the shell owns the fetcher. */
     readonly onRetry: () => void;
+    /**
+     * Opens the read view for one task — the same surface the list's row action opens.
+     *
+     * OPTIONAL, and a view that is not handed it must not present a task as clickable: the
+     * affordance and the capability are the same fact, so a view without the seam stays exactly as
+     * passive as it was before the seam existed.
+     */
+    readonly onOpenTask?: (taskId: number) => void;
+    /**
+     * Commits ONE field change for one task, through the shell's single write path (the same
+     * `resolveCellEdit` the table's inline editors use). `column` is the caller's own identity for
+     * the in-flight guard, not a field selector — the request carries what is being changed.
+     *
+     * OPTIONAL, and only the board is handed it. Presence is what licenses a WRITE-capable view:
+     * dragging a card between columns is offered only because this seam exists, so the contract
+     * cannot drift from what the view may do.
+     */
+    readonly onCellCommit?: (taskId: number, column: string, request: CellEditRequest) => void;
 }
 
 /** The display name of an assignee id, or a stable fallback — never a blank label. */

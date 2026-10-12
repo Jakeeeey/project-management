@@ -9,17 +9,20 @@ import { AccessPolicyCard } from "./AccessPolicyCard";
  *
  * It owns exactly two gates, both read from the route's server-resolved `capabilities` (never
  * derived here): `canGrant` decides whether the grant/revoke controls exist at all, and
- * `canManageDepartmentSetting` decides whether the policy switch is mounted. A department whose
- * policy is ON tells every member `canGrant: true` while still telling them
- * `canManageDepartmentSetting: false`, so members can hand out rights but can never change the
- * policy that lets them — and the switch is not rendered into the DOM for them at all.
+ * `canManageDepartmentSetting` decides whether the policy card is INTERACTIVE. The policy itself is
+ * shown to everyone, because whether the whole department already has Edit access decides whether
+ * granting is meaningful at all; only the switch is head-only, and the server's PATCH refuses
+ * everyone else regardless.
  *
- * The switch is held back until `setting` has loaded, so it never renders a policy the server has
- * not confirmed; the roster is handed straight to `AccessList`.
+ * The card is held back until `setting` has loaded, so it never renders a policy the server has not
+ * confirmed; the roster is handed straight to `AccessList`.
  */
 export function AccessPage() {
     const {
         items,
+        page,
+        pageSize,
+        total,
         isLoading,
         isSubmitting,
         error,
@@ -30,6 +33,8 @@ export function AccessPage() {
         grant,
         revoke,
         setAllowAllMembersGrant,
+        setPage,
+        setPageSize,
     } = useAccess();
 
     const canGrant = capabilities?.canGrant === true;
@@ -44,19 +49,17 @@ export function AccessPage() {
         >
             <div className="space-y-1">
                 <h1 className="text-lg font-semibold tracking-tight">Access</h1>
-                <p className="text-sm text-muted-foreground">
-                    Who can edit this department&apos;s tasks — status, priority, dates, assignees and
-                    custom fields.
-                </p>
+                <p className="text-sm text-muted-foreground">Who can edit this department&apos;s tasks.</p>
             </div>
 
-            {canManageSetting && setting !== null ? (
+            {setting !== null ? (
                 <AccessPolicyCard
                     allowAllMembersGrant={setting.allow_all_members_grant}
                     isSaving={isSubmitting}
                     onChange={(enabled) => {
                         void setAllowAllMembersGrant(enabled);
                     }}
+                    canManage={canManageSetting}
                 />
             ) : null}
 
@@ -73,6 +76,11 @@ export function AccessPage() {
                 onRefresh={() => {
                     void refresh();
                 }}
+                page={page}
+                pageSize={pageSize}
+                total={total}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
             />
         </section>
     );

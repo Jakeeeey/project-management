@@ -549,15 +549,6 @@ export function TasksModule({ userId }: TasksModuleProps) {
         void refresh();
     }, [refresh]);
 
-    /**
-     * The shared contract every non-list view reads. Built once here so the five views cannot drift
-     * in what they are handed — they all see the same flat rows, catalogs, directory and retry.
-     */
-    const viewProps = useMemo<TaskViewProps>(
-        () => ({ items, catalogs, memberNameById, fields, isLoading, error, onRetry: handleRefresh }),
-        [items, catalogs, memberNameById, fields, isLoading, error, handleRefresh],
-    );
-
     const handlePageChange = useCallback(
         (next: number) => {
             setPage(Math.max(1, Math.min(next, totalPages)));
@@ -726,6 +717,10 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [assigneeEditingTaskId, handleCellCommit],
     );
 
+    const handleOpenTask = useCallback((taskId: number): void => {
+        setDetailTaskId(taskId);
+    }, []);
+
     const renderRowActions = useCallback((node: TreeNode<TaskRowView>) => {
         const detailsLabel = `View details for ${node.title}`;
         return (
@@ -737,13 +732,47 @@ export function TasksModule({ userId }: TasksModuleProps) {
                     aria-label={detailsLabel}
                     title={detailsLabel}
                     data-slot="task-row-details"
-                    onClick={() => setDetailTaskId(node.id)}
+                    onClick={() => handleOpenTask(node.id)}
                 >
                     <Eye className="size-4" aria-hidden="true" />
                 </Button>
             </div>
         );
-    }, []);
+    }, [handleOpenTask]);
+
+    /**
+     * The shared contract every non-list view reads. Built once here so the five views cannot drift
+     * in what they are handed — the same flat rows, catalogs, directory and retry, plus the two
+     * seams a view may opt into: opening the read view, and committing one field change.
+     *
+     * Both are OPTIONAL. A view handed neither is exactly as read-only as before; only the board is
+     * handed `onCellCommit`, and that is what makes its cards draggable — so the capability and the
+     * contract cannot disagree.
+     */
+    const viewProps = useMemo<TaskViewProps>(
+        () => ({
+            items,
+            catalogs,
+            memberNameById,
+            fields,
+            isLoading,
+            error,
+            onRetry: handleRefresh,
+            onOpenTask: handleOpenTask,
+            onCellCommit: handleCellCommit,
+        }),
+        [
+            items,
+            catalogs,
+            memberNameById,
+            fields,
+            isLoading,
+            error,
+            handleRefresh,
+            handleOpenTask,
+            handleCellCommit,
+        ],
+    );
 
     const surfaceError = error ?? mutationError ?? assigneeError;
     const showError = surfaceError !== null && surfaceError !== "";

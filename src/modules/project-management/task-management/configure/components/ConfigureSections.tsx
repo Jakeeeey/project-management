@@ -9,6 +9,7 @@ import { TaskFieldsSection } from "@/modules/project-management/task-management/
 
 import { TaskConfigurationSection } from "./TaskConfigurationSection";
 import { TaskListsSection } from "./TaskListsSection";
+import { useConfigureCapabilities } from "../hooks/useConfigureCapabilities";
 
 /**
  * The section registry — the single edit point for the Configure page.
@@ -59,7 +60,11 @@ const CONFIGURE_SECTIONS: readonly ConfigureSection[] = [
  *
  * One long scroll became tabs so the page keeps scaling as sections are added. Each section renders
  * itself and owns its own capabilities read, so a section whose server answer is "not configurable"
- * still renders nothing — this shell never inspects capabilities.
+ * still renders nothing — that self-gating stays as defence in depth. The shell additionally reads
+ * only `canConfigure` to disable the tab triggers, so an unpermitted actor sees grayed-out tabs
+ * instead of an empty panel, and the panel body explains the refusal rather than sitting blank.
+ * While the flag is still loading (`null`), tabs stay enabled to avoid a flash of disabled controls
+ * on every load.
  *
  * Labels are hidden below `sm` with the accessible name kept on the trigger, because labelled tabs
  * stop fitting a phone at two and a scrolling strip would hide choices behind a gesture.
@@ -71,6 +76,8 @@ const CONFIGURE_SECTIONS: readonly ConfigureSection[] = [
  * text; the same class on the trigger alone does not reach the span.
  */
 export function ConfigureSections() {
+    const canConfigure = useConfigureCapabilities();
+    const tabsDisabled = canConfigure === false;
     return (
         <Tabs defaultValue={CONFIGURE_SECTIONS[0].id} className="w-full">
             <div className="mx-auto w-full max-w-3xl px-4 pt-2">
@@ -81,8 +88,17 @@ export function ConfigureSections() {
                             <TabsTrigger
                                 key={section.id}
                                 value={section.id}
-                                aria-label={section.label}
-                                title={section.label}
+                                disabled={tabsDisabled}
+                                aria-label={
+                                    tabsDisabled
+                                        ? `${section.label}: You do not have access to this section`
+                                        : section.label
+                                }
+                                title={
+                                    tabsDisabled
+                                        ? "You do not have access to this section"
+                                        : section.label
+                                }
                                 className="whitespace-nowrap"
                             >
                                 <Icon className="size-4" aria-hidden="true" />
@@ -95,7 +111,17 @@ export function ConfigureSections() {
 
             {CONFIGURE_SECTIONS.map((section) => (
                 <TabsContent key={section.id} value={section.id}>
-                    {section.render()}
+                    {tabsDisabled ? (
+                        <p
+                            data-slot="configure-section-denied"
+                            className="mx-auto w-full max-w-3xl px-4 py-10 text-center text-sm text-muted-foreground"
+                        >
+                            You do not have access to this section. Ask your department head to grant
+                            you Edit access.
+                        </p>
+                    ) : (
+                        section.render()
+                    )}
                 </TabsContent>
             ))}
         </Tabs>

@@ -72,8 +72,9 @@ function deleteBlockReason(
  * parent `/project-management` module already authorizes `/project-management/task-management/configure`.
  *
  * It renders nothing at all — not a disabled form, not a lock message — unless the server said
- * `capabilities.canManageDepartmentSetting`, the SAME head-only fact the list CRUD route gates on.
- * A granted member who may edit the catalogs therefore has no way to reach a list write.
+ * `capabilities.canConfigure`, the SAME flag the sibling sections gate on. That flag is read from
+ * the lists route and never derived here, so a member without it has no way to reach a list write
+ * and never sees the section in the DOM.
  *
  * Reordering is explicitly NOT drag-and-drop: two keyboard-accessible buttons move a row one
  * position at a time, which matches the status/priority catalogs. Task ROW reordering is a
@@ -97,7 +98,7 @@ export function TaskListsSection() {
     const [editor, setEditor] = useState<EditorState | null>(null);
     const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
 
-    if (capabilities?.canManageDepartmentSetting !== true) return null;
+    if (capabilities?.canConfigure !== true) return null;
 
     const handleSubmit = async (name: string) => {
         if (editor === null) return;

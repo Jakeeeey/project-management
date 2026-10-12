@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { CapabilitiesSchema, type Capabilities } from "../types/capabilities";
+import { DEFAULT_ACCESS_PAGE, DEFAULT_ACCESS_PAGE_SIZE } from "../types/access-query.schema";
 
 /**
  * The client hook behind the Access page.
@@ -70,8 +71,14 @@ export interface MemberAccessItem {
 
 /** The canonical return of this module's only access hook. */
 export interface UseAccessResult {
-    /** The department's live members with their access state — the canonical `items` collection. */
+    /** The current page of the department's live members with their access state. */
     readonly items: MemberAccessItem[];
+    /** The 1-based page `items` was read from. */
+    readonly page: number;
+    /** The page size `items` was read with. */
+    readonly pageSize: number;
+    /** The department's total member count, so the pager can render a page count. */
+    readonly total: number;
     readonly isLoading: boolean;
     /** True while a grant or revoke is in flight. */
     readonly isSubmitting: boolean;
@@ -101,6 +108,10 @@ export interface UseAccessResult {
      * from the server on success. The server refuses this for a non-head regardless of the flag.
      */
     readonly setAllowAllMembersGrant: (enabled: boolean) => Promise<boolean>;
+    /** Moves to the given 1-based page; the fetch effect refetches. */
+    readonly setPage: (page: number) => void;
+    /** Changes the page size, resets to page 1, and refetches. */
+    readonly setPageSize: (pageSize: number) => void;
 }
 
 /** `true` for every `TINYINT(1)` shape Directus can hand back; `false` for anything unexpected. */
@@ -132,6 +143,13 @@ function fullNameOf(firstName: unknown, lastName: unknown): string {
     const first = typeof firstName === "string" ? firstName.trim() : "";
     const last = typeof lastName === "string" ? lastName.trim() : "";
     return [first, last].filter(Boolean).join(" ");
+}
+
+/** Narrows the route's `total` field to a usable count; anything malformed reads as `0`. */
+function toTotalCount(raw: unknown): number {
+    if (raw === null || raw === undefined) return 0;
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
 /** Narrows an arbitrary route payload into the members the UI renders, dropping malformed entries. */
@@ -187,7 +205,9 @@ async function readEnvelope(res: Response): Promise<Record<string, unknown>> {
 /**
  * Loads the department's members with their access state and the actor's server-resolved capabilities.
  *
- * The hook fetches once on mount and again after every mutation. `memberNameById` is derived from
+ * The hook fetches one page on mount, again whenever the page or page size changes, and again
+ * after every mutation. When the total shrinks under the current page the page clamps back to the
+ * last live one, so the roster never strands on an empty page. `memberNameById` is derived from
  * `items` so the provenance column needs no second request and no `services/` import (which a client
  * file must never reach).
  *
@@ -196,6 +216,9 @@ async function readEnvelope(res: Response): Promise<Record<string, unknown>> {
  */
 export function useAccess(): UseAccessResult {
     const [items, setItems] = useState<MemberAccessItem[]>([]);
+    const [page, setPageState] = useState(DEFAULT_ACCESS_PAGE);
+    const [pageSize, setPageSizeState] = useState(DEFAULT_ACCESS_PAGE_SIZE);
+    const [total, setTotal] = useState(0);
     const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
     const [setting, setSetting] = useState<AccessSetting | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -205,11 +228,17 @@ export function useAccess(): UseAccessResult {
     const fetchGrants = useCallback(async (showLoading: boolean): Promise<void> => {
         if (showLoading) setIsLoading(true);
         try {
-            const res = await fetch(ENDPOINT, { cache: "no-store" });
+            const res = await fetch(`${ENDPOINT}?page=${page}&pageSize=${pageSize}`, { cache: "no-store" });
             const envelope = await readEnvelope(res);
             if (!res.ok) throw new Error(readMessage(envelope, "Failed to load Edit access"));
 
             setItems(toMemberAccessItems(envelope.data));
+            const totalCount = toTotalCount(envelope.total);
+            setTotal(totalCount);
+            // The roster may have shrunk under the current page: drop back to the last live page
+            // so the user is never stranded on an empty one; the fetch effect refetches it.
+            const pageCount = Math.max(1, Math.ceil(totalCount / pageSize));
+            if (page > pageCount) setPageState(pageCount);
             setSetting(toAccessSetting(envelope.setting));
 
             const parsed = CapabilitiesSchema.safeParse(envelope.capabilities);
@@ -222,11 +251,24 @@ export function useAccess(): UseAccessResult {
         } finally {
             if (showLoading) setIsLoading(false);
         }
-    }, []);
+    }, [page, pageSize]);
 
     const refresh = useCallback(async (): Promise<void> => {
         await fetchGrants(true);
     }, [fetchGrants]);
+
+    /** Moves to the given 1-based page; the fetch effect refetches. */
+    const setPage = useCallback((next: number): void => {
+        const parsed = Math.floor(Number(next));
+        setPageState(Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_ACCESS_PAGE);
+    }, []);
+
+    /** Changes the page size and returns to page 1; the fetch effect refetches. */
+    const setPageSize = useCallback((next: number): void => {
+        const parsed = Math.floor(Number(next));
+        setPageSizeState(Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_ACCESS_PAGE_SIZE);
+        setPageState(DEFAULT_ACCESS_PAGE);
+    }, []);
 
     /** Fires one write request, reads the envelope, and throws the server message when it failed. */
     const request = useCallback(async (method: HttpMethod, body: unknown): Promise<void> => {
@@ -297,6 +339,9 @@ export function useAccess(): UseAccessResult {
 
     return {
         items,
+        page,
+        pageSize,
+        total,
         isLoading,
         isSubmitting,
         error,
@@ -307,5 +352,7 @@ export function useAccess(): UseAccessResult {
         grant,
         revoke,
         setAllowAllMembersGrant,
+        setPage,
+        setPageSize,
     };
 }

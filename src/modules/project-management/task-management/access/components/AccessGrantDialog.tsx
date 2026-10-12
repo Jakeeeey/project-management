@@ -24,28 +24,27 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-import type { MemberAccessItem } from "../hooks/useAccess";
+import { GRANT_CANDIDATE_PAGE_SIZE, useGrantCandidates } from "../hooks/useGrantCandidates";
 
 export interface AccessGrantDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    /** Members who do NOT currently hold a grant — the only valid grant targets. */
-    candidates: readonly MemberAccessItem[];
     /** True while the grant request is in flight — gates both footer buttons. */
     isSubmitting: boolean;
-    /** Emits the chosen member's `user_id`; the caller performs the grant and closes on success. */
-    onSubmit: (userId: number) => void | Promise<void>;
+    /** Emits the chosen member's `user_id` with their display name; the caller grants and closes on success. */
+    onSubmit: (userId: number, label: string) => void | Promise<void>;
 }
 
 /**
  * The accessible, searchable path for granting Edit access.
  *
- * Granted members are removed from the picker (`candidates` arrives already filtered), so the list
- * only ever offers a legal target — there is no way to build a request the route would reject.
+ * The picker fetches its own candidates from the server (page 1 of a bounded, debounced `q`
+ * search), so it covers the whole department rather than the roster's visible page. Granted
+ * members and the actor arrive already excluded, so the list only ever offers a legal target.
  *
  * The member picker is the canonical Popover + Command combobox: the trigger carries
  * `role="combobox"` + `aria-expanded`, the label truncates inside a `min-w-0 flex-1` span, and the
- * list is capped (`max-h-64 overflow-y-auto overscroll-contain`) so a 53-member department scrolls
+ * list is capped (`max-h-64 overflow-y-auto overscroll-contain`) so a large department scrolls
  * inside the popover rather than growing the dialog.
  *
  * Width is the QA checklist's `S` tier (`sm:max-w-[500px]`) plus `w-[95vw]` so it always fits a
@@ -53,22 +52,20 @@ export interface AccessGrantDialogProps {
  * comes before Grant, and Grant is disabled for the whole in-flight window and until a member is
  * chosen.
  */
-export function AccessGrantDialog({
-    open,
-    onOpenChange,
-    candidates,
-    isSubmitting,
-    onSubmit,
-}: AccessGrantDialogProps) {
+export function AccessGrantDialog({ open, onOpenChange, isSubmitting, onSubmit }: AccessGrantDialogProps) {
     const [pickerOpen, setPickerOpen] = useState(false);
     const [selectedId, setSelectedId] = useState<number | null>(null);
+    const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
 
-    const selected = candidates.find((member) => member.user_id === selectedId) ?? null;
+    const { query, candidates, hasMore, isLoading: isSearching, setQuery } = useGrantCandidates(open);
+
+    const showAllGranted = !isSearching && candidates.length === 0 && query.trim() === "";
 
     /** A reopened dialog must never remember the previous pick, so the close path clears it. */
     const handleOpenChange = (next: boolean) => {
         if (!next) {
             setSelectedId(null);
+            setSelectedLabel(null);
             setPickerOpen(false);
         }
         onOpenChange(next);
@@ -76,7 +73,7 @@ export function AccessGrantDialog({
 
     const handleSubmit = async () => {
         if (selectedId === null) return;
-        await onSubmit(selectedId);
+        await onSubmit(selectedId, selectedLabel ?? "The member");
     };
 
     return (
@@ -92,7 +89,7 @@ export function AccessGrantDialog({
                 </DialogHeader>
 
                 <div className="max-h-[60vh] space-y-2 overflow-y-auto px-6 py-4">
-                    {candidates.length === 0 ? (
+                    {showAllGranted ? (
                         <p className="text-sm text-muted-foreground">
                             Every member of this department already has Edit access.
                         </p>
@@ -112,11 +109,11 @@ export function AccessGrantDialog({
                                         <span
                                             className={cn(
                                                 "min-w-0 flex-1 truncate text-left",
-                                                selected === null && "text-muted-foreground",
+                                                selectedLabel === null && "text-muted-foreground",
                                             )}
-                                            title={selected?.full_name}
+                                            title={selectedLabel ?? undefined}
                                         >
-                                            {selected?.full_name ?? "Select a member…"}
+                                            {selectedLabel ?? "Select a member…"}
                                         </span>
                                         <ChevronsUpDown
                                             className="ml-2 size-4 shrink-0 opacity-50"
@@ -128,50 +125,67 @@ export function AccessGrantDialog({
                                     align="start"
                                     className="w-(--radix-popover-trigger-width) p-0"
                                 >
-                                    <Command>
+                                    <Command shouldFilter={false}>
                                         <CommandInput
                                             placeholder="Search members by name or email…"
                                             aria-label="Search department members"
+                                            value={query}
+                                            onValueChange={setQuery}
                                         />
                                         <CommandList className="max-h-64 overflow-y-auto overscroll-contain">
-                                            <CommandEmpty>No matching member.</CommandEmpty>
-                                            <CommandGroup heading="Members">
-                                                {candidates.map((member) => (
-                                                    <CommandItem
-                                                        key={member.user_id}
-                                                        value={`${member.user_id} ${member.full_name} ${member.user_email ?? ""}`}
-                                                        onSelect={() => {
-                                                            setSelectedId(member.user_id);
-                                                            setPickerOpen(false);
-                                                        }}
-                                                    >
-                                                        <Check
-                                                            className={cn(
-                                                                "mr-2 size-4 shrink-0",
-                                                                selectedId === member.user_id
-                                                                    ? "opacity-100"
-                                                                    : "opacity-0",
-                                                            )}
-                                                            aria-hidden="true"
-                                                        />
-                                                        <span
-                                                            className="min-w-0 flex-1 truncate"
-                                                            title={member.full_name}
-                                                        >
-                                                            {member.full_name}
-                                                        </span>
-                                                        {member.user_email ? (
-                                                            <span className="ml-2 max-w-[45%] truncate text-xs text-muted-foreground">
-                                                                {member.user_email}
-                                                            </span>
-                                                        ) : null}
-                                                    </CommandItem>
-                                                ))}
-                                            </CommandGroup>
+                                            {isSearching && candidates.length === 0 ? (
+                                                <p className="py-6 text-center text-sm text-muted-foreground">
+                                                    Searching members…
+                                                </p>
+                                            ) : (
+                                                <>
+                                                    <CommandEmpty>No matching member.</CommandEmpty>
+                                                    <CommandGroup heading="Members">
+                                                        {candidates.map((member) => (
+                                                            <CommandItem
+                                                                key={member.user_id}
+                                                                value={`${member.user_id} ${member.full_name} ${member.user_email ?? ""}`}
+                                                                onSelect={() => {
+                                                                    setSelectedId(member.user_id);
+                                                                    setSelectedLabel(member.full_name);
+                                                                    setPickerOpen(false);
+                                                                }}
+                                                            >
+                                                                <Check
+                                                                    className={cn(
+                                                                        "mr-2 size-4 shrink-0",
+                                                                        selectedId === member.user_id
+                                                                            ? "opacity-100"
+                                                                            : "opacity-0",
+                                                                    )}
+                                                                    aria-hidden="true"
+                                                                />
+                                                                <span
+                                                                    className="min-w-0 flex-1 truncate"
+                                                                    title={member.full_name}
+                                                                >
+                                                                    {member.full_name}
+                                                                </span>
+                                                                {member.user_email ? (
+                                                                    <span className="ml-2 max-w-[45%] truncate text-xs text-muted-foreground">
+                                                                        {member.user_email}
+                                                                    </span>
+                                                                ) : null}
+                                                            </CommandItem>
+                                                        ))}
+                                                    </CommandGroup>
+                                                </>
+                                            )}
                                         </CommandList>
                                     </Command>
                                 </PopoverContent>
                             </Popover>
+                            {hasMore ? (
+                                <p className="text-xs text-muted-foreground">
+                                    Showing the first {GRANT_CANDIDATE_PAGE_SIZE} matches — refine
+                                    your search.
+                                </p>
+                            ) : null}
                         </>
                     )}
                 </div>
