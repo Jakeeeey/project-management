@@ -189,6 +189,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             field_id: body.data.field_id,
             label: body.data.label,
             sort_order: body.data.sort_order,
+            completion_percent: body.data.completion_percent,
         });
         return NextResponse.json({ success: true, data: created }, { status: 201 });
     } catch (error) {

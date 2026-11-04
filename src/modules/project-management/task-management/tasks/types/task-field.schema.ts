@@ -56,6 +56,22 @@ export const TaskFieldIconSchema = z
 /** Both tables store `sort_order INT NOT NULL DEFAULT 0`; every list orders by `(sort_order, id)`. */
 const SortOrderSchema = z.number().int().min(0, "Sort order must be zero or greater");
 
+/**
+ * `pm_task_field_option.completion_percent` — `TINYINT UNSIGNED NOT NULL DEFAULT 0` with a CHECK for
+ * 0-100: how far a task counts as done when it carries this choice. A Choice column can therefore
+ * carry a weighted scale (`Deployed` 100, `Staging` 10, `Blocked` 0) instead of every chosen answer
+ * reading as done.
+ *
+ * Optional in the payload so an omitted value lands on the column's own `DEFAULT 0`, the way the
+ * status catalog treats the same column. Unlike a status, an option has no `kind` discriminator, so
+ * the service applies it unconditionally.
+ */
+const CompletionPercentSchema = z
+    .number()
+    .int("Completion percent must be a whole number")
+    .min(0, "Completion percent must be between 0 and 100")
+    .max(100, "Completion percent must be between 0 and 100");
+
 /** Any `pm_task_field` / `pm_task_field_option` key in JS number range. */
 const IdentifierSchema = z.number().int().positive();
 
@@ -88,6 +104,7 @@ export const CreateTaskFieldOptionSchema = z.object({
     color: TaskFieldColorSchema.nullable().optional(),
     icon: TaskFieldIconSchema.nullable().optional(),
     sort_order: SortOrderSchema.optional(),
+    completion_percent: CompletionPercentSchema.optional(),
 });
 
 /** PATCH body for an existing choice. `field_id` is not patchable — a choice never changes column. */
@@ -97,6 +114,7 @@ export const UpdateTaskFieldOptionSchema = z.object({
     color: TaskFieldColorSchema.nullable().optional(),
     icon: TaskFieldIconSchema.nullable().optional(),
     sort_order: SortOrderSchema.optional(),
+    completion_percent: CompletionPercentSchema.optional(),
 });
 
 /**

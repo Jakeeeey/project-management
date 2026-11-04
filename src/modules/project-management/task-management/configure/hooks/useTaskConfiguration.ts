@@ -40,6 +40,13 @@ export interface CatalogItem {
     readonly icon: string | null;
     readonly sort_order: number;
     readonly is_default: boolean;
+    /**
+     * `pm_task_status` only: how complete a task in this status is, 0-100.
+     *
+     * Present on every status row — a row read before the column existed resolves to 0, which is the
+     * column's own default — and never set on a priority row, which has no such column.
+     */
+    readonly completion_percent?: number;
 }
 
 /** A catalog row tagged with the table it belongs to — the combined `items` collection. */
@@ -56,6 +63,11 @@ export interface CatalogFormInput {
      */
     readonly icon?: string | null;
     readonly is_default: boolean;
+    /**
+     * Status rows only, 0-100. OPTIONAL so a caller that only edits a label keeps compiling, and so a
+     * priority payload can omit a column its table does not have.
+     */
+    readonly completion_percent?: number;
 }
 
 /** Reorder direction for the keyboard-accessible up/down controls. */
@@ -111,12 +123,19 @@ function stripCode(message: string): string {
     return message.replace(UPPERCASE_CODE_PREFIX, "").trim();
 }
 
+/** A stored percentage as a whole 0-100; a missing or unusable value reads as 0, never `NaN`. */
+function readPercent(value: unknown): number {
+    const parsed = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.min(100, Math.max(0, Math.round(parsed)));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /** Narrows an arbitrary Directus payload into the rows the UI renders, dropping malformed entries. */
-function toCatalogItems(raw: unknown): CatalogItem[] {
+function toCatalogItems(raw: unknown, kind: CatalogKind): CatalogItem[] {
     if (!Array.isArray(raw)) return [];
 
     const items: CatalogItem[] = [];
@@ -133,6 +152,8 @@ function toCatalogItems(raw: unknown): CatalogItem[] {
             icon: normalizeIconName(entry.icon),
             sort_order: Number(entry.sort_order) || 0,
             is_default: readFlag(entry.is_default),
+            // Only `pm_task_status` carries the column; a priority row's payload has no such key.
+            ...(kind === "status" ? { completion_percent: readPercent(entry.completion_percent) } : {}),
         });
     }
     return items;
@@ -184,8 +205,8 @@ export function useTaskConfiguration(): UseTaskConfigurationResult {
             if (!res.ok) throw new Error(readMessage(envelope, "Failed to load the task configuration"));
 
             const data = isRecord(envelope.data) ? envelope.data : {};
-            setStatuses(toCatalogItems(data.statuses));
-            setPriorities(toCatalogItems(data.priorities));
+            setStatuses(toCatalogItems(data.statuses, "status"));
+            setPriorities(toCatalogItems(data.priorities, "priority"));
 
             const parsed = CapabilitiesSchema.safeParse(envelope.capabilities);
             setCapabilities(parsed.success ? parsed.data : null);
@@ -249,9 +270,19 @@ export function useTaskConfiguration(): UseTaskConfigurationResult {
         async (kind: CatalogKind, input: CatalogFormInput): Promise<boolean> => {
             const list = kind === "status" ? statuses : priorities;
             const sortOrder = list.reduce((highest, row) => Math.max(highest, row.sort_order), -1) + 1;
+            const { completion_percent, ...rest } = input;
 
             return runMutation(
-                () => request("POST", { kind, ...input, sort_order: sortOrder }),
+                () =>
+                    request("POST", {
+                        kind,
+                        ...rest,
+                        // `pm_task_status` is the only table with the column, so a priority never sends it.
+                        ...(kind === "status" && completion_percent !== undefined
+                            ? { completion_percent }
+                            : {}),
+                        sort_order: sortOrder,
+                    }),
                 `${input.label} added as a ${kind}`,
             );
         },
@@ -264,8 +295,23 @@ export function useTaskConfiguration(): UseTaskConfigurationResult {
             id: number,
             changes: CatalogFormInput,
             label: string,
-        ): Promise<boolean> =>
-            runMutation(() => request("PATCH", { kind, id, ...changes }), `${label} updated`),
+        ): Promise<boolean> => {
+            const { completion_percent, ...rest } = changes;
+
+            return runMutation(
+                () =>
+                    request("PATCH", {
+                        kind,
+                        id,
+                        ...rest,
+                        // Same status-only gate as `createItem`: an omitted key leaves the column alone.
+                        ...(kind === "status" && completion_percent !== undefined
+                            ? { completion_percent }
+                            : {}),
+                    }),
+                `${label} updated`,
+            );
+        },
         [request, runMutation],
     );
 

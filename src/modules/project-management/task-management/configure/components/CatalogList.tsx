@@ -117,6 +117,18 @@ export function CatalogList({
                                     </Badge>
                                 ) : null}
 
+                                {/* A status's completion weight, trailing the chip as a plain figure
+                                    rather than a second badge, so a department can scan the column. */}
+                                {kind === "status" ? (
+                                    <span
+                                        className="min-w-9 shrink-0 text-right text-xs tabular-nums text-muted-foreground"
+                                        data-slot={`catalog-item-${kind}-completion`}
+                                    >
+                                        <span className="sr-only">Completion </span>
+                                        {item.completion_percent ?? 0}%
+                                    </span>
+                                ) : null}
+
                                 <div className="flex shrink-0 items-center gap-0.5">
                                     <Button
                                         type="button"

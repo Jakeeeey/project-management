@@ -1,9 +1,11 @@
 /**
  * Pure-logic assertion harness for the tasks module's pure cores: the move route's completeness rule
- * (`./task-move-rules`) and the activity trail's delta computation (`./task-activity-delta`).
+ * (`./task-move-rules`), the activity trail's delta computation (`./task-activity-delta`), the task
+ * list policy (`./task-list-policy`) and the custom-column payload validators
+ * (`../types/task-field.schema`).
  *
  * Run from `project-management/` (Node 24 strips the types natively):
- *   node --experimental-strip-types src/modules/project-management/tasks/services/__assert.ts
+ *   node --experimental-strip-types src/modules/project-management/task-management/tasks/services/__assert.ts
  * Exit code 0 means every assertion below passed.
  *
  * Why the `.ts` extensions and the `@ts-expect-error` directives: Node's loader resolves a relative
@@ -12,6 +14,8 @@
  * protected scaffold file this module may not edit) does not enable it. The directives suppress
  * only that extension complaint; the module is still fully resolved and typed by `tsc`.
  */
+// @ts-expect-error -- Node >= 22.15 exports `registerHooks`; the pinned @types/node (20.x) predates it.
+import { registerHooks } from "node:module";
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
 import { containsExactlyOnce, isCompletePostMoveChildSet, type MoveChildRow } from "./task-move-rules.ts";
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
@@ -301,6 +305,71 @@ const inheritedFromUnknownList = resolveTaskListId({ lists: RESOLUTION_LISTS, re
 check(
     "a subtask trusts its parent's list even when that list is no longer live",
     inheritedFromUnknownList.kind === "resolved" && inheritedFromUnknownList.listId === 42,
+);
+
+// --- Choice completion weight: the real payload validators -----------------------------------------
+
+/** Minimal shapes for the resolution hook — `@types/node` 20 has no `registerHooks` to infer from. */
+type ResolveContext = { readonly conditions: readonly string[]; readonly parentURL?: string };
+type ResolveNext = (specifier: string, context?: ResolveContext) => { url: string };
+
+/**
+ * `task-field.schema` imports the icon allow-list without a file extension: the bundler resolves
+ * that, Node does not. The hook retries such a specifier as `.ts`, which is the only way to load the
+ * real schema module — and therefore the real validator — under plain Node.
+ */
+registerHooks({
+    resolve(specifier: string, context: ResolveContext, nextResolve: ResolveNext): { url: string } {
+        try {
+            return nextResolve(specifier, context);
+        } catch (error) {
+            // A specifier such as "../components/catalog-icon" carries no extension at all, while
+            // "../x.schema" only looks like it does; appending ".ts" is the one retry that fits both.
+            if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+            throw error;
+        }
+    },
+});
+
+// @ts-expect-error -- Node needs the real ".ts" extension; tsc forbids it (see the file header).
+const { CreateTaskFieldOptionSchema, UpdateTaskFieldOptionSchema } = await import("../types/task-field.schema.ts");
+
+/** The first issue message a create-option payload produces, or `null` when it is accepted. */
+function firstOptionIssueMessage(value: unknown): string | null {
+    const parsed = CreateTaskFieldOptionSchema.safeParse({ field_id: 22, label: "Deployed", completion_percent: value });
+    return parsed.success ? null : (parsed.error.issues[0]?.message ?? "");
+}
+
+check(
+    "option completion percent: the bounds 0 and 100 are accepted",
+    CreateTaskFieldOptionSchema.safeParse({ field_id: 22, label: "Deployed", completion_percent: 0 }).success &&
+        CreateTaskFieldOptionSchema.safeParse({ field_id: 22, label: "Deployed", completion_percent: 100 }).success,
+);
+
+const OMITTED_OPTION_PERCENT = CreateTaskFieldOptionSchema.parse({ field_id: 22, label: "Deployed" });
+check(
+    "option completion percent: omitting it is valid, leaves the key absent and reads as 0",
+    !("completion_percent" in OMITTED_OPTION_PERCENT) && (OMITTED_OPTION_PERCENT.completion_percent ?? 0) === 0,
+);
+
+check(
+    "option completion percent: 101 is rejected with a range message",
+    firstOptionIssueMessage(101) === "Completion percent must be between 0 and 100",
+);
+check(
+    "option completion percent: -1 is rejected with a range message",
+    firstOptionIssueMessage(-1) === "Completion percent must be between 0 and 100",
+);
+check(
+    "option completion percent: a fraction is rejected with a whole-number message",
+    firstOptionIssueMessage(1.5) === "Completion percent must be a whole number",
+);
+check("option completion percent: a numeric string is rejected, not coerced", firstOptionIssueMessage("50") !== null);
+check(
+    "option completion percent: the update schema inherits the field and stays fully optional",
+    UpdateTaskFieldOptionSchema.safeParse({ id: 7 }).success &&
+        UpdateTaskFieldOptionSchema.safeParse({ id: 7, completion_percent: 100 }).success &&
+        !UpdateTaskFieldOptionSchema.safeParse({ id: 7, completion_percent: 101 }).success,
 );
 
 // --- Task lists: coded error -----------------------------------------------------------------------

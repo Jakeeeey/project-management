@@ -161,6 +161,13 @@ export interface ScopedFieldOptionRow {
     readonly color?: unknown;
     /** `VARCHAR(64)` lucide icon name or absent; optional for the same pre-DDL reason as `color`. */
     readonly icon?: unknown;
+    /**
+     * `TINYINT UNSIGNED NOT NULL DEFAULT 0` with a CHECK for 0-100: the weight this choice carries in
+     * the completion rollup. `unknown` for the same pre-DDL reason as `color` — a deployment can be
+     * running this code before the `ALTER TABLE` — so every reader normalises it, and a missing key
+     * reads as 0 (not started) instead of breaking the read.
+     */
+    readonly completion_percent?: unknown;
 }
 
 /** A live `pm_task_field_value` row as the scoped loader returns it — one task's answer. */

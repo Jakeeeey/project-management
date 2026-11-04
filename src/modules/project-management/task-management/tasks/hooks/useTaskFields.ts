@@ -63,10 +63,13 @@ export interface UseTaskFieldsResult {
         label: string,
         color: string | null,
         icon: string | null,
+        completionPercent: number,
     ) => Promise<number | null>;
     readonly renameOption: (optionId: number, label: string) => Promise<boolean>;
     readonly setOptionColor: (optionId: number, color: string | null) => Promise<boolean>;
     readonly setOptionIcon: (optionId: number, icon: string | null) => Promise<boolean>;
+    /** Writes a choice's completion weight (0-100) — how complete a task carrying it counts as. */
+    readonly setOptionCompletion: (optionId: number, percent: number) => Promise<boolean>;
     readonly deleteOption: (optionId: number, label: string) => Promise<boolean>;
     readonly moveOption: (
         fieldId: number,
@@ -235,6 +238,7 @@ export function useTaskFields(): UseTaskFieldsResult {
             label: string,
             color: string | null,
             icon: string | null,
+            completionPercent: number,
         ): Promise<number | null> => {
             const field = fields.find((candidate) => candidate.id === fieldId);
             const sortOrder =
@@ -249,6 +253,9 @@ export function useTaskFields(): UseTaskFieldsResult {
                     color,
                     icon,
                     sort_order: sortOrder,
+                    // The option POST forwards this to the column, so the weight is stored on create;
+                    // the route accepts it unconditionally (an option has no status/priority split).
+                    completion_percent: completionPercent,
                 });
                 if (isRecord(data) && typeof data.id === "number") createdId = data.id;
             }, `${label} added as a choice`);
@@ -273,6 +280,15 @@ export function useTaskFields(): UseTaskFieldsResult {
     const setOptionIcon = useCallback(
         async (optionId: number, icon: string | null): Promise<boolean> =>
             runMutation(() => request("PATCH", { kind: "option", id: optionId, icon }), "Icon updated"),
+        [request, runMutation],
+    );
+
+    const setOptionCompletion = useCallback(
+        async (optionId: number, percent: number): Promise<boolean> =>
+            runMutation(
+                () => request("PATCH", { kind: "option", id: optionId, completion_percent: percent }),
+                "Completion updated",
+            ),
         [request, runMutation],
     );
 
@@ -334,6 +350,7 @@ export function useTaskFields(): UseTaskFieldsResult {
         renameOption,
         setOptionColor,
         setOptionIcon,
+        setOptionCompletion,
         deleteOption,
         moveOption,
     };

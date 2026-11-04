@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm, useWatch } from "react-hook-form";
+import { useForm, useWatch, type ControllerRenderProps } from "react-hook-form";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,68 @@ import { CatalogIconPicker } from "../../tasks/components/CatalogIconPicker";
 
 /** A valid 6-digit hex the native colour input can render before the user picks their own. */
 const FALLBACK_HEX = "#64748b";
+
+/** The status completion field's helper copy — the one place the 0 and 100 ends are explained. */
+const COMPLETION_DESCRIPTION =
+    "How complete a task in this status is. 0 means not started, 100 means done.";
+
+/**
+ * The whole 0-100 value behind whatever the text field handed over.
+ *
+ * The resolver would reject `101`, `""` and `NaN` with a message the user cannot act on, so the
+ * value is repaired before it reaches it: an unusable or empty field reads as 0 (the column's own
+ * default), and anything outside the range is clamped instead of accepted.
+ */
+function clampCompletionPercent(value: unknown): number {
+    const parsed = typeof value === "number" ? value : Number(String(value ?? "").trim());
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.min(100, Math.max(0, Math.round(parsed)));
+}
+
+interface CompletionInputProps {
+    field: ControllerRenderProps<CreateCatalogItemInput, "completion_percent">;
+    /** The row's stored value. Read once at mount, before the dialog's form reset has run. */
+    initialPercent: number;
+}
+
+/**
+ * The completion box, holding its own text so the field can sit empty while the user retypes.
+ *
+ * The form only ever stores a whole 0-100, so an empty box is not expressible there; the text is
+ * kept here and the form is driven to 0 while the box is empty. Radix unmounts the dialog body on
+ * close, so every open mounts this again with the row's saved value.
+ */
+function CompletionInput({ field, initialPercent }: CompletionInputProps) {
+    const [text, setText] = useState(() => String(initialPercent));
+
+    return (
+        <FormControl>
+            <Input
+                inputMode="numeric"
+                autoComplete="off"
+                className="pr-8 tabular-nums"
+                // Spread first so RHF's ref and name survive; the handlers below replace its value wiring.
+                {...field}
+                value={text}
+                onChange={(event) => {
+                    const digits = event.target.value.replace(/[^0-9]/g, "").slice(0, 3);
+                    if (digits === "") {
+                        setText("");
+                        field.onChange(0);
+                        return;
+                    }
+                    const next = clampCompletionPercent(digits);
+                    setText(String(next));
+                    field.onChange(next);
+                }}
+                onBlur={() => {
+                    setText(String(clampCompletionPercent(field.value)));
+                    field.onBlur();
+                }}
+            />
+        </FormControl>
+    );
+}
 
 export interface CatalogItemDialogProps {
     open: boolean;
@@ -71,7 +133,7 @@ export function CatalogItemDialog({
 
     const form = useForm<CreateCatalogItemInput>({
         resolver: zodResolver(CreateCatalogItemSchema),
-        defaultValues: { label: "", color: null, icon: null, is_default: false },
+        defaultValues: { label: "", color: null, icon: null, is_default: false, completion_percent: 0 },
     });
 
     /** The live colour, so the icon previews below track it without subscribing via `form.watch`. */
@@ -84,6 +146,7 @@ export function CatalogItemDialog({
             color: item?.color ?? null,
             icon: item?.icon ?? null,
             is_default: item?.is_default ?? false,
+            completion_percent: clampCompletionPercent(item?.completion_percent),
         });
     }, [open, item, form]);
 
@@ -93,8 +156,16 @@ export function CatalogItemDialog({
             color: values.color ?? null,
             icon: values.icon ?? null,
             is_default: values.is_default === true,
+            // A priority has no such column, so nothing is sent for it — not even the default 0.
+            ...(kind === "status"
+                ? { completion_percent: clampCompletionPercent(values.completion_percent) }
+                : {}),
         });
     });
+
+    const description = isEditing
+        ? `Change the label, ${kind === "status" ? "completion, " : ""}colour or default flag. Every task already pointing at this row follows immediately.`
+        : `Add a new ${kind} to this department’s list. Tasks reference these rows directly.`;
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -103,11 +174,7 @@ export function CatalogItemDialog({
                     <DialogTitle className="line-clamp-1">
                         {isEditing ? `Edit ${label.toLowerCase()}` : `Add ${label.toLowerCase()}`}
                     </DialogTitle>
-                    <DialogDescription>
-                        {isEditing
-                            ? "Change the label, colour or default flag. Every task already pointing at this row follows immediately."
-                            : `Add a new ${kind} to this department’s list. Tasks reference these rows directly.`}
-                    </DialogDescription>
+                    <DialogDescription>{description}</DialogDescription>
                 </DialogHeader>
 
                 <Form {...form}>
@@ -132,6 +199,34 @@ export function CatalogItemDialog({
                                     </FormItem>
                                 )}
                             />
+
+                            {/* Statuses carry a completion percentage; a priority has no such column,
+                                so the control is absent rather than disabled. */}
+                            {kind === "status" ? (
+                                <FormField
+                                    control={form.control}
+                                    name="completion_percent"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>Completion</FormLabel>
+                                            <div className="relative">
+                                                <CompletionInput
+                                                    field={field}
+                                                    initialPercent={clampCompletionPercent(item?.completion_percent)}
+                                                />
+                                                <span
+                                                    aria-hidden="true"
+                                                    className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground"
+                                                >
+                                                    %
+                                                </span>
+                                            </div>
+                                            <FormDescription>{COMPLETION_DESCRIPTION}</FormDescription>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+                            ) : null}
 
                             <FormField
                                 control={form.control}
