@@ -9,8 +9,8 @@
  *
  * Two bases feed the same rollup, so the arithmetic cannot differ between them:
  * - `statusCompletionScore` — a leaf scores its own status's percentage;
- * - `columnChoiceScore` — a leaf scores 100 when it carries one of the caller's "counts as done"
- *   answers in one Choice column, else 0.
+ * - `columnWeightScore` — a leaf scores the percentage its answer's option carries in one Choice
+ *   column. An unanswered leaf, and an answer naming an option that no longer exists, both score 0.
  *
  * The parent mean is returned UNFLOORED, because the display has three bands a floored integer
  * cannot express: a mean strictly between 0 and 1 prints `<1%`, and flooring before formatting would
@@ -184,15 +184,23 @@ export function statusCompletionScore(
     return (row) => percentByStatusId.get(row.status_id) ?? 0;
 }
 
-/** A leaf's score from one Choice column: 100 when it carries a chosen answer, otherwise 0. */
-export function columnChoiceScore<T extends CompletionRow>(
+/**
+ * A leaf's score from one Choice column: the percentage its answer's option carries.
+ *
+ * The weight is the option's own `completion_percent`, so `Deployed` 100 and `Staging` 10 score
+ * differently instead of every answer reading as done. Two cases score 0 rather than guessing:
+ * a task with no answer to the column, and an answer naming an option the column no longer offers
+ * (a removed choice). The caller shows both as a distinct second line.
+ */
+export function columnWeightScore<T extends CompletionRow>(
     fieldId: number,
-    doneValues: ReadonlySet<string>,
+    percentByOptionId: ReadonlyMap<string, number>,
 ): CompletionLeafScore<T> {
     return (row) => {
         for (const answer of row.custom_values) {
             if (answer.field_id !== fieldId) continue;
-            return answer.value !== null && doneValues.has(answer.value) ? 100 : 0;
+            if (answer.value === null) return 0;
+            return percentByOptionId.get(answer.value) ?? 0;
         }
         return 0;
     };

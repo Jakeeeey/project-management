@@ -7,13 +7,45 @@ import {
     useRef,
     useState,
     useSyncExternalStore,
+    type CSSProperties,
     type KeyboardEvent,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronRight, ListTree, RotateCcw, TriangleAlert } from "lucide-react";
+import {
+    ChevronDown,
+    ChevronRight,
+    ChevronsDownUp,
+    ChevronsUpDown,
+    ListFilter,
+    ListTree,
+    RotateCcw,
+    Search,
+    SearchX,
+    TriangleAlert,
+    X,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuLabel,
+    DropdownMenuRadioGroup,
+    DropdownMenuRadioItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import {
     Select,
@@ -33,10 +65,12 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
+import { useSavedTaskFilters } from "../../hooks/useSavedTaskFilters";
 import type { TaskField, TaskListItem } from "../../hooks/useTasks";
-import type { TaskViewProps } from "../../types/task-view";
+import type { TaskTreeRow } from "../../hooks/useTaskTree";
+import { assigneeName, type TaskViewProps } from "../../types/task-view";
 import {
-    columnChoiceScore,
+    columnWeightScore,
     completionFlag,
     computeCompletion,
     describeCompletionPercent,
@@ -46,32 +80,50 @@ import {
     type CompletionRollup,
 } from "../../utils/completion";
 import { buildTree, flattenVisible, type TreeSourceRow, type TreeNode } from "../../utils/tree";
-import { MultiSelectCombobox, type MultiSelectComboboxOption } from "../MultiSelectCombobox";
 import { NO_STATUS_LABEL, TaskStatusBadge } from "../TaskRowBadges";
-import { TaskCombobox, type TaskComboboxOption } from "../TaskCombobox";
+import {
+    TaskFilterBuilder,
+    type FilterBuilderMember,
+    type FilterBuilderOption,
+} from "../TaskFilterBuilder";
+import {
+    anyClauseActive,
+    cloneClausesForApply,
+    isClauseActive,
+    rowMatchesClauses,
+    type FilterClause,
+    type SavedTaskFilter,
+} from "../task-filter";
+import { pruneToVisible, visibleTaskIds } from "./progress-tree";
 
 /**
  * The Progress view: the department's tasks as a read-only completion tree-table.
  *
  * Every number here comes from {@link computeCompletion} — the one rollup — never from a local
- * average, so the two bases (a task's own status percentage, or whether it carries a chosen answer
- * in one Choice column) can only differ in what a LEAF scores, never in how a parent is averaged.
+ * average, so the two bases (a task's own status percentage, or the weight of the Choice-column
+ * option it carries) can only differ in what a LEAF scores, never in how a parent is averaged.
+ * Search and filters hide rows AFTER the rollup has run over the full list, which is why filtering
+ * can never move a percentage: a parent's mean still covers every child, shown or hidden.
  *
- * The view owns three pieces of UI state and nothing else: which basis is showing, which siblings
- * sort order is showing, and which parents are collapsed. It never fetches and never writes, so the
- * shell stays the only owner of the rows and of retries.
+ * The view owns its own UI state and nothing else: basis, column, sort order, which parents are
+ * collapsed, and this tab's own search and filters (the List keeps its own). It never fetches and
+ * never writes, so the shell stays the only owner of the rows and of retries.
  *
  * Only a window of rows is mounted ({@link useVirtualizer}). That is what makes the tab survive a
  * fully expanded tree: the DOM holds what is on screen, not what the list contains.
  */
 
-type ProgressMode = "status" | "column";
+/**
+ * What a LEAF scores. There are no modes: status weights are the default basis, and a Choice column
+ * is an alternative one. A parent's mean is the same arithmetic either way.
+ */
+type ProgressBasis =
+    | { readonly kind: "status" }
+    | { readonly kind: "column"; readonly fieldId: number };
+
 type ProgressSort = "tree" | "lowest";
 
-const MODE_LABELS: Record<ProgressMode, string> = {
-    status: "By status",
-    column: "By column",
-};
+const STATUS_BASIS_LABEL = "Status weights";
 
 const SORT_LABELS: Record<ProgressSort, string> = {
     tree: "Tree order",
@@ -79,11 +131,17 @@ const SORT_LABELS: Record<ProgressSort, string> = {
 };
 
 /**
- * The visual indent step and its cap. The cap is PRESENTATION ONLY — `aria-level` always carries the
- * row's true depth, so a deep branch reads correctly to a screen reader while the table stays narrow.
+ * The visual indent step and its cap. A rail is painted every step, so the step is also the band
+ * width: 20px in the table, 16px on a card, with the rail centred in each band (x = 10 + 20k).
+ *
+ * The cap is PRESENTATION ONLY — `aria-level` always carries the row's true depth, so a deep branch
+ * reads correctly to a screen reader while the table stays narrow. Past the cap the outermost rail
+ * clips and a `+n` marker reports the levels the indent cannot show.
  */
-const INDENT_STEP_PX = 12;
-const MAX_INDENT_DEPTH = 6;
+const TABLE_INDENT_STEP_PX = 20;
+const TABLE_MAX_INDENT_DEPTH = 6;
+const CARD_INDENT_STEP_PX = 16;
+const CARD_MAX_INDENT_DEPTH = 4;
 
 /** 80px on the number's left, so every row's bar lines up regardless of the digits beside it. */
 const BAR_CLASS = "h-2 w-20 shrink-0";
@@ -107,8 +165,18 @@ const COMPLETE_COLUMN_PX = 144;
 const NOTE_COLUMN_PX = 256;
 /** Below `xl` the Note cell holds the flag icon alone, so the column shrinks to the icon. */
 const NOTE_COMPACT_COLUMN_PX = 40;
+/**
+ * The Task column's floor. The table is `table-fixed`, so without a floor a narrow container would
+ * squeeze Status and Note below their declared widths and clip their labels instead of letting the
+ * scroll box reach them.
+ */
+const TASK_COLUMN_MIN_PX = 220;
 /** 40px of sticky header, 4px of air: a row scrolled to this offset is never hidden behind it. */
 const HEADER_SCROLL_PADDING_PX = 44;
+
+/** 200ms of typing is one filter change; 400ms of quiet is one announcement. */
+const SEARCH_DEBOUNCE_MS = 200;
+const LIVE_REGION_DEBOUNCE_MS = 400;
 
 /**
  * A body row's shared chrome. Nothing here pins a height: the row box is whatever its cells measure,
@@ -133,22 +201,57 @@ const FLAG_COPY: Record<CompletionFlag, string> = {
     "subtasks-complete-not-marked": "All subtasks complete, not marked complete",
 };
 
-const EMPTY_VALUES: ReadonlyMap<number, number> = new Map<number, number>();
-const NO_VALUE: CompletionRollup = {
-    valueById: EMPTY_VALUES,
-    ownById: EMPTY_VALUES,
-    childCountById: EMPTY_VALUES,
-};
+/** A leaf's second line under "By column" when the task carries no answer for that column. */
+const NOT_SET_LABEL = "Not set";
+/** ... and when it carries an answer naming an option the column no longer offers. */
+const REMOVED_CHOICE_LABEL = "Removed choice";
 
 function subtaskCountLabel(count: number): string {
     return `${count} subtask${count === 1 ? "" : "s"}`;
 }
 
-/** A leaf's second line under "By column" when the task carries no answer for that column. */
-const NO_ANSWER_LABEL = "No answer";
-
 function taskTitle(task: TaskListItem): string {
     return task.title.trim() === "" ? "Untitled task" : task.title;
+}
+
+/**
+ * The rail colour: `--muted-foreground` at an alpha, so no new global token is needed. The alpha is
+ * mode-split because that token flips direction — dark ink on white in light mode, pale ink on
+ * near-black in dark mode — and one number cannot clear 3:1 on both grounds. 0.76 lands near
+ * rgb(143,143,150) on white (3.21:1), 0.55 near rgb(102,102,109) on the dark card (3.38:1).
+ *
+ * It has to be set on the element that paints the gradient, since a custom property is read from the
+ * box's own cascade. `--border` was the previous colour and measured 1.18:1 in dark mode.
+ */
+const RAIL_ALPHA_CLASS = "[--rail-alpha:0.76] dark:[--rail-alpha:0.55]";
+
+/**
+ * The depth rails, as an inline style because `background-size` is per-row data: an arbitrary
+ * Tailwind class would be one class per depth per row, which defeats class hoisting across 77 rows.
+ *
+ * The gradient repeats every `stepPx`, so the band boundaries are arithmetic and never compress.
+ * `background-size` is what terminates the set — a row paints rails for its ANCESTORS only, never
+ * for its own band. The colour is `RAIL_ALPHA_CLASS`'s `--rail-alpha` over `--muted-foreground`.
+ */
+function railStyle(depth: number, stepPx: number): CSSProperties {
+    return {
+        backgroundImage: `repeating-linear-gradient(to right, hsl(var(--muted-foreground) / var(--rail-alpha)) 0 1px, transparent 1px ${stepPx}px)`,
+        backgroundRepeat: "no-repeat",
+        backgroundPositionX: `${stepPx / 2}px`,
+        backgroundSize: `${depth * stepPx}px 100%`,
+    };
+}
+
+/** A value that only moves once `delayMs` has passed without another change. */
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+    const [settled, setSettled] = useState(value);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => setSettled(value), delayMs);
+        return () => window.clearTimeout(timer);
+    }, [value, delayMs]);
+
+    return settled;
 }
 
 /**
@@ -166,12 +269,21 @@ function sortSiblingsByValue<T extends TreeSourceRow>(
     for (const node of nodes) sortSiblingsByValue(node.children, valueById);
 }
 
+/** What a leaf's answer to the chosen column turned out to be. */
+type ColumnAnswerState =
+    | { readonly kind: "set"; readonly label: string }
+    | { readonly kind: "unset" }
+    | { readonly kind: "removed" };
+
 /** The per-row facts the table renders, resolved once per render for one visible node. */
 interface ProgressNode {
     readonly node: TreeNode<TaskListItem>;
     readonly value: number;
     readonly own: number;
+    /** Direct children in the FULL tree — the number the row's caption and badge report. */
     readonly childCount: number;
+    /** Children the filter kept. Zero while `childCount` is not: every subtask was filtered out. */
+    readonly visibleChildCount: number;
     readonly flag: CompletionFlag | null;
 }
 
@@ -258,22 +370,36 @@ function RowCount({ count }: { count: number }) {
     );
 }
 
+
 export function ProgressView({
     items,
     catalogs,
     fields,
+    memberNameById,
     isLoading,
     error,
     onRetry,
     onOpenTask,
 }: TaskViewProps) {
-    const [mode, setMode] = useState<ProgressMode>("status");
-    /** The chosen Choice column's id as a string, because both comboboxes key by string. */
-    const [columnValue, setColumnValue] = useState<string | null>(null);
-    const [doneValues, setDoneValues] = useState<string[]>([]);
+    /** Status weights until the user picks a column from the `Complete` header's menu. */
+    const [basis, setBasis] = useState<ProgressBasis>({ kind: "status" });
     const [sort, setSort] = useState<ProgressSort>("tree");
     /** COLLAPSED ids, so the first paint is fully expanded without seeding a set from the rows. */
     const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<number>>(() => new Set<number>());
+
+    /**
+     * This tab's own search and filters — the List keeps its own state in the shell. The filter model
+     * is the List's clause model, not a second vocabulary, so the two tabs cannot drift.
+     */
+    const [searchInput, setSearchInput] = useState("");
+    const [clauses, setClauses] = useState<readonly FilterClause[]>([]);
+    const [isFilterOpen, setIsFilterOpen] = useState(false);
+    const { savedFilters, saveFilter, deleteFilter } = useSavedTaskFilters();
+
+    const settledSearch = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS);
+    const search = settledSearch.trim().toLowerCase();
+    const filterCount = clauses.filter(isClauseActive).length;
+    const isFiltering = search !== "" || anyClauseActive(clauses);
 
     /** Status id -> the department's stored completion percentage; an absent status scores 0. */
     const percentByStatusId = useMemo(() => {
@@ -290,27 +416,54 @@ export function ProgressView({
         [fields],
     );
 
+    /** The column the basis names, resolved against the columns that still exist. */
     const chosenField = useMemo(
-        () => choiceFields.find((field) => String(field.id) === columnValue) ?? null,
-        [choiceFields, columnValue],
+        () =>
+            basis.kind === "column"
+                ? (choiceFields.find((field) => field.id === basis.fieldId) ?? null)
+                : null,
+        [basis, choiceFields],
     );
 
-    const doneSet = useMemo(() => new Set(doneValues), [doneValues]);
+    /** A column basis whose column has since been deleted or hidden falls back to status weights. */
+    const isColumnBasis = basis.kind === "column" && chosenField !== null;
+
+    const basisKey = isColumnBasis && chosenField !== null ? `column:${chosenField.id}` : "status";
+
+    const handleBasisChange = useCallback((value: string) => {
+        if (value === "status") {
+            setBasis({ kind: "status" });
+            return;
+        }
+        const fieldId = Number(value.slice("column:".length));
+        if (Number.isFinite(fieldId)) setBasis({ kind: "column", fieldId });
+    }, []);
+
+    /** Option id -> its weight. This IS the column basis: a leaf scores the weight of the option it
+     * carries, so `Deployed` 100 and `Staging` 10 differ. A column with no options scores every
+     * leaf 0, which the rows then explain as "Removed choice" or "Not set".
+     */
+    const weightByOptionId = useMemo<ReadonlyMap<string, number>>(() => {
+        const weights = new Map<string, number>();
+        for (const option of chosenField?.options ?? []) {
+            weights.set(String(option.id), option.completion_percent);
+        }
+        return weights;
+    }, [chosenField]);
 
     /**
-     * Nothing computes in column mode until a column AND at least one done answer are chosen: an
-     * empty done set would print an honest but meaningless all-zero table.
+     * The one rollup. Status weights need no column, so there is always a basis to compute — a
+     * column only changes what a LEAF scores, never how a parent is averaged.
      */
-    const ready = mode === "status" || (chosenField !== null && doneSet.size > 0);
-
     const rollup = useMemo<CompletionRollup>(() => {
-        if (!ready) return NO_VALUE;
-        if (mode === "status") {
-            return computeCompletion(items, statusCompletionScore(percentByStatusId));
+        if (isColumnBasis && chosenField !== null) {
+            return computeCompletion(
+                items,
+                columnWeightScore<TaskListItem>(chosenField.id, weightByOptionId),
+            );
         }
-        if (chosenField === null) return NO_VALUE;
-        return computeCompletion(items, columnChoiceScore<TaskListItem>(chosenField.id, doneSet));
-    }, [items, ready, mode, chosenField, doneSet, percentByStatusId]);
+        return computeCompletion(items, statusCompletionScore(percentByStatusId));
+    }, [items, isColumnBasis, chosenField, weightByOptionId, percentByStatusId]);
 
     const forest = useMemo(() => {
         const roots = buildTree(items);
@@ -318,10 +471,58 @@ export function ProgressView({
         return roots;
     }, [items, sort, rollup]);
 
-    /** Every id that has children — the only ids `flattenVisible` cares about. */
-    const parentIds = useMemo(() => {
+    const parentById = useMemo(() => {
+        const parents = new Map<number, number | null>();
+        for (const item of items) parents.set(item.id, item.parent_id);
+        return parents;
+    }, [items]);
+
+    /**
+     * The rows the clause model can read. `TaskTreeRow` is what the List's evaluator takes, and the
+     * only thing `TaskListItem` lacks is the assignee's name — which the directory already holds.
+     */
+    const filterRows = useMemo<TaskTreeRow[]>(
+        () =>
+            items.map((item) => ({
+                ...item,
+                assignees: item.assignees.map((assignee) => ({
+                    user_id: assignee.user_id,
+                    full_name: assigneeName(assignee.user_id, memberNameById),
+                })),
+            })),
+        [items, memberNameById],
+    );
+
+    /**
+     * The rows that MATCH — the same `rowMatchesClauses` the List runs, so a clause means the same
+     * thing on both tabs. Percentages and counts still come from the full rollup, which is why
+     * filtering can hide a row but never move a number.
+     */
+    const matchedIds = useMemo(() => {
         const ids = new Set<number>();
-        const stack: TreeNode<TaskListItem>[] = [...forest];
+        for (const row of filterRows) {
+            if (search !== "" && !row.title.toLowerCase().includes(search)) continue;
+            if (!rowMatchesClauses(row, clauses, fields)) continue;
+            ids.add(row.id);
+        }
+        return ids;
+    }, [filterRows, search, clauses, fields]);
+
+    /** A match plus its ancestors. `null` means nothing is filtering, so every row renders. */
+    const visibleIds = useMemo(
+        () => (isFiltering ? visibleTaskIds(items, matchedIds) : null),
+        [isFiltering, items, matchedIds],
+    );
+
+    const renderForest = useMemo(
+        () => (visibleIds === null ? forest : pruneToVisible(forest, visibleIds)),
+        [forest, visibleIds],
+    );
+
+    /** Parents that survive the filter — the only ids `flattenVisible` and Collapse all care about. */
+    const renderParentIds = useMemo(() => {
+        const ids = new Set<number>();
+        const stack: TreeNode<TaskListItem>[] = [...renderForest];
         while (stack.length > 0) {
             const node = stack.pop();
             if (node === undefined) continue;
@@ -330,15 +531,18 @@ export function ProgressView({
             for (const child of node.children) stack.push(child);
         }
         return ids;
-    }, [forest]);
+    }, [renderForest]);
 
     const expandedIds = useMemo(() => {
         const ids = new Set<number>();
-        for (const id of parentIds) if (!collapsedIds.has(id)) ids.add(id);
+        for (const id of renderParentIds) if (!collapsedIds.has(id)) ids.add(id);
         return ids;
-    }, [parentIds, collapsedIds]);
+    }, [renderParentIds, collapsedIds]);
 
-    const visible = useMemo(() => flattenVisible(forest, expandedIds), [forest, expandedIds]);
+    const visible = useMemo(
+        () => flattenVisible(renderForest, expandedIds),
+        [renderForest, expandedIds],
+    );
 
     const rows = useMemo<ProgressNode[]>(
         () =>
@@ -346,10 +550,56 @@ export function ProgressView({
                 const value = rollup.valueById.get(node.id) ?? 0;
                 const own = rollup.ownById.get(node.id) ?? 0;
                 const childCount = rollup.childCountById.get(node.id) ?? 0;
-                return { node, value, own, childCount, flag: completionFlag(own, value, childCount) };
+                return {
+                    node,
+                    value,
+                    own,
+                    childCount,
+                    visibleChildCount: node.children.length,
+                    flag: completionFlag(own, value, childCount),
+                };
             }),
         [visible, rollup],
     );
+
+    /**
+     * The chain a filter must open to put its matches on screen: every ancestor of every match,
+     * encoded as one content key.
+     *
+     * These ids are removed from the user's OWN collapsed set — there is no second expansion state
+     * layered on top, so a manual collapse after this runs still wins and Collapse all cannot leave
+     * a row open behind the screen's back.
+     *
+     * A STRING on purpose: `matchedIds` and `parentById` are rebuilt whenever `items` changes, so an
+     * id array would hand the effect below a new identity on every refetch, and it would re-open a
+     * row the reader had just collapsed. Content is the only thing the effect may react to.
+     */
+    const revealKey = useMemo(() => {
+        if (!isFiltering) return "";
+        const chain = new Set<number>();
+        for (const id of matchedIds) {
+            let cursor = parentById.get(id) ?? null;
+            while (cursor !== null && !chain.has(cursor)) {
+                chain.add(cursor);
+                cursor = parentById.get(cursor) ?? null;
+            }
+        }
+        return [...chain].sort((a, b) => a - b).join(",");
+    }, [isFiltering, matchedIds, parentById]);
+
+    // Keyed on the chain's CONTENT, so this re-opens only when a filter actually reveals a new row —
+    // not on every render, and never right after the reader collapsed something.
+    useEffect(() => {
+        if (revealKey === "") return;
+        setCollapsedIds((previous) => {
+            let changed = false;
+            const next = new Set(previous);
+            for (const id of revealKey.split(",")) {
+                if (next.delete(Number(id))) changed = true;
+            }
+            return changed ? next : previous;
+        });
+    }, [revealKey]);
 
     /**
      * Each row's index in the FLATTENED list, not in the rendered window. `aria-rowindex` is a
@@ -389,7 +639,7 @@ export function ProgressView({
             if (isCardLayout) return CARD_HEIGHT_PX;
             const row = rows[index];
             const hasChildren = row !== undefined && row.childCount > 0;
-            return hasChildren || mode === "column"
+            return hasChildren || isColumnBasis
                 ? PARENT_ROW_HEIGHT_PX
                 : LEAF_ROW_HEIGHT_PX;
         },
@@ -403,15 +653,15 @@ export function ProgressView({
     // fires when a node mounts.
     useEffect(() => {
         virtualizer.measure();
-    }, [virtualizer, rows, isCardLayout, mode]);
+    }, [virtualizer, rows, isCardLayout, isColumnBasis]);
 
-    // Heights change with the mode — a leaf gains a second line in `column` — so an offset carried
-    // across would point at a different row.
+    // Heights change with the basis — a leaf gains a second line under a column basis — so an offset
+    // carried across would point at a different row.
     useEffect(() => {
         const box = scrollRef.current;
         if (box !== null) box.scrollTop = 0;
         virtualizer.scrollToOffset(0);
-    }, [mode, virtualizer]);
+    }, [basis, virtualizer]);
 
     const toggleCollapsed = useCallback((id: number) => {
         setCollapsedIds((previous) => {
@@ -420,6 +670,41 @@ export function ProgressView({
             else next.add(id);
             return next;
         });
+    }, []);
+
+    /**
+     * True while a parent ON SCREEN is open — the Collapse all / Expand all label's source.
+     *
+     * Visible rows only: a collapsed parent's children are off screen, so their own expansion state
+     * cannot be what the button is about to change. Counting them would offer "Collapse all" over a
+     * screen holding one collapsed row, which is a promise the click cannot keep.
+     */
+    const anyExpanded = useMemo(
+        () => rows.some((row) => row.visibleChildCount > 0 && !collapsedIds.has(row.node.id)),
+        [rows, collapsedIds],
+    );
+
+    /**
+     * One button, two directions, scoped to what the filter left on screen: it must never report
+     * "Collapse all" while nothing it can reach is open. Ids hidden by the filter keep their state.
+     */
+    const toggleAll = useCallback(() => {
+        setCollapsedIds((previous) => {
+            const next = new Set(previous);
+            for (const id of renderParentIds) {
+                if (anyExpanded) next.add(id);
+                else next.delete(id);
+            }
+            return next;
+        });
+    }, [anyExpanded, renderParentIds]);
+
+    const clearFilterClauses = useCallback(() => setClauses([]), []);
+
+    /** The toolbar's affordance and the empty state both reset search AND filters. */
+    const clearAllFilters = useCallback(() => {
+        setSearchInput("");
+        setClauses([]);
     }, []);
 
     /**
@@ -469,7 +754,9 @@ export function ProgressView({
             if (current === undefined) return;
 
             const key = event.key;
-            const hasChildren = current.childCount > 0;
+            // Expansion follows what is on screen: a parent whose children were all filtered out
+            // has nothing to open, so Right steps on instead of toggling an invisible subtree.
+            const hasChildren = current.visibleChildCount > 0;
             const isExpanded = hasChildren && !collapsedIds.has(current.node.id);
             const parentId = current.node.parent_id;
 
@@ -530,14 +817,6 @@ export function ProgressView({
     }, []);
 
     /**
-     * A row this wide invites a click anywhere on it, so a parent toggles from anywhere. The chevron
-     * stays its own control: a click that started inside an interactive child is left to that child.
-     * A leaf has nothing to expand and stays inert.
-     *
-     * Deliberately not a `<button>` around the row — the row is a `treegrid` row whose `aria-expanded`
-     * already states the state, and nesting a button inside a button would break both.
-     */
-    /**
      * A click anywhere on a task opens it, matching the List, Board, Team, Calendar and Gantt views.
      * The chevron is the one exception and stops its own click: it expands, it never opens.
      *
@@ -556,60 +835,62 @@ export function ProgressView({
         [onOpenTask],
     );
 
-    const columnOptions = useMemo<TaskComboboxOption[]>(
-        () => choiceFields.map((field) => ({ value: String(field.id), label: field.label })),
-        [choiceFields],
-    );
-
-    const choiceOptions = useMemo<MultiSelectComboboxOption[]>(
+    const filterStatuses = useMemo<FilterBuilderOption[]>(
         () =>
-            (chosenField?.options ?? []).map((option) => ({
-                value: String(option.id),
-                label: option.label,
-                color: option.color,
-                icon: option.icon,
+            catalogs.statuses.map((status) => ({
+                id: status.id,
+                label: status.label,
+                color: status.color,
             })),
-        [chosenField],
+        [catalogs.statuses],
     );
 
-    /**
-     * Under "By column" a leaf is scored from its answer to that column, so its second line names
-     * the answer it scored from — the same value `columnChoiceScore` reads.
-     */
-    const answerLabelById = useMemo(() => {
-        const labels = new Map<string, string>();
-        for (const option of chosenField?.options ?? []) {
-            labels.set(String(option.id), option.label);
+    const filterPriorities = useMemo<FilterBuilderOption[]>(
+        () =>
+            catalogs.priorities.map((priority) => ({
+                id: priority.id,
+                label: priority.label,
+                color: priority.color,
+            })),
+        [catalogs.priorities],
+    );
+
+    /** Only members who actually hold a task in this list: an empty filter group is noise. */
+    const filterMembers = useMemo<FilterBuilderMember[]>(() => {
+        const ids = new Set<number>();
+        for (const item of items) {
+            for (const assignee of item.assignees) ids.add(assignee.user_id);
         }
-        return labels;
-    }, [chosenField]);
+        return [...ids]
+            .map((id) => ({ user_id: id, full_name: assigneeName(id, memberNameById) }))
+            .sort((a, b) => a.full_name.localeCompare(b.full_name));
+    }, [items, memberNameById]);
 
-    const handleColumnChange = useCallback((next: string | null) => {
-        setColumnValue(next);
-        // Answers belong to the column they came from, so a new column always starts with none.
-        setDoneValues([]);
+    /** A saved set restores fresh clause rows, so its ids never collide with the live ones. */
+    const applySavedFilter = useCallback((filter: SavedTaskFilter) => {
+        setClauses(cloneClausesForApply(filter.clauses));
     }, []);
-
-    /**
-     * Does any row carry one of the chosen answers? When none does, the column basis has nothing to
-     * score and the view says so instead of rendering a table of zeros.
-     */
-    const carriesChosenAnswer = useMemo(() => {
-        if (chosenField === null || doneSet.size === 0) return false;
-        return items.some((task) =>
-            task.custom_values.some(
-                (answer) =>
-                    answer.field_id === chosenField.id &&
-                    answer.value !== null &&
-                    doneSet.has(answer.value),
-            ),
-        );
-    }, [items, chosenField, doneSet]);
 
     const statusPercentsUnset = useMemo(
         () => catalogs.statuses.every((status) => status.completion_percent === 0),
         [catalogs.statuses],
     );
+
+    /**
+     * A column whose options all weigh 0 scores every leaf 0 — worth saying, not worth guessing at.
+     * A column with NO options is a different state (nothing can carry an answer), and `every` is
+     * vacuously true on an empty array, so the length guard has to come first.
+     */
+    const columnWeightsAllZero = useMemo(
+        () =>
+            chosenField !== null &&
+            chosenField.options.length > 0 &&
+            chosenField.options.every((option) => option.completion_percent === 0),
+        [chosenField],
+    );
+
+    /** The polite count, debounced so typing does not narrate every keystroke. */
+    const announcedCount = useDebouncedValue(rows.length, LIVE_REGION_DEBOUNCE_MS);
 
     if (isLoading) return <ProgressSkeleton />;
 
@@ -645,18 +926,23 @@ export function ProgressView({
         );
     }
 
-    const hiddenCount = items.length - rows.length;
-    const showTable = ready && (mode === "status" || carriesChosenAnswer);
     /**
-     * Under "By status" the status IS the basis, so its column would repeat the bar's sentence; the
-     * table drops it and the spacer rows' `colSpan` has to follow the real count, or every cell after
-     * the phantom column shifts one place right.
+     * Under status weights the status IS the basis, so its column would repeat the bar's sentence;
+     * the table drops it and the spacer rows' `colSpan` has to follow the real count, or every cell
+     * after the phantom column shifts one place right.
      */
-    const showStatusColumn = mode === "column";
+    const showStatusColumn = isColumnBasis;
     const columnCount = showStatusColumn ? 4 : 3;
-    /** Chosen and scored, but this list has no row carrying one of the answers — say so, don't print zeros. */
-    const noChosenAnswers =
-        !showTable && mode === "column" && chosenField !== null && doneSet.size > 0;
+    const tableMinWidthPx =
+        TASK_COLUMN_MIN_PX +
+        (showStatusColumn ? STATUS_COLUMN_PX : 0) +
+        COMPLETE_COLUMN_PX +
+        (isWideLayout ? NOTE_COLUMN_PX : NOTE_COMPACT_COLUMN_PX);
+
+    const filterLabel =
+        filterCount === 0 ? "Filters" : filterCount === 1 ? "1 filter" : `${filterCount} filters`;
+    const filterAriaLabel =
+        filterCount === 0 ? "Filters, none active" : `Filters, ${filterCount} active`;
 
     /**
      * The window. `first.start` is the height of everything above it in the flattened list and
@@ -673,62 +959,153 @@ export function ProgressView({
 
     return (
         <div data-slot="task-progress" className="w-full min-w-0 space-y-3">
+            {/* The same shell as the List's toolbar, so the two tabs read as one surface. */}
             <div
                 data-slot="task-progress-toolbar"
-                className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
+                className="flex flex-col gap-3 rounded-2xl border border-border/50 bg-card p-3 shadow-sm sm:flex-row sm:items-center"
             >
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="relative min-w-0 sm:max-w-md sm:flex-1">
+                    <Search
+                        className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                        aria-hidden="true"
+                    />
+                    <Input
+                        type="search"
+                        value={searchInput}
+                        onChange={(event) => setSearchInput(event.target.value)}
+                        placeholder="Search tasks by title"
+                        aria-label="Search tasks by title"
+                        className="pl-8"
+                    />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+
+                    <Dialog open={isFilterOpen} onOpenChange={setIsFilterOpen}>
+                        <DialogTrigger asChild>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                data-slot="task-progress-filter-trigger"
+                                aria-label={filterAriaLabel}
+                                title={filterAriaLabel}
+                                className={cn(
+                                    "shrink-0 gap-1.5 rounded-full",
+                                    filterCount > 0 &&
+                                        "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800 dark:border-indigo-500/40 dark:bg-indigo-500/15 dark:text-indigo-300 dark:hover:bg-indigo-500/25",
+                                )}
+                            >
+                                <ListFilter className="size-4" aria-hidden="true" />
+                                {filterLabel}
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="w-[95vw] gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-[720px]">
+                            <DialogHeader className="border-b px-6 pt-6 pb-4">
+                                <DialogTitle>Filters</DialogTitle>
+                                <DialogDescription>
+                                    Add rows to narrow the list of tasks.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
+                                <TaskFilterBuilder
+                                    clauses={clauses}
+                                    onClausesChange={setClauses}
+                                    fields={fields}
+                                    statuses={filterStatuses}
+                                    priorities={filterPriorities}
+                                    members={filterMembers}
+                                    currentUserId={null}
+                                    savedFilters={savedFilters}
+                                    onSaveFilter={saveFilter}
+                                    onApplySavedFilter={applySavedFilter}
+                                    onDeleteSavedFilter={deleteFilter}
+                                />
+                            </div>
+                            <DialogFooter className="justify-end border-t bg-muted/20 px-6 py-4">
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    data-slot="task-filter-clear-all"
+                                    onClick={clearFilterClauses}
+                                    disabled={clauses.length === 0}
+                                >
+                                    Clear all filters
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => setIsFilterOpen(false)}
+                                >
+                                    Done
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+
+                    {isFiltering ? (
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={clearAllFilters}
+                            className="shrink-0 gap-1.5 text-muted-foreground"
+                        >
+                            <X className="size-4" aria-hidden="true" />
+                            Clear filters
+                        </Button>
+                    ) : null}
+
                     <Select
-                        value={mode}
-                        onValueChange={(next) => setMode(next as ProgressMode)}
+                        value={sort}
+                        onValueChange={(next) => setSort(next as ProgressSort)}
                     >
-                        <SelectTrigger size="sm" className="w-36" aria-label="Completion basis">
+                        <SelectTrigger
+                            size="sm"
+                            className="w-40 shrink-0 rounded-full"
+                            aria-label="Sort tasks"
+                        >
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="status">{MODE_LABELS.status}</SelectItem>
-                            <SelectItem value="column">{MODE_LABELS.column}</SelectItem>
+                            <SelectItem value="tree">{SORT_LABELS.tree}</SelectItem>
+                            <SelectItem value="lowest">{SORT_LABELS.lowest}</SelectItem>
                         </SelectContent>
                     </Select>
 
-                    {mode === "column" && choiceFields.length > 0 ? (
-                        <>
-                            <TaskCombobox
-                                options={columnOptions}
-                                value={columnValue}
-                                onValueChange={handleColumnChange}
-                                placeholder="Choose a column"
-                                ariaLabel="Choice column"
-                                showStatusIcon={false}
-                                clearable={false}
-                                className="w-56"
-                            />
-                            <MultiSelectCombobox
-                                options={choiceOptions}
-                                values={doneValues}
-                                onValuesChange={setDoneValues}
-                                placeholder="Counts as done"
-                                ariaLabel="Counts as done"
-                                emptyMessage="No choices in this column."
-                                disabled={chosenField === null}
-                                className="w-56"
-                            />
-                        </>
+                    {renderParentIds.size > 0 ? (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={toggleAll}
+                            title={
+                                anyExpanded ? "Collapse every subtask" : "Expand every subtask"
+                            }
+                            className="shrink-0 gap-1.5 rounded-full"
+                        >
+                            {anyExpanded ? (
+                                <ChevronsDownUp className="size-4" aria-hidden="true" />
+                            ) : (
+                                <ChevronsUpDown className="size-4" aria-hidden="true" />
+                            )}
+                            {anyExpanded ? "Collapse all" : "Expand all"}
+                        </Button>
                     ) : null}
                 </div>
-
-                <Select value={sort} onValueChange={(next) => setSort(next as ProgressSort)}>
-                    <SelectTrigger size="sm" className="w-40" aria-label="Sort tasks">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="tree">{SORT_LABELS.tree}</SelectItem>
-                        <SelectItem value="lowest">{SORT_LABELS.lowest}</SelectItem>
-                    </SelectContent>
-                </Select>
             </div>
 
-            {mode === "status" && statusPercentsUnset ? (
+            {/* Mounted once and never re-created: a live region has to exist before it can speak. */}
+            <span
+                data-slot="task-progress-live"
+                aria-live="polite"
+                aria-atomic="true"
+                className="sr-only"
+            >
+                {`${announcedCount} of ${items.length} tasks shown.`}
+            </span>
+
+            {!isColumnBasis && statusPercentsUnset ? (
                 <div
                     data-slot="task-progress-unset"
                     className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground"
@@ -741,46 +1118,34 @@ export function ProgressView({
                 </div>
             ) : null}
 
-            {mode === "column" && choiceFields.length === 0 ? (
-                <p
-                    data-slot="task-progress-no-choice-columns"
-                    className="rounded-xl border border-border/50 bg-card px-3 py-6 text-center text-sm text-muted-foreground"
-                >
-                    This department has no Choice columns.
-                </p>
-            ) : null}
-
-            {mode === "column" && chosenField !== null && !chosenField.is_enabled ? (
+            {chosenField !== null && !chosenField.is_enabled ? (
                 <p data-slot="task-progress-hidden-column" className="text-xs text-muted-foreground">
                     This column is hidden from the task list. Showing the answers already saved.
                 </p>
             ) : null}
 
-            {mode === "column" && choiceFields.length > 0 && chosenField === null ? (
-                <p data-slot="task-progress-no-column" className="text-xs text-muted-foreground">
-                    Nothing computes until a column is chosen.
-                </p>
+            {columnWeightsAllZero && chosenField !== null ? (
+                <div
+                    data-slot="task-progress-zero-weights"
+                    className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground"
+                >
+                    <TriangleAlert className="mt-0.5 size-3 shrink-0 text-warning" aria-hidden="true" />
+                    <span>
+                        {`Every option in "${chosenField.label}" has a weight of 0, so every task shows 0%. Set the weights on the column's options.`}
+                    </span>
+                </div>
             ) : null}
 
-            {mode === "column" && chosenField !== null && doneSet.size === 0 ? (
-                <p data-slot="task-progress-no-choices" className="text-xs text-muted-foreground">
-                    Pick at least one choice to count as done.
-                </p>
-            ) : null}
-
-            {showTable ? (
+            {rows.length > 0 ? (
                 <>
-                    <p data-slot="task-progress-caption" className="text-xs text-muted-foreground">
-                        {mode === "status"
-                            ? "A task with subtasks averages its children, rounding down. A task without subtasks shows its own status's percentage."
-                            : `A task counts as done when it carries a chosen answer in "${chosenField?.label ?? ""}"; the same average applies to parents.`}
-                    </p>
-
-                    <div className="overflow-hidden rounded-xl border border-border/50 bg-card">
+                    <div className="rounded-xl border border-border/50 bg-card">
                         <div
                             ref={scrollRef}
                             role="group"
-                            tabIndex={0}
+                            // Not a tab stop: the roving row is the grid's ONE stop (see
+                            // `rovingId`). The box stays focusable programmatically, which is what
+                            // the wheel handler uses to take focus off a row about to unmount.
+                            tabIndex={-1}
                             aria-label="Task completion"
                             onKeyDown={handleGridKeyDown}
                             onWheel={handleScrollBoxWheel}
@@ -797,25 +1162,42 @@ export function ProgressView({
                                     {virtualItems.map((item) => {
                                         const row = rows[item.index];
                                         if (row === undefined) return null;
-                                        const { node, value, childCount, flag } = row;
+                                        const {
+                                            node,
+                                            value,
+                                            childCount,
+                                            visibleChildCount,
+                                            flag,
+                                        } = row;
                                         const hasChildren = childCount > 0;
+                                        const hasVisibleChildren = visibleChildCount > 0;
+                                        const childrenHidden =
+                                            hasChildren && !hasVisibleChildren;
                                         const isExpanded =
-                                            hasChildren && !collapsedIds.has(node.id);
+                                            hasVisibleChildren && !collapsedIds.has(node.id);
                                         const title = taskTitle(node);
                                         const statusLabel =
                                             node.status?.label ?? NO_STATUS_LABEL;
                                         const indentDepth = Math.min(
                                             node.depth,
-                                            MAX_INDENT_DEPTH,
+                                            CARD_MAX_INDENT_DEPTH,
                                         );
                                         const clippedDepth = node.depth - indentDepth;
                                         const complete = value >= 100;
                                         const muted = value <= 0;
+                                        const answer =
+                                            isColumnBasis && !hasChildren
+                                                ? resolveColumnAnswer(node, chosenField)
+                                                : null;
+                                        const trailing =
+                                            isColumnBasis && answer !== null
+                                                ? answerLabel(answer)
+                                                : statusLabel;
                                         const basis = hasChildren
-                                            ? `average of ${subtaskCountLabel(childCount)}`
-                                            : mode === "status"
-                                              ? `status ${statusLabel}`
-                                              : `chosen answer in ${chosenField?.label ?? ""}`;
+                                            ? `average of ${subtaskCountLabel(childCount)}${childrenHidden ? ", none match." : ""}`
+                                            : isColumnBasis
+                                              ? answerBasis(answer, chosenField?.label ?? "")
+                                              : `status ${statusLabel}`;
                                         const flagCopy =
                                             flag === null ? null : FLAG_COPY[flag];
 
@@ -829,7 +1211,9 @@ export function ProgressView({
                                                 data-row-id={node.id}
                                                 aria-level={node.depth + 1}
                                                 aria-expanded={
-                                                    hasChildren ? isExpanded : undefined
+                                                    hasVisibleChildren
+                                                        ? isExpanded
+                                                        : undefined
                                                 }
                                                 // A tree item must be selectable-or-not; nothing
                                                 // here is selectable, so this is always false.
@@ -852,13 +1236,20 @@ export function ProgressView({
                                                 )}
                                             >
                                                 <div
-                                                    className="flex min-w-0 items-center gap-1"
+                                                    className={cn(
+                                                        "flex min-w-0 items-center gap-1",
+                                                        RAIL_ALPHA_CLASS,
+                                                    )}
                                                     style={{
                                                         paddingLeft:
-                                                            indentDepth * INDENT_STEP_PX,
+                                                            indentDepth * CARD_INDENT_STEP_PX,
+                                                        ...railStyle(
+                                                            indentDepth,
+                                                            CARD_INDENT_STEP_PX,
+                                                        ),
                                                     }}
                                                 >
-                                                    {hasChildren ? (
+                                                    {hasVisibleChildren ? (
                                                         <RowChevron
                                                             title={title}
                                                             expanded={isExpanded}
@@ -872,14 +1263,14 @@ export function ProgressView({
                                                             aria-hidden="true"
                                                         />
                                                     )}
-                                                    {clippedDepth > 0 ? (
-                                                        <span
-                                                            className="shrink-0 text-[10px] font-medium text-muted-foreground"
-                                                            aria-hidden="true"
-                                                        >
-                                                            +{clippedDepth}
-                                                        </span>
-                                                    ) : null}
+                                                    <span
+                                                        className="w-4 shrink-0 text-center text-xs tabular-nums text-muted-foreground"
+                                                        aria-hidden="true"
+                                                    >
+                                                        {clippedDepth > 0
+                                                            ? `+${clippedDepth}`
+                                                            : ""}
+                                                    </span>
                                                     <RowCount count={childCount} />
                                                     <span
                                                         className="min-w-0 flex-1 truncate text-sm"
@@ -893,7 +1284,7 @@ export function ProgressView({
                                                     className="flex min-w-0 items-center gap-2"
                                                     style={{
                                                         paddingLeft:
-                                                            indentDepth * INDENT_STEP_PX,
+                                                            indentDepth * CARD_INDENT_STEP_PX,
                                                     }}
                                                 >
                                                     <Progress
@@ -940,9 +1331,9 @@ export function ProgressView({
                                                     )}
                                                     <span
                                                         className="min-w-0 truncate text-xs text-muted-foreground"
-                                                        title={statusLabel}
+                                                        title={trailing}
                                                     >
-                                                        {statusLabel}
+                                                        {trailing}
                                                     </span>
                                                 </div>
                                             </div>
@@ -955,6 +1346,7 @@ export function ProgressView({
                                     role="treegrid"
                                     aria-label="Task completion"
                                     aria-rowcount={rows.length + 1}
+                                    style={{ minWidth: tableMinWidthPx }}
                                     className="table-fixed border-separate border-spacing-0"
                                 >
                                     <colgroup>
@@ -980,7 +1372,57 @@ export function ProgressView({
                                                 <TableHead scope="col">Status</TableHead>
                                             ) : null}
                                             <TableHead scope="col" className="td-num">
-                                                Complete
+                                                <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild>
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="xs"
+                                                            data-slot="task-progress-basis"
+                                                            aria-label={
+                                                                chosenField !== null
+                                                                    ? `Completion basis, currently ${chosenField.label}`
+                                                                    : "Completion basis, currently status weights"
+                                                            }
+                                                            title={
+                                                                chosenField !== null
+                                                                    ? `Completion basis, currently ${chosenField.label}`
+                                                                    : "Completion basis, currently status weights"
+                                                            }
+                                                            className="-ml-1.5 gap-1 px-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                                                        >
+                                                            {chosenField !== null
+                                                                ? `Complete · ${chosenField.label}`
+                                                                : "Complete"}
+                                                            <ChevronDown
+                                                                className="size-3.5"
+                                                                aria-hidden="true"
+                                                            />
+                                                        </Button>
+                                                    </DropdownMenuTrigger>
+                                                    <DropdownMenuContent align="end" className="w-56">
+                                                        <DropdownMenuLabel>
+                                                            Completion basis
+                                                        </DropdownMenuLabel>
+                                                        <DropdownMenuSeparator />
+                                                        <DropdownMenuRadioGroup
+                                                            value={basisKey}
+                                                            onValueChange={handleBasisChange}
+                                                        >
+                                                            <DropdownMenuRadioItem value="status">
+                                                                {STATUS_BASIS_LABEL}
+                                                            </DropdownMenuRadioItem>
+                                                            {choiceFields.map((field) => (
+                                                                <DropdownMenuRadioItem
+                                                                    key={field.id}
+                                                                    value={`column:${field.id}`}
+                                                                >
+                                                                    {field.label}
+                                                                </DropdownMenuRadioItem>
+                                                            ))}
+                                                        </DropdownMenuRadioGroup>
+                                                    </DropdownMenuContent>
+                                                </DropdownMenu>
                                             </TableHead>
                                             <TableHead scope="col">
                                                 {isWideLayout ? (
@@ -1002,43 +1444,54 @@ export function ProgressView({
                                         {virtualItems.map((item) => {
                                             const row = rows[item.index];
                                             if (row === undefined) return null;
-                                            const { node, value, childCount, flag } = row;
+                                            const {
+                                                node,
+                                                value,
+                                                childCount,
+                                                visibleChildCount,
+                                                flag,
+                                            } = row;
                                             const hasChildren = childCount > 0;
+                                            const hasVisibleChildren = visibleChildCount > 0;
+                                            const childrenHidden =
+                                                hasChildren && !hasVisibleChildren;
                                             const isExpanded =
-                                                hasChildren && !collapsedIds.has(node.id);
+                                                hasVisibleChildren &&
+                                                !collapsedIds.has(node.id);
                                             const title = taskTitle(node);
                                             const indentDepth = Math.min(
                                                 node.depth,
-                                                MAX_INDENT_DEPTH,
+                                                TABLE_MAX_INDENT_DEPTH,
                                             );
                                             const clippedDepth = node.depth - indentDepth;
                                             const complete = value >= 100;
                                             const muted = value <= 0;
-                                            // A leaf in column mode scored from the chosen answer,
-                                            // not its status, so the sentence must name that basis
-                                            // to match the caption above the table.
+                                            // A leaf under a column basis scored from the weight of
+                                            // its answer, so the sentence must name that basis to
+                                            // match the caption above the table.
+                                            const answer =
+                                                isColumnBasis && !hasChildren
+                                                    ? resolveColumnAnswer(node, chosenField)
+                                                    : null;
                                             const basis = hasChildren
-                                                ? `average of ${subtaskCountLabel(childCount)}`
-                                                : mode === "status"
-                                                  ? `status ${node.status?.label ?? NO_STATUS_LABEL}`
-                                                  : `chosen answer in ${chosenField?.label ?? ""}`;
+                                                ? `average of ${subtaskCountLabel(childCount)}${childrenHidden ? ", none match." : ""}`
+                                                : isColumnBasis
+                                                  ? answerBasis(
+                                                        answer,
+                                                        chosenField?.label ?? "",
+                                                    )
+                                                  : `status ${node.status?.label ?? NO_STATUS_LABEL}`;
                                             const flagCopy =
                                                 flag === null ? null : FLAG_COPY[flag];
                                             // Two lines: a parent always names its count; under "By
                                             // column" a leaf names the answer it was scored from.
-                                            const answerLabel =
-                                                mode === "column" && !hasChildren
-                                                    ? (answerLabelById.get(
-                                                          node.custom_values.find(
-                                                              (entry) =>
-                                                                  entry.field_id ===
-                                                                  chosenField?.id,
-                                                          )?.value ?? "",
-                                                      ) ?? NO_ANSWER_LABEL)
-                                                    : null;
                                             const subtitle = hasChildren
-                                                ? subtaskCountLabel(childCount)
-                                                : answerLabel;
+                                                ? childrenHidden
+                                                    ? `${subtaskCountLabel(childCount)}, none match`
+                                                    : subtaskCountLabel(childCount)
+                                                : answer === null
+                                                  ? null
+                                                  : answerLabel(answer);
 
                                             return (
                                                 <TableRow
@@ -1049,7 +1502,9 @@ export function ProgressView({
                                                     data-row-id={node.id}
                                                     aria-level={node.depth + 1}
                                                     aria-expanded={
-                                                        hasChildren ? isExpanded : undefined
+                                                        hasVisibleChildren
+                                                            ? isExpanded
+                                                            : undefined
                                                     }
                                                     aria-rowindex={item.index + 2}
                                                     tabIndex={
@@ -1072,17 +1527,24 @@ export function ProgressView({
                                                 >
                                                     <th
                                                         scope="row"
-                                                        className="px-2 py-2 text-left align-middle font-normal"
+                                                        className={cn(
+                                                            "px-2 py-2 text-left align-middle font-normal",
+                                                            RAIL_ALPHA_CLASS,
+                                                        )}
+                                                        style={railStyle(
+                                                            indentDepth,
+                                                            TABLE_INDENT_STEP_PX,
+                                                        )}
                                                     >
                                                         <div
                                                             className="flex min-w-0 items-start gap-1"
                                                             style={{
                                                                 paddingLeft:
                                                                     indentDepth *
-                                                                    INDENT_STEP_PX,
+                                                                    TABLE_INDENT_STEP_PX,
                                                             }}
                                                         >
-                                                            {hasChildren ? (
+                                                            {hasVisibleChildren ? (
                                                                 <RowChevron
                                                                     title={title}
                                                                     expanded={isExpanded}
@@ -1098,14 +1560,14 @@ export function ProgressView({
                                                                     aria-hidden="true"
                                                                 />
                                                             )}
-                                                            {clippedDepth > 0 ? (
-                                                                <span
-                                                                    className="shrink-0 pt-0.5 text-[10px] font-medium text-muted-foreground"
-                                                                    aria-hidden="true"
-                                                                >
-                                                                    +{clippedDepth}
-                                                                </span>
-                                                            ) : null}
+                                                            <span
+                                                                className="w-4 shrink-0 pt-0.5 text-center text-xs tabular-nums text-muted-foreground"
+                                                                aria-hidden="true"
+                                                            >
+                                                                {clippedDepth > 0
+                                                                    ? `+${clippedDepth}`
+                                                                    : ""}
+                                                            </span>
                                                             {/* A two-line row needs the gap or its
                                                                 height drops below the estimate. */}
                                                             <span
@@ -1229,23 +1691,70 @@ export function ProgressView({
                         data-slot="task-progress-footer"
                         className="text-xs text-muted-foreground"
                     >
-                        {hiddenCount > 0
-                            ? `Showing ${rows.length} of ${items.length} tasks`
+                        {/* Rows a filter hid, not rows a collapse hid: the coverage claim is about
+                            the filter, and a collapsed parent hides rows without touching a number. */}
+                        {isFiltering
+                            ? `Showing ${rows.length} of ${items.length} tasks. Percentages cover all ${items.length} tasks.`
                             : `${items.length} tasks`}
                     </p>
                 </>
             ) : null}
 
-            {noChosenAnswers ? (
-                <p
-                    data-slot="task-progress-no-answers"
-                    className="rounded-xl border border-border/50 bg-card px-3 py-6 text-center text-sm text-muted-foreground"
+            {rows.length === 0 ? (
+                <div
+                    data-slot="task-progress-no-matches"
+                    className="flex flex-col items-center justify-center gap-3 rounded-xl border border-border/50 bg-card px-4 py-10 text-center"
                 >
-                    No task in this list carries one of these choices yet.
-                </p>
+                    <SearchX className="size-8 text-muted-foreground/50" aria-hidden="true" />
+                    <p className="text-sm text-muted-foreground">
+                        No tasks match the current search and filters.
+                    </p>
+                    <Button type="button" variant="outline" size="sm" onClick={clearAllFilters}>
+                        Clear filters
+                    </Button>
+                </div>
             ) : null}
         </div>
     );
+}
+
+/** The second line a column-scored leaf shows: the option it carries, or why it scores nothing. */
+function answerLabel(answer: ColumnAnswerState): string {
+    if (answer.kind === "set") return answer.label;
+    if (answer.kind === "removed") return REMOVED_CHOICE_LABEL;
+    return NOT_SET_LABEL;
+}
+
+/** The same fact, as the tail of the row's spoken sentence. */
+function answerBasis(answer: ColumnAnswerState | null, columnLabel: string): string {
+    if (answer === null) return `no answer in ${columnLabel}`;
+    if (answer.kind === "set") return `answer ${answer.label} in ${columnLabel}`;
+    if (answer.kind === "removed") return `a removed choice in ${columnLabel}`;
+    return `no answer in ${columnLabel}`;
+}
+
+/**
+ * The option a task carries in the chosen column, or why there is none.
+ *
+ * A task with no answer and a task whose answer names a deleted option both score 0, but they are
+ * not the same fact: one is work nobody has graded, the other is a choice that no longer exists.
+ * The row's second line says which.
+ */
+function resolveColumnAnswer(
+    task: TaskListItem,
+    field: TaskField | null,
+): ColumnAnswerState {
+    if (field === null) return { kind: "unset" };
+    let carried: string | null | undefined;
+    for (const answer of task.custom_values) {
+        if (answer.field_id !== field.id) continue;
+        carried = answer.value;
+        break;
+    }
+    if (carried === undefined || carried === null) return { kind: "unset" };
+    const option = field.options.find((entry) => String(entry.id) === carried);
+    if (option === undefined) return { kind: "removed" };
+    return { kind: "set", label: option.label };
 }
 
 const SKELETON_ROWS: readonly string[] = [

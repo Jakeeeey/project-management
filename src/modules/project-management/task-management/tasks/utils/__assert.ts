@@ -16,7 +16,7 @@
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
 import { buildTree, flattenVisible, pruneForest, type TreeNode, type TreeSourceRow } from "./tree.ts";
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
-import { columnChoiceScore, completionFlag, computeCompletion, describeCompletionPercent, formatCompletionPercent, statusCompletionScore, type CompletionAnswer, type CompletionRow } from "./completion.ts";
+import { columnWeightScore, completionFlag, computeCompletion, describeCompletionPercent, formatCompletionPercent, statusCompletionScore, type CompletionAnswer, type CompletionRow } from "./completion.ts";
 
 interface FixtureRow extends TreeSourceRow {
     readonly title: string;
@@ -400,44 +400,75 @@ check("agreement carries no flag", completionFlag(100, 100, 2) === null);
 check("a leaf never carries a flag", completionFlag(100, 100, 0) === null);
 check("own 50 with a rollup of 50 carries no flag", completionFlag(50, 50, 3) === null);
 
-// --- Choosing a done answer in a Choice column -------------------------------------------------------
+// --- Weighted answers in a Choice column --------------------------------------------------------------
 const answer = (fieldId: number, value: string | null): CompletionAnswer => ({
     field_id: fieldId,
     value,
 });
-const madeDone = new Set(["7", "8"]);
-const choiceScore = columnChoiceScore(3, madeDone);
+/** Option id -> the percentage carrying it counts as. `9` is a real option weighted at zero. */
+const optionWeights = new Map<string, number>([
+    ["7", 100],
+    ["8", 50],
+    ["9", 0],
+]);
+const weightScore = columnWeightScore(3, optionWeights);
+const answerRow = (value: string | null): CompletionRow => ({
+    id: 1,
+    parent_id: null,
+    status_id: 1,
+    custom_values: [answer(3, value)],
+});
 check(
-    "a leaf carrying a chosen answer scores 100",
-    choiceScore({ id: 1, parent_id: null, status_id: 1, custom_values: [answer(3, "7")] }) === 100,
+    "a leaf carrying an option weighted 100 scores 100",
+    weightScore(answerRow("7")) === 100,
 );
 check(
-    "a leaf carrying an unchosen answer scores 0",
-    choiceScore({ id: 1, parent_id: null, status_id: 1, custom_values: [answer(3, "9")] }) === 0,
+    "a leaf carrying an option weighted 50 scores 50, not 100",
+    weightScore(answerRow("8")) === 50,
 );
 check(
-    "a leaf with no answer to that column scores 0",
-    choiceScore({ id: 1, parent_id: null, status_id: 1, custom_values: [answer(4, "7")] }) === 0,
+    "a leaf carrying an option weighted 0 scores 0",
+    weightScore(answerRow("9")) === 0,
+);
+check(
+    "an unanswered leaf scores 0",
+    weightScore({ id: 1, parent_id: null, status_id: 1, custom_values: [] }) === 0,
 );
 check(
     "a leaf with a blank answer scores 0",
-    choiceScore({ id: 1, parent_id: null, status_id: 1, custom_values: [answer(3, null)] }) === 0,
+    weightScore(answerRow(null)) === 0,
+);
+check(
+    "an answer naming an option that no longer exists scores 0, not a guess",
+    weightScore(answerRow("404")) === 0,
+);
+check(
+    "an answer to another column is ignored",
+    weightScore({ id: 1, parent_id: null, status_id: 1, custom_values: [answer(4, "7")] }) === 0,
 );
 
-// Mode two runs the same mean: two children, one carrying a done answer.
-const columnRows: CompletionRow[] = [
-    { id: 90, parent_id: null, status_id: 1, custom_values: [] },
+// The mean is untouched: a parent averages its children's WEIGHTED scores.
+const weightedRows: CompletionRow[] = [
+    // Own answer is weighted 100, but a parent's own answer never enters its own number.
+    { id: 90, parent_id: null, status_id: 1, custom_values: [answer(3, "7")] },
     { id: 91, parent_id: 90, status_id: 2, custom_values: [answer(3, "8")] },
     { id: 92, parent_id: 90, status_id: 1, custom_values: [] },
+    // A removed choice is a 0 in the mean, exactly like an unanswered row.
+    { id: 93, parent_id: 90, status_id: 1, custom_values: [answer(3, "404")] },
+    { id: 94, parent_id: 90, status_id: 1, custom_values: [answer(3, "7")] },
 ];
-const columnRollup = computeCompletion(columnRows, columnChoiceScore(3, madeDone));
+const weightedRollup = computeCompletion(weightedRows, columnWeightScore(3, optionWeights));
 check(
-    "the recursive mean runs unchanged over the column basis",
-    near(columnRollup.valueById.get(90), 50),
+    "a parent averages its weighted leaves (100, 50, 0, 0 -> 37.5)",
+    near(weightedRollup.valueById.get(90), 37.5),
 );
 check(
-    "a parent's own status is still ignored on the column basis",
-    near(columnRollup.ownById.get(90), 0),
+    "the weighted mean stays unfloored, so it prints 37%",
+    formatCompletionPercent(weightedRollup.valueById.get(90) ?? 0) === "37%",
+);
+check(
+    "a parent's own weighted answer is ignored in the mean",
+    near(weightedRollup.ownById.get(90), 100),
 );
 
 if (failures > 0) {
