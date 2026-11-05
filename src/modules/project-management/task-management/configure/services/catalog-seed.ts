@@ -15,12 +15,13 @@ import { CONFIG_COLLECTIONS } from "./task-config-policy";
  * each kind, so a seeded department can create tasks immediately.
  */
 
-/** One row of the seed fixture. */
+/** One row of the seed fixture. `completion_percent` is a status-only column, absent for a priority. */
 interface CatalogSeedRow {
     readonly label: string;
     readonly color: string;
     readonly sort_order: number;
     readonly is_default: number;
+    readonly completion_percent?: number;
 }
 
 /** What a seed run did: the row counts created; both zero when the department was already seeded. */
@@ -29,11 +30,16 @@ export interface SeedDefaultsResult {
     prioritiesCreated: number;
 }
 
+/**
+ * The fixture values. A leaf task's completion is the percent of its own status, so the three shipped
+ * statuses step 0/50/100 and are written explicitly: a database that predates the column rejects the
+ * status insert rather than quietly seeding three rows that all read 0.
+ */
 const CATALOG_SEED: Record<ConfigKind, readonly CatalogSeedRow[]> = {
     status: [
-        { label: "todo", color: "#64748b", sort_order: 0, is_default: 1 },
-        { label: "in_progress", color: "#2563eb", sort_order: 1, is_default: 0 },
-        { label: "complete", color: "#16a34a", sort_order: 2, is_default: 0 },
+        { label: "todo", color: "#64748b", sort_order: 0, is_default: 1, completion_percent: 0 },
+        { label: "in_progress", color: "#2563eb", sort_order: 1, is_default: 0, completion_percent: 50 },
+        { label: "complete", color: "#16a34a", sort_order: 2, is_default: 0, completion_percent: 100 },
     ],
     priority: [
         { label: "low", color: "#64748b", sort_order: 0, is_default: 0 },
@@ -81,6 +87,7 @@ async function seedKind(departmentId: number, kind: ConfigKind, actorId: number 
         created_by: actorId,
         updated_at: now,
         updated_by: actorId,
+        ...(row.completion_percent !== undefined ? { completion_percent: row.completion_percent } : {}),
     }));
 
     await createItems<unknown>(CONFIG_COLLECTIONS[kind], rows);

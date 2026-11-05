@@ -52,6 +52,12 @@ export interface TaskCatalogOption {
     readonly icon: string | null;
     readonly sort_order: number;
     readonly is_default: boolean;
+    /**
+     * How complete a task in this status counts as, 0-100. The department sets it in its status
+     * settings; the Progress view rolls it up. A status whose column is not registered yet (or whose
+     * value is missing) reads as 0, so the number is never `undefined` and never prints `undefined%`.
+     */
+    readonly completion_percent: number;
 }
 
 /** The department's two catalog lists — one model per kind, as the configuration section presents them. */
@@ -98,6 +104,12 @@ export interface TaskFieldOption {
     /** Allow-listed lucide icon name, or `null` — resolved through `normalizeIconName`. */
     readonly icon: string | null;
     readonly sort_order: number;
+    /**
+     * How complete a task counts as when it carries this choice, 0-100. A Choice column can weight
+     * its options (`Deployed` 100, `Staging` 10, `Blocked` 0) instead of every answer reading as done.
+     * A choice whose value is missing or unusable reads as 0, so this is never `undefined`.
+     */
+    readonly completion_percent: number;
 }
 
 /** One custom column the department added to its task list. */
@@ -202,6 +214,17 @@ function toNumber(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/**
+ * A stored 0-100 percentage. An absent value reads as 0 — the Directus column is registered by the
+ * department's own DDL, so a row that predates it must still count as 0 rather than crash the view.
+ * Flooring keeps a stray `99.6` from inflating a status into a false 100%.
+ */
+function toPercent(value: unknown): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.min(100, Math.max(0, Math.floor(parsed)));
+}
+
 /** A non-blank string as-is, else `null` — `""`, whitespace and non-strings all become `null`. */
 function toNullableString(value: unknown): string | null {
     return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
@@ -245,6 +268,7 @@ function toCatalogOption(raw: unknown): TaskCatalogOption | null {
         icon: normalizeIconName(raw.icon),
         sort_order: toNumber(raw.sort_order),
         is_default: readFlag(raw.is_default),
+        completion_percent: toPercent(raw.completion_percent),
     };
 }
 
@@ -328,6 +352,9 @@ function toFieldOptions(raw: unknown): TaskFieldOption[] {
             color: toNullableString(entry.color),
             icon: normalizeIconName(entry.icon),
             sort_order: toNumber(entry.sort_order),
+            // Same 0-100 read as a status: a choice that predates the column (or carries a stray
+            // `99.6`) still yields a whole number rather than `undefined%`.
+            completion_percent: toPercent(entry.completion_percent),
         });
     }
     return options;

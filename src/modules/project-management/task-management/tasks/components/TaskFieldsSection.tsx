@@ -94,6 +94,7 @@ export function TaskFieldsSection() {
         renameOption,
         setOptionColor,
         setOptionIcon,
+        setOptionCompletion,
         deleteOption,
         moveOption,
     } = useTaskFields();
@@ -142,10 +143,17 @@ export function TaskFieldsSection() {
         const { field, option } = optionEditor;
 
         if (option === null) {
-            const createdId = await createOption(field.id, values.label, values.color, values.icon);
+            const createdId = await createOption(
+                field.id,
+                values.label,
+                values.color,
+                values.icon,
+                values.completion_percent,
+            );
             if (createdId === null) return;
             // The create request carries the colour but the route does not persist it, so a non-null
-            // colour is written through the same recolour path an edit uses.
+            // colour is written through the same recolour path an edit uses. Completion needs no such
+            // follow-up: the option POST forwards it to the column.
             if (values.color !== null) {
                 const coloured = await setOptionColor(createdId, values.color);
                 if (!coloured) return;
@@ -166,6 +174,10 @@ export function TaskFieldsSection() {
             if ((values.icon ?? null) !== (option.icon ?? null)) {
                 const iconned = await setOptionIcon(option.id, values.icon ?? null);
                 if (!iconned) return;
+            }
+            if (values.completion_percent !== option.completion_percent) {
+                const weighted = await setOptionCompletion(option.id, values.completion_percent);
+                if (!weighted) return;
             }
             if (values.isDefault) {
                 if (String(option.id) !== field.default_value) {
@@ -400,6 +412,17 @@ export function TaskFieldsSection() {
                                                                             Default
                                                                         </Badge>
                                                                     ) : null}
+
+                                                                    {/* The same trailing figure the status catalog shows, so a
+                                                                        department can read back which choices are weighted
+                                                                        without opening each one. */}
+                                                                    <span
+                                                                        className="min-w-9 shrink-0 text-right text-xs tabular-nums text-muted-foreground"
+                                                                        data-slot="task-field-option-completion"
+                                                                    >
+                                                                        <span className="sr-only">Completion </span>
+                                                                        {option.completion_percent}%
+                                                                    </span>
 
                                                                     <div className="flex shrink-0 items-center gap-0.5">
                                                                         <Button

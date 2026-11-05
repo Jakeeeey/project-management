@@ -5,6 +5,7 @@ import {
     ChartGantt,
     LayoutDashboard,
     ListTree,
+    Percent,
     SquareKanban,
     Users,
     type LucideIcon,
@@ -26,8 +27,8 @@ import {
  * also why it does not use `TabsContent`: the shell must be free to unmount an inactive view (the
  * Gantt and the charts are expensive to keep mounted) without this strip knowing anything about them.
  *
- * Labels are hidden below `sm` and the icon carries the meaning instead, because six labelled tabs do
- * not fit a phone and a horizontally scrolling tab strip hides choices behind a gesture. The
+ * Labels are hidden below `sm` and the icon carries the meaning instead, because seven labelled tabs
+ * do not fit a phone and a horizontally scrolling tab strip hides choices behind a gesture. The
  * accessible name is always the full label, so the control is unambiguous to a screen reader at every
  * width.
  */
@@ -40,6 +41,7 @@ const VIEW_ICONS: Record<TasksViewId, LucideIcon> = {
     team: Users,
     gantt: ChartGantt,
     dashboard: LayoutDashboard,
+    progress: Percent,
 };
 
 export interface TasksViewTabsProps {

@@ -17,6 +17,8 @@
  * Labels below are neutral placeholders on purpose: catalog VALUES may appear only in the service's
  * seed fixture.
  */
+// @ts-expect-error -- Node >= 22.15 exports `registerHooks`; the pinned @types/node (20.x) predates it.
+import { registerHooks } from "node:module";
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
 import { TaskConfigError, deleteRefusal, duplicateLabelRow, effectiveDefaultRow, liveRows, sortCatalogRows } from "./task-config-policy.ts";
 
@@ -112,6 +114,57 @@ check(
 );
 check("delete guard: an absent id is not-found", deleteRefusal(TWO_LIVE, 99) === "not-found");
 check("delete guard: an id that is only soft-deleted is not-found", deleteRefusal(TWO_LIVE, 9) === "not-found");
+
+// --- Completion percent (status catalog only) ----------------------------------------------------
+
+/** Minimal shapes for the resolution hook — `@types/node` 20 has no `registerHooks` to infer from. */
+type ResolveContext = { readonly conditions: readonly string[]; readonly parentURL?: string };
+type ResolveNext = (specifier: string, context?: ResolveContext) => { url: string };
+
+/**
+ * `task-config.schema` imports the icon allow-list without a file extension: the bundler resolves
+ * that, Node does not. The hook retries such a specifier as `.ts`, which is the only way to load the
+ * real schema module — and therefore the real validators — under plain Node.
+ */
+registerHooks({
+    resolve(specifier: string, context: ResolveContext, nextResolve: ResolveNext): { url: string } {
+        try {
+            return nextResolve(specifier, context);
+        } catch (error) {
+            // A specifier such as "../types/task-config.schema" carries no extension at all, while
+            // "../x.schema" only looks like it does; appending ".ts" is the one retry that fits both.
+            if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+            throw error;
+        }
+    },
+});
+
+// @ts-expect-error -- Node needs the real ".ts" extension; tsc forbids it (see the file header).
+const { CreateCatalogItemSchema, UpdateCatalogItemSchema } = await import("../types/task-config.schema.ts");
+
+/** The first issue message a payload produces, or `null` when it is accepted. */
+function firstIssueMessage(value: unknown): string | null {
+    const parsed = CreateCatalogItemSchema.safeParse({ label: "Alpha", completion_percent: value });
+    return parsed.success ? null : (parsed.error.issues[0]?.message ?? "");
+}
+
+check(
+    "completion percent: the bounds 0 and 100 are accepted",
+    CreateCatalogItemSchema.safeParse({ label: "Alpha", completion_percent: 0 }).success &&
+        CreateCatalogItemSchema.safeParse({ label: "Alpha", completion_percent: 100 }).success,
+);
+
+const OMITTED_PERCENT = CreateCatalogItemSchema.parse({ label: "Alpha" });
+check(
+    "completion percent: omitting it is valid, leaves the key absent and reads as 0",
+    !("completion_percent" in OMITTED_PERCENT) && (OMITTED_PERCENT.completion_percent ?? 0) === 0,
+);
+
+check("completion percent: 101 is rejected with a range message", firstIssueMessage(101) === "Completion percent must be between 0 and 100");
+check("completion percent: -1 is rejected with a range message", firstIssueMessage(-1) === "Completion percent must be between 0 and 100");
+check("completion percent: a fraction is rejected with a whole-number message", firstIssueMessage(1.5) === "Completion percent must be a whole number");
+check("completion percent: a numeric string is rejected, not coerced", firstIssueMessage("50") !== null);
+check("completion percent: the update schema inherits the field and stays fully optional", UpdateCatalogItemSchema.safeParse({ completion_percent: 100 }).success);
 
 // --- Coded error ---------------------------------------------------------------------------------
 

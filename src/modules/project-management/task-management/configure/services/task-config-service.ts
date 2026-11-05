@@ -93,6 +93,12 @@ export class TaskConfigService {
             created_by: actor.userId,
             updated_at: now,
             updated_by: actor.userId,
+            // A status is the only kind with the column, and the key is sent only when the caller asked
+            // for it: an omitted value must land on the column's `DEFAULT 0`, and a deployment whose
+            // ALTER has not run yet must keep accepting an ordinary create.
+            ...(kind === "status" && input.completion_percent !== undefined
+                ? { completion_percent: input.completion_percent }
+                : {}),
         });
 
         await TaskConfigService.ensureLiveDefault(actor, kind);
@@ -123,11 +129,21 @@ export class TaskConfigService {
             }
         }
 
-        const changes: { label?: string; color?: string | null; icon?: string | null; sort_order?: number; is_default?: number } = {};
+        const changes: {
+            label?: string;
+            color?: string | null;
+            icon?: string | null;
+            sort_order?: number;
+            is_default?: number;
+            completion_percent?: number;
+        } = {};
         if (input.label !== undefined) changes.label = input.label;
         if (input.color !== undefined) changes.color = input.color;
         if (input.icon !== undefined) changes.icon = input.icon;
         if (input.sort_order !== undefined) changes.sort_order = input.sort_order;
+        if (kind === "status" && input.completion_percent !== undefined) {
+            changes.completion_percent = input.completion_percent;
+        }
         if (input.is_default === true) {
             await TaskConfigService.clearFlaggedDefaults(
                 actor,
@@ -151,6 +167,7 @@ export class TaskConfigService {
             icon: changes.icon !== undefined ? changes.icon : target.icon,
             sort_order: changes.sort_order ?? target.sort_order,
             is_default: changes.is_default ?? target.is_default,
+            completion_percent: changes.completion_percent ?? target.completion_percent,
             updated_at: now,
             updated_by: actor.userId,
         };

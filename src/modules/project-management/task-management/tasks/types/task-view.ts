@@ -4,17 +4,25 @@ import type { TaskCatalogs, TaskField, TaskListItem } from "../hooks/useTasks";
 /**
  * The view contracts for the tasks page.
  *
- * The tasks page renders one of six views over the SAME already-fetched department rows — the list
- * (the existing tree) plus Board, Calendar, Team, Gantt and Dashboard. Every view is presentational:
- * it receives the flat rows, the catalogs and the member directory as props and derives its own
- * projection. Nothing here fetches, and nothing here writes: all five extra views are READ-ONLY.
+ * The tasks page renders one of seven views over the SAME already-fetched department rows — the list
+ * (the existing tree) plus Board, Calendar, Team, Gantt, Dashboard and Progress. Every view is
+ * presentational: it receives the flat rows, the catalogs and the member directory as props and
+ * derives its own projection. Nothing here fetches, and nothing here writes: all six extra views are
+ * READ-ONLY.
  *
  * This file is the frozen interface between the page shell and the views, so a view can be built and
  * reviewed without touching the shell, and the shell can add a view without knowing how it works.
  */
 
-/** The six views the tasks page can show. `list` is the default and the only editable one. */
-export type TasksViewId = "list" | "board" | "calendar" | "team" | "gantt" | "dashboard";
+/** The seven views the tasks page can show. `list` is the default and the only editable one. */
+export type TasksViewId =
+    | "list"
+    | "board"
+    | "calendar"
+    | "team"
+    | "gantt"
+    | "dashboard"
+    | "progress";
 
 /** The tab order, which is also the render order of the view switcher. */
 export const TASKS_VIEW_ORDER: readonly TasksViewId[] = [
@@ -24,6 +32,7 @@ export const TASKS_VIEW_ORDER: readonly TasksViewId[] = [
     "team",
     "gantt",
     "dashboard",
+    "progress",
 ];
 
 /** The human label of each view, so the switcher and the view headings never disagree. */
@@ -34,6 +43,7 @@ export const TASKS_VIEW_LABELS: Record<TasksViewId, string> = {
     team: "Team",
     gantt: "Gantt",
     dashboard: "Dashboard",
+    progress: "Progress",
 };
 
 /**

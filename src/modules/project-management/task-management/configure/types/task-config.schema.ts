@@ -41,16 +41,36 @@ const LabelSchema = z.string().trim().min(1, "Label is required").max(100, "Labe
 /** Both tables store `sort_order INT NOT NULL DEFAULT 0`; every list orders by `(sort_order, id)`. */
 const SortOrderSchema = z.number().int().min(0, "Sort order must be zero or greater");
 
+/**
+ * `pm_task_status.completion_percent` only — `TINYINT UNSIGNED NOT NULL DEFAULT 0` with a CHECK for
+ * 0-100. A leaf task's completion is the percent carried by its own status; nothing is rolled up
+ * here. Optional in the payload so an omitted value falls back to the column default, and so a write
+ * that does not mention it still succeeds on a deployment whose column has not been added yet.
+ */
+const CompletionPercentSchema = z
+    .number()
+    .int("Completion percent must be a whole number")
+    .min(0, "Completion percent must be between 0 and 100")
+    .max(100, "Completion percent must be between 0 and 100");
+
 /** Which catalog table a payload addresses — mandatory, because the two id spaces are independent. */
 export const CatalogKindSchema = z.enum(["status", "priority"]);
 
-/** POST body for a new status or priority. `sort_order` defaults to 0 server-side when omitted. */
+/**
+ * POST body for a new status or priority. `sort_order` defaults to 0 server-side when omitted, and the
+ * same holds for `completion_percent`, which the column's own `DEFAULT 0` supplies.
+ *
+ * The schema is kind-agnostic because both tables share it, but `completion_percent` exists only on
+ * `pm_task_status`: the service writes it for `kind: "status"` and ignores it for a priority, the way
+ * it already ignores `is_default: false`.
+ */
 export const CreateCatalogItemSchema = z.object({
     label: LabelSchema,
     color: HexColorSchema.nullable().optional(),
     icon: IconSchema.nullable().optional(),
     sort_order: SortOrderSchema.optional(),
     is_default: z.boolean().optional(),
+    completion_percent: CompletionPercentSchema.optional(),
 });
 
 /**

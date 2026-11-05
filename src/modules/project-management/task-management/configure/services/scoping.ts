@@ -119,6 +119,13 @@ export interface ScopedConfigRow {
      * missing column and a stale value both resolve to the same "no icon" answer.
      */
     readonly icon?: unknown;
+    /**
+     * `TINYINT UNSIGNED NOT NULL DEFAULT 0` with a CHECK for 0-100, on `pm_task_status` ONLY — a
+     * priority row never carries it. Optional so a row read before the column existed still types,
+     * and every reader treats a missing key as 0. This is the catalog value a leaf task's completion
+     * is derived from; it is not a per-task rollup and is never recomputed here.
+     */
+    readonly completion_percent?: number;
 }
 
 /** A live `pm_task_field` row as the scoped loader returns it — one custom task column. */
@@ -161,6 +168,12 @@ export interface ScopedFieldOptionRow {
     readonly color?: unknown;
     /** `VARCHAR(64)` lucide icon name or absent; optional for the same pre-DDL reason as `color`. */
     readonly icon?: unknown;
+    /**
+     * `TINYINT UNSIGNED NOT NULL DEFAULT 0` with a CHECK for 0-100: the weight this choice carries in
+     * the completion rollup. `unknown` for the same pre-DDL reason as `color`, and every reader treats
+     * a missing key as 0 so an unscored choice reads as not started rather than failing a read.
+     */
+    readonly completion_percent?: unknown;
 }
 
 /** A live `pm_task_field_value` row as the scoped loader returns it — one task's answer. */

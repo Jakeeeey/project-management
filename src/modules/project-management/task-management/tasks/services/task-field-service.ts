@@ -76,10 +76,16 @@ export interface TaskFieldClientRow extends Omit<ScopedFieldRow, "is_enabled" | 
     readonly options: readonly TaskFieldOptionClientRow[];
 }
 
-/** A choice with its colour and icon normalised, so a missing column reads as "none" either way. */
-export interface TaskFieldOptionClientRow extends Omit<ScopedFieldOptionRow, "color" | "icon"> {
+/** A choice with its colour, icon and completion weight normalised, so a missing column reads as "none" / 0. */
+export interface TaskFieldOptionClientRow extends Omit<ScopedFieldOptionRow, "color" | "icon" | "completion_percent"> {
     readonly color: string | null;
     readonly icon: string | null;
+    /**
+     * How far a task counts as done when it carries this choice, 0-100. Always a number, never
+     * `undefined`: an option written before the column existed reads as 0 (not started), so the
+     * Progress rollup can multiply by it without a guard of its own.
+     */
+    readonly completion_percent: number;
 }
 
 /** One task's answer, as the task payload carries it. */
@@ -143,6 +149,21 @@ function toHexOrNull(value: unknown): string | null {
     return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value : null;
 }
 
+/**
+ * A stored `TINYINT UNSIGNED` completion weight, clamped to 0-100.
+ *
+ * A missing key reads as 0 — "not started" — for the same pre-DDL reason as `readEnabled`: the
+ * column ships in a change of its own, and an unscored choice must not break the rollup. A value
+ * outside the bounds is clamped rather than trusted, because the column's CHECK is the only other
+ * guard and a row can predate it; a non-numeric value reads as 0 rather than `NaN`, which would
+ * poison every average above it in the tree.
+ */
+function readCompletionPercent(value: unknown): number {
+    const percent = Number(value);
+    if (!Number.isFinite(percent)) return 0;
+    return Math.min(100, Math.max(0, Math.round(percent)));
+}
+
 export class TaskFieldService {
     /** Every live column of the department with its live choices, ordered by `(sort_order, id)`. */
     static async listFields(actor: ScopedActor): Promise<TaskFieldClientRow[]> {
@@ -161,6 +182,7 @@ export class TaskFieldService {
                     ...option,
                     color: toHexOrNull(option.color),
                     icon: normalizeIconName(option.icon),
+                    completion_percent: readCompletionPercent(option.completion_percent),
                 })),
         }));
     }
@@ -339,6 +361,7 @@ export class TaskFieldService {
                 ...option,
                 color: toHexOrNull(option.color),
                 icon: normalizeIconName(option.icon),
+                completion_percent: readCompletionPercent(option.completion_percent),
             })),
         };
     }
@@ -384,7 +407,10 @@ export class TaskFieldService {
     }
 
     /** Adds a choice to a `select` column. A column of any other type has no choices to offer. */
-    static async createOption(actor: ScopedActor, input: CreateTaskFieldOptionInput): Promise<ScopedFieldOptionRow> {
+    static async createOption(
+        actor: ScopedActor,
+        input: CreateTaskFieldOptionInput,
+    ): Promise<TaskFieldOptionClientRow> {
         const field = await TaskFieldService.requireSelectField(actor, input.field_id);
         const live = await TaskFieldService.readOptionsOf(actor, field.id);
         const duplicate = live.find((option) => option.label === input.label);
@@ -408,17 +434,21 @@ export class TaskFieldService {
             created_by: actor.userId,
             updated_at: now,
             updated_by: actor.userId,
+            // An option has no `kind` discriminator, so the weight applies to every create. The key is
+            // sent only when the caller asked for it, so an omitted value lands on the column's
+            // `DEFAULT 0` and a deployment whose ALTER has not run yet keeps accepting a create.
+            ...(input.completion_percent !== undefined ? { completion_percent: input.completion_percent } : {}),
         });
 
         return TaskFieldService.readCreatedOption(actor, field.id, input.label);
     }
 
-    /** Renames, recolours or reorders one live choice. A choice never moves to another column. */
+    /** Renames, recolours, reweights or reorders one live choice. A choice never moves to another column. */
     static async updateOption(
         actor: ScopedActor,
         id: string | number,
         input: UpdateTaskFieldOptionInput,
-    ): Promise<ScopedFieldOptionRow> {
+    ): Promise<TaskFieldOptionClientRow> {
         const target = await TaskFieldService.requireLiveOption(actor, id);
 
         if (input.label !== undefined) {
@@ -432,11 +462,18 @@ export class TaskFieldService {
             }
         }
 
-        const changes: { label?: string; sort_order?: number; color?: string | null; icon?: string | null } = {};
+        const changes: {
+            label?: string;
+            sort_order?: number;
+            color?: string | null;
+            icon?: string | null;
+            completion_percent?: number;
+        } = {};
         if (input.label !== undefined) changes.label = input.label;
         if (input.sort_order !== undefined) changes.sort_order = input.sort_order;
         if (input.color !== undefined) changes.color = input.color;
         if (input.icon !== undefined) changes.icon = input.icon;
+        if (input.completion_percent !== undefined) changes.completion_percent = input.completion_percent;
 
         const now = phNow();
         await updateItem<unknown>("pm_task_field_option", target.id, {
@@ -445,14 +482,28 @@ export class TaskFieldService {
             updated_by: actor.userId,
         });
 
-        return { ...target, ...changes, updated_at: now, updated_by: actor.userId };
+        return {
+            ...target,
+            ...changes,
+            color: changes.color !== undefined ? changes.color : toHexOrNull(target.color),
+            icon: changes.icon !== undefined ? changes.icon : normalizeIconName(target.icon),
+            completion_percent:
+                changes.completion_percent !== undefined
+                    ? changes.completion_percent
+                    : readCompletionPercent(target.completion_percent),
+            updated_at: now,
+            updated_by: actor.userId,
+        };
     }
 
     /**
      * Soft-deletes one choice. Tasks that already picked it keep the stored id and render the
      * "removed choice" placeholder, so removing a choice never rewrites a task row.
      */
-    static async softDeleteOption(actor: ScopedActor, id: string | number): Promise<ScopedFieldOptionRow> {
+    static async softDeleteOption(
+        actor: ScopedActor,
+        id: string | number,
+    ): Promise<TaskFieldOptionClientRow> {
         const target = await TaskFieldService.requireLiveOption(actor, id);
         const now = phNow();
 
@@ -462,7 +513,15 @@ export class TaskFieldService {
             updated_by: actor.userId,
         });
 
-        return { ...target, color: toHexOrNull(target.color), is_deleted: 1, updated_at: now, updated_by: actor.userId };
+        return {
+            ...target,
+            color: toHexOrNull(target.color),
+            icon: normalizeIconName(target.icon),
+            completion_percent: readCompletionPercent(target.completion_percent),
+            is_deleted: 1,
+            updated_at: now,
+            updated_by: actor.userId,
+        };
     }
 
     /**
@@ -801,7 +860,7 @@ export class TaskFieldService {
         actor: ScopedActor,
         fieldId: number,
         label: string,
-    ): Promise<ScopedFieldOptionRow> {
+    ): Promise<TaskFieldOptionClientRow> {
         const rows = await readItems<ScopedFieldOptionRow>("pm_task_field_option", {
             filter: {
                 department_id: { _eq: actor.departmentId },
@@ -817,6 +876,11 @@ export class TaskFieldService {
         if (row === undefined) {
             throw new TaskFieldError("INTERNAL_FAIL", "The choice was created but could not be read back");
         }
-        return row;
+        return {
+            ...row,
+            color: toHexOrNull(row.color),
+            icon: normalizeIconName(row.icon),
+            completion_percent: readCompletionPercent(row.completion_percent),
+        };
     }
 }

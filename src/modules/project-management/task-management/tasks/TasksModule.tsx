@@ -28,6 +28,7 @@ import { BoardView } from "./components/views/BoardView";
 import { CalendarView } from "./components/views/CalendarView";
 import { DashboardView } from "./components/views/DashboardView";
 import { GanttView } from "./components/views/GanttView";
+import { ProgressView } from "./components/views/ProgressView";
 import { TeamView } from "./components/views/TeamView";
 import type { CellEditRequest } from "./components/TaskCellEditor";
 import type { TaskRowPatch, TaskRowView } from "./components/TaskRow";
@@ -820,7 +821,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
             </div>
 
             {/*
-             * The five extra views are read-only projections of the SAME rows the list renders, so
+             * The six extra views are read-only projections of the SAME rows the list renders, so
              * they are mounted only while selected: the Gantt pulls a third-party timeline and the
              * Dashboard mounts three charts, and neither should cost anything on another view. The
              * list stays mounted but hidden so its expand state and scroll position survive a switch.
@@ -832,6 +833,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                     {view === "team" ? <TeamView {...viewProps} /> : null}
                     {view === "gantt" ? <GanttView {...viewProps} /> : null}
                     {view === "dashboard" ? <DashboardView {...viewProps} /> : null}
+                    {view === "progress" ? <ProgressView {...viewProps} /> : null}
                 </>
             ) : null}
 
