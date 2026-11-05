@@ -383,6 +383,11 @@ export function TasksModule({ userId }: TasksModuleProps) {
     /** Which of the six views is showing. The list is the default and the only editable one. */
     const [view, setView] = useState<TasksViewId>("list");
     const [detailTaskId, setDetailTaskId] = useState<number | null>(null);
+    /**
+     * The element that opened the detail sheet. Radix hands focus back to a dialog's trigger, and
+     * this sheet has none, so the opener is kept here instead — see `handleDetailOpenChange`.
+     */
+    const detailReturnFocusRef = useRef<HTMLElement | null>(null);
     const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
     const [subtaskParentId, setSubtaskParentId] = useState<number | null>(null);
 
@@ -606,7 +611,17 @@ export function TasksModule({ userId }: TasksModuleProps) {
     );
 
     const handleDetailOpenChange = useCallback((next: boolean): void => {
-        if (!next) setDetailTaskId(null);
+        if (next) return;
+        setDetailTaskId(null);
+        // The opener may be gone (its row was deleted, the view changed): only a live element can
+        // take focus back. The move waits a frame because the dialog's focus scope is still
+        // mounted for the rest of this tick and drags focus back into itself.
+        const opener = detailReturnFocusRef.current;
+        detailReturnFocusRef.current = null;
+        if (opener === null) return;
+        requestAnimationFrame(() => {
+            if (opener.isConnected) opener.focus({ preventScroll: true });
+        });
     }, []);
 
     const handleEditOpenChange = useCallback(
@@ -719,6 +734,14 @@ export function TasksModule({ userId }: TasksModuleProps) {
     );
 
     const handleOpenTask = useCallback((taskId: number): void => {
+        /**
+         * Where focus was when the sheet opened. Radix returns focus to a dialog's TRIGGER, and this
+         * sheet is opened by a row, a card or a details button rather than a trigger of its own — so
+         * without remembering the opener, closing the sheet drops a keyboard user on `<body>` and
+         * their place in the grid is gone. Every view opens through here, so this is the one seam.
+         */
+        const active = document.activeElement;
+        detailReturnFocusRef.current = active instanceof HTMLElement ? active : null;
         setDetailTaskId(taskId);
     }, []);
 
