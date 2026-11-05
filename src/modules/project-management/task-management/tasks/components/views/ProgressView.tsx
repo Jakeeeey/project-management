@@ -10,7 +10,6 @@ import {
     type CSSProperties,
     type KeyboardEvent,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import {
     ChevronDown,
     ChevronRight,
@@ -95,6 +94,7 @@ import {
     type SavedTaskFilter,
 } from "../task-filter";
 import { pruneToVisible, visibleTaskIds } from "./progress-tree";
+import { buildOffsets, windowFor } from "./window";
 
 /**
  * The Progress view: the department's tasks as a read-only completion tree-table.
@@ -109,8 +109,9 @@ import { pruneToVisible, visibleTaskIds } from "./progress-tree";
  * collapsed, and this tab's own search and filters (the List keeps its own). It never fetches and
  * never writes, so the shell stays the only owner of the rows and of retries.
  *
- * Only a window of rows is mounted ({@link useVirtualizer}). That is what makes the tab survive a
- * fully expanded tree: the DOM holds what is on screen, not what the list contains.
+ * Only a window of rows is mounted, computed arithmetically in `./window` from the constants
+ * below. That is what makes the tab survive a fully expanded tree: the DOM holds what is on
+ * screen, not what the list contains.
  */
 
 /**
@@ -149,12 +150,12 @@ const BAR_CLASS = "h-2 w-20 shrink-0";
 /**
  * Geometry. A row is two lines when its parent carries the "N subtasks" count, or when the view is
  * grouped by a column and a leaf has to name the answer it scored from; otherwise it is one line.
- * Both numbers are MEASURED back from the DOM through `measureElement`, so they seed the offsets and
- * never accumulate a guess.
+ * Both numbers are FIXED: the row's cells add up to them whatever the text says, which is what
+ * lets `./window` compute the offsets instead of measuring the DOM.
  *
  * Column widths come from a `<colgroup>`, so a recycled row can never reflow a column. And the row
- * hairline is an INSET SHADOW rather than a border, because a border adds to the measured box and
- * every row below it would drift.
+ * hairline is an INSET SHADOW rather than a border, because a border adds to the box and every row
+ * below it would drift half a pixel per row.
  */
 const PARENT_ROW_HEIGHT_PX = 56;
 const LEAF_ROW_HEIGHT_PX = 40;
@@ -179,8 +180,8 @@ const SEARCH_DEBOUNCE_MS = 200;
 const LIVE_REGION_DEBOUNCE_MS = 400;
 
 /**
- * A body row's shared chrome. Nothing here pins a height: the row box is whatever its cells measure,
- * and the virtualizer is told that number by `measureElement`.
+ * A body row's shared chrome. Nothing here pins a height: the row is 40px or 56px because its cells
+ * are, and `./window` assumes exactly that.
  */
 const ROW_CLASS = cn(
     "border-b-0 transition-colors",
@@ -289,7 +290,7 @@ interface ProgressNode {
 
 /**
  * A media query as state, for the two things CSS alone cannot do here: the card and table layouts
- * measure different row heights, and the virtualizer needs the one that is actually mounted.
+ * have different row heights, and the window needs the one that is actually mounted.
  *
  * The first paint takes the wide branch — the table — so the server and the client agree; a narrow
  * viewport swaps one frame after hydration.
@@ -384,8 +385,17 @@ export function ProgressView({
     /** Status weights until the user picks a column from the `Complete` header's menu. */
     const [basis, setBasis] = useState<ProgressBasis>({ kind: "status" });
     const [sort, setSort] = useState<ProgressSort>("tree");
-    /** COLLAPSED ids, so the first paint is fully expanded without seeding a set from the rows. */
-    const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<number>>(() => new Set<number>());
+    /**
+     * COLLAPSED ids, so the first paint is fully expanded without seeding a set from the rows.
+     *
+     * Each id carries the reveal chain that was in force when the reader collapsed it. A filter that
+     * opens an ancestor must not undo a collapse the reader made after the filter appeared, and a
+     * collapse made under one chain must not survive into the next one — a record rather than a bare
+     * set, because both facts are about WHY the row is closed.
+     */
+    const [collapsedAt, setCollapsedAt] = useState<ReadonlyMap<number, string>>(
+        () => new Map<number, string>(),
+    );
 
     /**
      * This tab's own search and filters — the List keeps its own state in the shell. The filter model
@@ -430,7 +440,46 @@ export function ProgressView({
 
     const basisKey = isColumnBasis && chosenField !== null ? `column:${chosenField.id}` : "status";
 
+    const scrollRef = useRef<HTMLDivElement | null>(null);
+
+    /**
+     * The scroll box's offset, sampled once per animation frame. `onScroll` fires far more often
+     * than the window needs to move, and a state write per event would re-render the grid several
+     * times in a frame; the pending offset is kept in a ref and the frame carries the latest one.
+     */
+    const [scrollTop, setScrollTop] = useState(0);
+    const frameRef = useRef<number | null>(null);
+    const pendingScrollTopRef = useRef(0);
+
+    const handleScroll = useCallback(() => {
+        const box = scrollRef.current;
+        if (box === null) return;
+        pendingScrollTopRef.current = box.scrollTop;
+        if (frameRef.current !== null) return;
+        frameRef.current = window.requestAnimationFrame(() => {
+            frameRef.current = null;
+            setScrollTop(pendingScrollTopRef.current);
+        });
+    }, []);
+
+    useEffect(
+        () => () => {
+            if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+            frameRef.current = null;
+        },
+        [],
+    );
+
     const handleBasisChange = useCallback((value: string) => {
+        /**
+         * Heights change with the basis — a leaf gains a second line under a column basis — so an
+         * offset carried across would point at a different row. Reset here rather than in an effect:
+         * this is the only thing that moves the basis, and the box cannot be scrolled by anything
+         * else between the click and the render.
+         */
+        const box = scrollRef.current;
+        box?.scrollTo({ top: 0 });
+        setScrollTop(0);
         if (value === "status") {
             setBasis({ kind: "status" });
             return;
@@ -533,6 +582,44 @@ export function ProgressView({
         return ids;
     }, [renderForest]);
 
+    /**
+     * The chain a filter must open to put its matches on screen: every ancestor of every match,
+     * encoded as one content key. A STRING on purpose — `matchedIds` and `parentById` are rebuilt
+     * whenever `items` changes, so an id array would be a new identity on every refetch and would
+     * re-open a row the reader had just collapsed. Content is the only thing this may react to.
+     */
+    const revealKey = useMemo(() => {
+        if (!isFiltering) return "";
+        const chain = new Set<number>();
+        for (const id of matchedIds) {
+            let cursor = parentById.get(id) ?? null;
+            while (cursor !== null && !chain.has(cursor)) {
+                chain.add(cursor);
+                cursor = parentById.get(cursor) ?? null;
+            }
+        }
+        return [...chain].sort((a, b) => a - b).join(",");
+    }, [isFiltering, matchedIds, parentById]);
+
+    const revealedIds = useMemo<ReadonlySet<number>>(() => {
+        if (revealKey === "") return new Set<number>();
+        return new Set(revealKey.split(",").map(Number));
+    }, [revealKey]);
+
+    /**
+     * The collapse state the grid actually renders. A row the current chain reached is OPEN unless
+     * the reader closed it under this same chain; everything else is closed exactly when the reader
+     * closed it. Nothing here writes to state, so a filter can reveal a row without the render having
+     * to schedule another one first.
+     */
+    const collapsedIds = useMemo<ReadonlySet<number>>(() => {
+        const ids = new Set<number>();
+        for (const [id, closedUnder] of collapsedAt) {
+            if (closedUnder === revealKey || !revealedIds.has(id)) ids.add(id);
+        }
+        return ids;
+    }, [collapsedAt, revealKey, revealedIds]);
+
     const expandedIds = useMemo(() => {
         const ids = new Set<number>();
         for (const id of renderParentIds) if (!collapsedIds.has(id)) ids.add(id);
@@ -563,45 +650,6 @@ export function ProgressView({
     );
 
     /**
-     * The chain a filter must open to put its matches on screen: every ancestor of every match,
-     * encoded as one content key.
-     *
-     * These ids are removed from the user's OWN collapsed set — there is no second expansion state
-     * layered on top, so a manual collapse after this runs still wins and Collapse all cannot leave
-     * a row open behind the screen's back.
-     *
-     * A STRING on purpose: `matchedIds` and `parentById` are rebuilt whenever `items` changes, so an
-     * id array would hand the effect below a new identity on every refetch, and it would re-open a
-     * row the reader had just collapsed. Content is the only thing the effect may react to.
-     */
-    const revealKey = useMemo(() => {
-        if (!isFiltering) return "";
-        const chain = new Set<number>();
-        for (const id of matchedIds) {
-            let cursor = parentById.get(id) ?? null;
-            while (cursor !== null && !chain.has(cursor)) {
-                chain.add(cursor);
-                cursor = parentById.get(cursor) ?? null;
-            }
-        }
-        return [...chain].sort((a, b) => a - b).join(",");
-    }, [isFiltering, matchedIds, parentById]);
-
-    // Keyed on the chain's CONTENT, so this re-opens only when a filter actually reveals a new row —
-    // not on every render, and never right after the reader collapsed something.
-    useEffect(() => {
-        if (revealKey === "") return;
-        setCollapsedIds((previous) => {
-            let changed = false;
-            const next = new Set(previous);
-            for (const id of revealKey.split(",")) {
-                if (next.delete(Number(id))) changed = true;
-            }
-            return changed ? next : previous;
-        });
-    }, [revealKey]);
-
-    /**
      * Each row's index in the FLATTENED list, not in the rendered window. `aria-rowindex` is a
      * statement about the whole grid, so it has to be the absolute one; the keyboard walks the same
      * numbers to know what "the next row" means.
@@ -615,7 +663,6 @@ export function ProgressView({
     const isCardLayout = useMediaQuery("(max-width: 767px)");
     const isWideLayout = useMediaQuery("(min-width: 1280px)");
 
-    const scrollRef = useRef<HTMLDivElement | null>(null);
     /** The row the grid's keyboard is on. Null until the grid is focused. */
     const [activeId, setActiveId] = useState<number | null>(null);
 
@@ -629,48 +676,55 @@ export function ProgressView({
         return rows[0]?.node.id ?? null;
     }, [rows, activeId, indexById]);
 
-    const virtualizer = useVirtualizer({
-        count: rows.length,
-        getScrollElement: () => scrollRef.current,
-        // A card is one fixed box; a table row is not — two lines whenever a parent shows its count
-        // or a column-scored leaf names its answer. This is the seed only: every mounted row reports
-        // its measured height back through `virtualizer.measureElement`.
-        estimateSize: (index) => {
-            if (isCardLayout) return CARD_HEIGHT_PX;
-            const row = rows[index];
-            const hasChildren = row !== undefined && row.childCount > 0;
-            return hasChildren || isColumnBasis
-                ? PARENT_ROW_HEIGHT_PX
-                : LEAF_ROW_HEIGHT_PX;
-        },
-        overscan: OVERSCAN_ROWS,
-        // A row scrolled to the top edge of the box would sit behind the sticky header.
-        scrollPaddingStart: HEADER_SCROLL_PADDING_PX,
-    });
+    /**
+     * The window's height, read from the scroll box's own box, never guessed from the viewport: the
+     * box is capped by `max-h` and shrinks to its content below that. It cannot be read during
+     * render — the box is laid out after the commit — so it is state, seeded on mount and re-read
+     * on a resize and whenever the row count changes, which is when the box's content height does.
+     */
+    const [viewportHeight, setViewportHeight] = useState(0);
 
-    // Row heights are measured, so both a layout switch and a list change invalidate what is cached:
-    // rows keep their DOM node across a collapse while their index moves, and `measureElement` only
-    // fires when a node mounts.
-    useEffect(() => {
-        virtualizer.measure();
-    }, [virtualizer, rows, isCardLayout, isColumnBasis]);
-
-    // Heights change with the basis — a leaf gains a second line under a column basis — so an offset
-    // carried across would point at a different row.
     useEffect(() => {
         const box = scrollRef.current;
-        if (box !== null) box.scrollTop = 0;
-        virtualizer.scrollToOffset(0);
-    }, [basis, virtualizer]);
+        if (box === null) return;
+        const readHeight = () => setViewportHeight(box.clientHeight);
+        readHeight();
+        window.addEventListener("resize", readHeight);
+        return () => window.removeEventListener("resize", readHeight);
+    }, [isCardLayout, rows.length]);
 
-    const toggleCollapsed = useCallback((id: number) => {
-        setCollapsedIds((previous) => {
-            const next = new Set(previous);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-        });
-    }, []);
+    /**
+     * The row heights, as constants: a card is one fixed box, and a table row is two lines when it
+     * shows a count or an answer, one otherwise. Nothing here is measured, so nothing can drift.
+     */
+    const rowHeights = useMemo(() => {
+        if (isCardLayout) return rows.map(() => CARD_HEIGHT_PX);
+        return rows.map((row) =>
+            row.childCount > 0 || isColumnBasis ? PARENT_ROW_HEIGHT_PX : LEAF_ROW_HEIGHT_PX,
+        );
+    }, [rows, isCardLayout, isColumnBasis]);
+
+    const rowOffsets = useMemo(() => buildOffsets(rowHeights), [rowHeights]);
+
+    const rowWindow = useMemo(
+        () => windowFor(rowOffsets, scrollTop, viewportHeight, OVERSCAN_ROWS),
+        [rowOffsets, scrollTop, viewportHeight],
+    );
+
+    const toggleCollapsed = useCallback(
+        (id: number) => {
+            const isClosed = collapsedIds.has(id);
+            setCollapsedAt((previous) => {
+                const next = new Map(previous);
+                // The chain that is open right now is what a later filter compares against, so a
+                // collapse made under it is the one that outranks the reveal.
+                if (isClosed) next.delete(id);
+                else next.set(id, revealKey);
+                return next;
+            });
+        },
+        [collapsedIds, revealKey],
+    );
 
     /**
      * True while a parent ON SCREEN is open — the Collapse all / Expand all label's source.
@@ -689,15 +743,15 @@ export function ProgressView({
      * "Collapse all" while nothing it can reach is open. Ids hidden by the filter keep their state.
      */
     const toggleAll = useCallback(() => {
-        setCollapsedIds((previous) => {
-            const next = new Set(previous);
+        setCollapsedAt((previous) => {
+            const next = new Map(previous);
             for (const id of renderParentIds) {
-                if (anyExpanded) next.add(id);
+                if (anyExpanded) next.set(id, revealKey);
                 else next.delete(id);
             }
             return next;
         });
-    }, [anyExpanded, renderParentIds]);
+    }, [anyExpanded, renderParentIds, revealKey]);
 
     const clearFilterClauses = useCallback(() => setClauses([]), []);
 
@@ -709,8 +763,8 @@ export function ProgressView({
 
     /**
      * Focus moves by id, not by element: the row the keyboard asked for is usually not mounted yet
-     * when the handler runs. `scrollToIndex` makes the virtualizer mount it on the next frame, so
-     * this retries for a few frames and then stops rather than fighting the user for focus.
+     * when the handler runs. The scroll below mounts it on the next frame, so this retries for a
+     * few frames and then stops rather than fighting the user for focus.
      */
     const focusRowAt = useCallback(
         (index: number) => {
@@ -719,7 +773,29 @@ export function ProgressView({
             if (target === undefined) return;
             const id = target.node.id;
             setActiveId(id);
-            virtualizer.scrollToIndex(clamped, { align: "auto" });
+
+            /**
+             * The row scrolls only if it is out of view, and the top edge it has to clear is the
+             * sticky header rather than the box: `HEADER_SCROLL_PADDING_PX` is the header plus air,
+             * so a row parked under it does not count as visible. Both branches are written from
+             * the offsets, which are the same numbers the spacers and the window use.
+             */
+            const box = scrollRef.current;
+            if (box !== null && box.clientHeight > 0) {
+                const top = rowOffsets[clamped] ?? 0;
+                const bottom = rowOffsets[clamped + 1] ?? top;
+                let next = box.scrollTop;
+                if (top - HEADER_SCROLL_PADDING_PX < next) {
+                    next = top - HEADER_SCROLL_PADDING_PX;
+                } else if (bottom > next + box.clientHeight) {
+                    next = bottom - box.clientHeight;
+                }
+                next = Math.max(0, next);
+                if (next !== box.scrollTop) {
+                    box.scrollTo({ top: next });
+                    setScrollTop(next);
+                }
+            }
 
             let attempts = 0;
             const focusWhenMounted = () => {
@@ -735,7 +811,7 @@ export function ProgressView({
             };
             requestAnimationFrame(focusWhenMounted);
         },
-        [rows, virtualizer],
+        [rows, rowOffsets],
     );
 
     /**
@@ -945,17 +1021,14 @@ export function ProgressView({
         filterCount === 0 ? "Filters, none active" : `Filters, ${filterCount} active`;
 
     /**
-     * The window. `first.start` is the height of everything above it in the flattened list and
-     * `totalSize - last.end` is the height of everything below, so two spacers reproduce the real
+     * The window. `offsets[start]` is the height of everything above it in the flattened list and
+     * `total - offsets[end]` is the height of everything below, so two spacers reproduce the real
      * scroll height without mounting a row: offsets stay arithmetic, never a transform.
      */
-    const virtualItems = virtualizer.getVirtualItems();
-    const totalSize = virtualizer.getTotalSize();
-    const firstItem = virtualItems[0];
-    const lastItem = virtualItems[virtualItems.length - 1];
-    const topSpacer = firstItem === undefined ? 0 : firstItem.start;
-    const bottomSpacer =
-        lastItem === undefined ? 0 : Math.max(0, totalSize - lastItem.end);
+    const windowRows = rows.slice(rowWindow.start, rowWindow.end);
+    const totalHeight = rowOffsets[rowOffsets.length - 1] ?? 0;
+    const topSpacer = rowOffsets[rowWindow.start] ?? 0;
+    const bottomSpacer = Math.max(0, totalHeight - (rowOffsets[rowWindow.end] ?? totalHeight));
 
     return (
         <div data-slot="task-progress" className="w-full min-w-0 space-y-3">
@@ -1148,6 +1221,7 @@ export function ProgressView({
                             tabIndex={-1}
                             aria-label="Task completion"
                             onKeyDown={handleGridKeyDown}
+                            onScroll={handleScroll}
                             onWheel={handleScrollBoxWheel}
                             className={cn(
                                 SCROLL_BOX_CLASS,
@@ -1159,9 +1233,8 @@ export function ProgressView({
                             {isCardLayout ? (
                                 <div role="tree" aria-label="Task completion">
                                     <div aria-hidden="true" style={{ height: topSpacer }} />
-                                    {virtualItems.map((item) => {
-                                        const row = rows[item.index];
-                                        if (row === undefined) return null;
+                                    {windowRows.map((row, offset) => {
+                                        const index = rowWindow.start + offset;
                                         const {
                                             node,
                                             value,
@@ -1204,8 +1277,7 @@ export function ProgressView({
                                         return (
                                             <div
                                                 key={node.id}
-                                                ref={virtualizer.measureElement}
-                                                data-index={item.index}
+                                                data-index={index}
                                                 role="treeitem"
                                                 data-slot="task-progress-card"
                                                 data-row-id={node.id}
@@ -1441,9 +1513,8 @@ export function ProgressView({
                                                 style={{ height: topSpacer }}
                                             />
                                         </tr>
-                                        {virtualItems.map((item) => {
-                                            const row = rows[item.index];
-                                            if (row === undefined) return null;
+                                        {windowRows.map((row, offset) => {
+                                            const index = rowWindow.start + offset;
                                             const {
                                                 node,
                                                 value,
@@ -1496,8 +1567,7 @@ export function ProgressView({
                                             return (
                                                 <TableRow
                                                     key={node.id}
-                                                    ref={virtualizer.measureElement}
-                                                    data-index={item.index}
+                                                    data-index={index}
                                                     data-slot="task-progress-row"
                                                     data-row-id={node.id}
                                                     aria-level={node.depth + 1}
@@ -1506,7 +1576,7 @@ export function ProgressView({
                                                             ? isExpanded
                                                             : undefined
                                                     }
-                                                    aria-rowindex={item.index + 2}
+                                                    aria-rowindex={index + 2}
                                                     tabIndex={
                                                         node.id === rovingId ? 0 : -1
                                                     }
@@ -1568,8 +1638,8 @@ export function ProgressView({
                                                                     ? `+${clippedDepth}`
                                                                     : ""}
                                                             </span>
-                                                            {/* A two-line row needs the gap or its
-                                                                height drops below the estimate. */}
+                                                            {/* The gap is part of the 56px
+                                                                two-line row, not decoration. */}
                                                             <span
                                                                 className={cn(
                                                                     "min-w-0 flex-1",

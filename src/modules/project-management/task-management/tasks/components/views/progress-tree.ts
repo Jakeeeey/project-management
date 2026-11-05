@@ -35,7 +35,7 @@ export function visibleTaskIds(
  * The forest cut down to the ids that stay on screen.
  *
  * Each kept node is a shallow copy carrying its pruned children, so `depth` and every other field
- * survive and the virtualizer's `aria-level` still announces true depth. Nothing is re-parented:
+ * survive and the grid's `aria-level` still announces true depth. Nothing is re-parented:
  * a kept child keeps its own parent, because a node is kept only when its parent was kept too.
  */
 export function pruneToVisible<T extends TreeSourceRow>(

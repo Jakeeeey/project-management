@@ -18,6 +18,9 @@ import { buildTree, flattenVisible, pruneForest, type TreeNode, type TreeSourceR
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
 import { columnWeightScore, completionFlag, computeCompletion, describeCompletionPercent, formatCompletionPercent, statusCompletionScore, type CompletionAnswer, type CompletionRow } from "./completion.ts";
 
+// @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
+import { buildOffsets, windowFor } from "../components/views/window.ts";
+
 interface FixtureRow extends TreeSourceRow {
     readonly title: string;
 }
@@ -469,6 +472,64 @@ check(
 check(
     "a parent's own weighted answer is ignored in the mean",
     near(weightedRollup.ownById.get(90), 100),
+);
+
+// --- The row window: prefix-sum offsets, binary-searched slice --------------------------------------
+const windowOffsets = buildOffsets([40, 56, 40, 72]);
+check(
+    "offsets are prefix sums ending in the total height",
+    sameIds(windowOffsets, [0, 40, 96, 136, 208]),
+    JSON.stringify(windowOffsets),
+);
+
+const emptyWindow = windowFor(buildOffsets([]), 0, 600, 10);
+check("an empty list windows to nothing", emptyWindow.start === 0 && emptyWindow.end === 0);
+
+const loneWindow = windowFor(buildOffsets([40]), 0, 600, 10);
+check(
+    "a single row is the whole window, whatever the overscan",
+    loneWindow.start === 0 && loneWindow.end === 1,
+);
+
+const onBoundary = windowFor(windowOffsets, 96, 40, 0);
+check(
+    "a viewport starting exactly on an offset mounts that one row",
+    onBoundary.start === 2 && onBoundary.end === 3,
+);
+
+const twoRows = windowFor(windowOffsets, 40, 100, 0);
+check(
+    "a viewport spanning two rows returns both, end exclusive",
+    twoRows.start === 1 && twoRows.end === 3,
+);
+
+check("overscan clamps at the first row", windowFor(windowOffsets, 0, 40, 10).start === 0);
+check("overscan clamps at the last row", windowFor(windowOffsets, 136, 72, 10).end === 4);
+
+const tallOffsets = buildOffsets(Array.from({ length: 30 }, () => 40));
+const middle = windowFor(tallOffsets, 600, 80, 10);
+check(
+    "overscan adds rows above and below one in the middle",
+    middle.start === 5 && middle.end === 27,
+    `${middle.start}..${middle.end}`,
+);
+
+const pastEnd = windowFor(tallOffsets, 5000, 80, 10);
+check(
+    "a scroll beyond the end still mounts the last row",
+    pastEnd.start === 19 && pastEnd.end === 30,
+    `${pastEnd.start}..${pastEnd.end}`,
+);
+
+const tallTop = windowFor(tallOffsets, 0, 120, 10);
+check(
+    "the top of the list ignores overscan above row 0",
+    tallTop.start === 0 && tallTop.end === 13,
+);
+
+check(
+    "the window never runs past the last row",
+    windowFor(tallOffsets, 1200, 120, 10).end === 30,
 );
 
 if (failures > 0) {
