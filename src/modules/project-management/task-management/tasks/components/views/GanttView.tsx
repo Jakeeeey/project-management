@@ -128,13 +128,16 @@ const GanttTooltip = dynamic(
 );
 
 /**
- * The bar label for the fullscreen chart, set as the vendor's `taskTemplate`.
+ * The bar label for both charts, set as the vendor's `taskTemplate`.
  *
  * The modal chart has no label column (`columns={[]}`), so without this a bar is an anonymous
- * paint swatch. The vendor calls the template with the bar's own row and renders it INSIDE the bar
- * (or just outside it when the bar is too narrow for its content), keeping the vendor's
- * `.wx-content` class so its overflow/ellipsis rules still apply; the inner span adds the
- * truncation plus a `title` fallback for the bars that are too narrow to read.
+ * paint swatch. The inline chart keeps its sidebar, but the vendor's default label there WRAPS:
+ * a name longer than its bar spills onto a second line and paints over the row below, which is
+ * the same defect the modal avoids only because this template truncates. The vendor calls the
+ * template with the bar's own row and renders it INSIDE the bar (or just outside it when the bar
+ * is too narrow for its content), keeping the vendor's `.wx-content` class so its overflow/ellipsis
+ * rules still apply; the inner span adds the truncation plus a `title` fallback for the bars that
+ * are too narrow to read.
  */
 function GanttBarLabel({ data }: { readonly data: ITask }) {
     const name = data.text === undefined || data.text === "" ? `Task #${String(data.id ?? "")}` : data.text;
@@ -1412,6 +1415,7 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry, on
                         cellWidth={GANTT_CELL_WIDTH}
                         cellBorders="column"
                         highlightTime={highlightToday}
+                        taskTemplate={GanttBarLabel}
                         init={handleReady}
                     />
                 </GanttErrorBoundary>
