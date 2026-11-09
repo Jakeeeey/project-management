@@ -172,8 +172,14 @@ const NOTE_COMPACT_COLUMN_PX = 40;
  * scroll box reach them.
  */
 const TASK_COLUMN_MIN_PX = 220;
-/** 40px of sticky header, 4px of air: a row scrolled to this offset is never hidden behind it. */
-const HEADER_SCROLL_PADDING_PX = 44;
+/**
+ * The sticky `<thead>`'s height (`TableHead` is `h-10`). The row offsets index the BODY, which starts
+ * below it, while `scrollTop` counts from the top of the scroll box — so an offset has to clear the
+ * header before it can be compared with a scroll position. The card layout has no header.
+ */
+const STICKY_HEADER_PX = 40;
+/** The air a row scrolled up to the header keeps above it, so it sits beside the header, not under it. */
+const ROW_CLEARANCE_PX = 4;
 
 /** 200ms of typing is one filter change; 400ms of quiet is one announcement. */
 const SEARCH_DEBOUNCE_MS = 200;
@@ -776,19 +782,21 @@ export function ProgressView({
 
             /**
              * The row scrolls only if it is out of view, and the top edge it has to clear is the
-             * sticky header rather than the box: `HEADER_SCROLL_PADDING_PX` is the header plus air,
-             * so a row parked under it does not count as visible. Both branches are written from
-             * the offsets, which are the same numbers the spacers and the window use.
+             * sticky header rather than the box: `ROW_CLEARANCE_PX` is the air it keeps above itself,
+             * and in the table layout the header's own height is added back because the offsets are
+             * body-relative while `scrollTop` counts from the top of the box. Both branches are
+             * written from the offsets, which are the same numbers the spacers and the window use.
              */
             const box = scrollRef.current;
             if (box !== null && box.clientHeight > 0) {
                 const top = rowOffsets[clamped] ?? 0;
                 const bottom = rowOffsets[clamped + 1] ?? top;
+                const headerPx = isCardLayout ? 0 : STICKY_HEADER_PX;
                 let next = box.scrollTop;
-                if (top - HEADER_SCROLL_PADDING_PX < next) {
-                    next = top - HEADER_SCROLL_PADDING_PX;
-                } else if (bottom > next + box.clientHeight) {
-                    next = bottom - box.clientHeight;
+                if (top - ROW_CLEARANCE_PX < next) {
+                    next = top - ROW_CLEARANCE_PX;
+                } else if (bottom + headerPx > next + box.clientHeight) {
+                    next = bottom + headerPx - box.clientHeight;
                 }
                 next = Math.max(0, next);
                 if (next !== box.scrollTop) {
@@ -811,7 +819,7 @@ export function ProgressView({
             };
             requestAnimationFrame(focusWhenMounted);
         },
-        [rows, rowOffsets],
+        [rows, rowOffsets, isCardLayout],
     );
 
     /**
@@ -1761,8 +1769,9 @@ export function ProgressView({
                         data-slot="task-progress-footer"
                         className="text-xs text-muted-foreground"
                     >
-                        {/* Rows a filter hid, not rows a collapse hid: the coverage claim is about
-                            the filter, and a collapsed parent hides rows without touching a number. */}
+                        {/* The shown count is what is on screen, so collapsing a parent lowers it
+                            exactly as a filter does. The percentages are not that count: they cover
+                            every task in the list whether it is filtered out or folded away. */}
                         {isFiltering
                             ? `Showing ${rows.length} of ${items.length} tasks. Percentages cover all ${items.length} tasks.`
                             : `${items.length} tasks`}

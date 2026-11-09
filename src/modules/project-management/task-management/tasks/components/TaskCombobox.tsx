@@ -1,41 +1,41 @@
 "use client";
 
 import * as React from "react";
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
+import { Popover as PopoverPrimitive } from "radix-ui";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
-    Combobox,
-    ComboboxContent,
-    ComboboxEmpty,
-    ComboboxInput,
-    ComboboxItem,
-    ComboboxList,
-    ComboboxTrigger,
-    ComboboxValue,
-} from "@/components/ui/combobox";
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+} from "@/components/ui/command";
 import { CatalogStatusIcon } from "./CatalogStatusIcon";
 
 /**
  * The ONE searchable single-select combobox for the project-management module.
  *
- * This is the module's shared "choose one row from a table" control. It composes the project's
- * existing `@/components/ui/combobox` primitive (base-ui) for the popup, list, items and search —
- * nothing about the popup is hand-rolled — and adds the module's own trigger row so every call site
- * gets the same behaviour and sizing:
+ * This is the module's shared "choose one row from a table" control and it owns its popup: Radix
+ * Popover for the anchor and dismissal, `cmdk` for the search, the list and the keyboard model.
+ * It is deliberately NOT built on `@/components/ui/combobox`, for the reason below.
  *
- * - A trigger showing the CURRENT value (or the placeholder while nothing is chosen).
- * - A search input INSIDE the popup, so a long catalog/member list is type-to-filter.
- * - A per-option leading icon, rendered by `CatalogStatusIcon` so a status/priority/custom-field
- *   option looks exactly like it does everywhere else. By default the icon is ALWAYS drawn — an
- *   option with no stored icon falls back to the foundation's default marker rather than leaving
- *   the column blank — but a row set that is NOT a catalog can opt out with `showStatusIcon={false}`,
- *   because the fallback marker on a row that has no status reads as an unselected radio, not as
- *   information.
- * - A visible CLEAR (X) button, rendered only while a value is selected, so "how do I remove a
- *   value" is answered by the control itself rather than by a fake first list row labelled with
- *   the placeholder.
+ * ## Why the popup is portalled into the modal, not into `<body>`
+ *
+ * The shared base-ui combobox portals its popup to `<body>`. A modal Radix dialog keeps focus
+ * inside its own DOM subtree, so a popup outside it loses focus the moment it is focused (the
+ * dialog's focus scope pulls it straight back to the first field) and, with `pointer-events: none`
+ * on `body`, swallows every click. Both symptoms were live in the edit dialog: the search box could
+ * be clicked but never typed into, and options could not be selected at all.
+ *
+ * `useModalContainer` resolves the dialog/sheet/alert-dialog the control is rendered inside, and the
+ * popup is portalled into that element. Inside a modal the popup is then in the same subtree as the
+ * dialog: focus is allowed to stay, pointer events are inherited, and no global CSS repair is needed.
+ * Outside a modal the same code path portals to `<body>`, which keeps the popup clear of ancestors
+ * that clip (`overflow-hidden` tables and card headers are everywhere in this module).
  *
  * ## Choosing searchable vs a plain dropdown
  *
@@ -113,6 +113,10 @@ export interface TaskComboboxProps {
     readonly showStatusIcon?: boolean;
 }
 
+/** The three modal surfaces this module opens; their content elements are valid portal targets. */
+const MODAL_CONTENT_SELECTOR =
+    '[data-slot="dialog-content"], [data-slot="sheet-content"], [data-slot="alert-dialog-content"]';
+
 /** Labels, colours and icons keyed by option value, so the render pass does not scan the array per row. */
 function indexOptions(options: readonly TaskComboboxOption[]): {
     labels: Map<string, string>;
@@ -149,114 +153,170 @@ export function TaskCombobox({
 }: TaskComboboxProps) {
     const { labels, colors, icons } = React.useMemo(() => indexOptions(options), [options]);
 
+    const [open, setOpen] = React.useState(false);
+    const [container, setContainer] = React.useState<HTMLElement | null>(null);
+    const rootRef = React.useRef<HTMLDivElement>(null);
+    /** Ties the trigger to the list for assistive tech: `combobox` requires both aria props. */
+    const listId = React.useId();
+
     /**
-     * The primitive filters its list by the item values it is given. Passing the option VALUES (not
-     * the option objects) keeps `value`/`onValueChange` a plain string, and `itemToStringLabel`
-     * makes the typed search and the trigger display resolve the option's human label instead.
+     * Resolved when the popup OPENS rather than on mount: the control can be rendered before its
+     * modal exists (a form field inside a dialog that has not mounted its content yet), and the
+     * portal target has to be a live element at the moment the popup is created.
      */
-    const itemValues = React.useMemo(() => options.map((option) => option.value), [options]);
+    const handleOpenChange = React.useCallback(
+        (next: boolean): void => {
+            if (disabled) return;
+            if (next) {
+                const modal = rootRef.current?.closest(MODAL_CONTENT_SELECTOR);
+                setContainer(modal instanceof HTMLElement ? modal : null);
+            }
+            setOpen(next);
+        },
+        [disabled],
+    );
+
+    const selectedLabel = value === null ? null : labels.get(value) ?? value;
 
     return (
-        <Combobox
-            items={itemValues}
-            value={value}
-            onValueChange={onValueChange}
-            itemToStringLabel={(itemValue) => labels.get(itemValue) ?? itemValue}
-            disabled={disabled}
+        <div
+            ref={rootRef}
+            data-slot="task-combobox"
+            className={cn(
+                "relative flex h-9 w-full min-w-0 items-center rounded-md border border-input bg-transparent pr-1 shadow-xs transition-[color,box-shadow] outline-none dark:bg-input/30",
+                "has-[:focus-visible]:border-ring has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-[3px]",
+                disabled && "cursor-not-allowed opacity-50",
+                className,
+            )}
         >
-            <div
-                data-slot="task-combobox"
-                className={cn(
-                    "relative flex h-9 w-full min-w-0 items-center rounded-md border border-input bg-transparent pr-1 shadow-xs transition-[color,box-shadow] outline-none dark:bg-input/30",
-                    "has-[:focus-visible]:border-ring has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-[3px]",
-                    disabled && "cursor-not-allowed opacity-50",
-                    className,
-                )}
-            >
-                <ComboboxTrigger
-                    className={cn(
-                        "flex h-full min-w-0 flex-1 items-center gap-2 rounded-md bg-transparent px-3 text-left text-sm outline-none",
-                        "data-[placeholder]:text-muted-foreground disabled:cursor-not-allowed",
-                        "[&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
-                    )}
-                    aria-label={ariaLabel}
-                >
-                    {/*
-                     * The selected value leads with its stored icon — the same glyph the read-only
-                     * row chip shows — so opening the editor never changes what the value looks
-                     * like. `tone="status"` because the trigger is a bare surface, not a filled pill.
-                     * Skipped entirely when the caller has opted out: a list has no glyph to show,
-                     * and the fallback marker would be a stray circle, not information.
-                     */}
-                    {value === null || !showStatusIcon ? null : (
-                        <CatalogStatusIcon
-                            icon={icons.get(value)}
-                            color={colors.get(value)}
-                            tone="status"
-                            density="comfortable"
-                        />
-                    )}
-                    <span className="min-w-0 flex-1 truncate">
-                        <ComboboxValue placeholder={placeholder} />
-                    </span>
-                </ComboboxTrigger>
-
-                {/*
-                 * The clear affordance: a real X on the control, shown only while a value is
-                 * selected and the control is clearable. The wrapper is fully controlled, so
-                 * clearing is just `onValueChange(null)` — the escape hatch the old dropdowns
-                 * buried as a fake first row labelled with the placeholder.
-                 */}
-                {clearable && value !== null ? (
-                    <Button
+            <PopoverPrimitive.Root open={open} onOpenChange={handleOpenChange}>
+                <PopoverPrimitive.Trigger asChild>
+                    <button
                         type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        data-slot="combobox-clear"
-                        aria-label={`Clear ${ariaLabel}`}
-                        title={`Clear ${ariaLabel}`}
+                        role="combobox"
+                        aria-expanded={open}
+                        aria-controls={open ? listId : undefined}
+                        aria-haspopup="listbox"
+                        aria-label={ariaLabel}
                         disabled={disabled}
-                        className="shrink-0"
-                        onClick={() => onValueChange(null)}
+                        className={cn(
+                            "flex h-full min-w-0 flex-1 items-center gap-2 rounded-md bg-transparent px-3 text-left text-sm outline-none",
+                            "disabled:cursor-not-allowed",
+                            "[&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+                        )}
                     >
-                        <X className="size-3.5" aria-hidden="true" />
-                    </Button>
-                ) : null}
-            </div>
+                        {/*
+                         * The selected value leads with its stored icon — the same glyph the read-only
+                         * row chip shows — so opening the editor never changes what the value looks
+                         * like. `tone="status"` because the trigger is a bare surface, not a filled
+                         * pill. Skipped entirely when the caller has opted out: a list has no glyph
+                         * to show, and the fallback marker would be a stray circle, not information.
+                         */}
+                        {value === null || !showStatusIcon ? null : (
+                            <CatalogStatusIcon
+                                icon={icons.get(value)}
+                                color={colors.get(value)}
+                                tone="status"
+                                density="comfortable"
+                            />
+                        )}
+                        <span
+                            className={cn(
+                                "min-w-0 flex-1 truncate",
+                                value === null && "text-muted-foreground",
+                            )}
+                        >
+                            {selectedLabel ?? placeholder}
+                        </span>
+                    </button>
+                </PopoverPrimitive.Trigger>
 
-            <ComboboxContent>
-                <ComboboxInput
-                    showTrigger={false}
-                    showClear={false}
+                <PopoverPrimitive.Portal container={container ?? undefined}>
+                    <PopoverPrimitive.Content
+                        data-slot="task-combobox-content"
+                        align="start"
+                        sideOffset={4}
+                        aria-label={`${ariaLabel} options`}
+                        className={cn(
+                            "z-[9999] w-(--radix-popover-trigger-width) min-w-(--radix-popover-trigger-width) overflow-hidden rounded-md border bg-popover p-0 text-popover-foreground shadow-md outline-hidden",
+                            "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+                        )}
+                    >
+                        <Command loop>
+                            <CommandInput
+                                placeholder={searchPlaceholder}
+                                aria-label={`Search ${ariaLabel}`}
+                            />
+                            <CommandList id={listId}>
+                                <CommandEmpty>{emptyMessage}</CommandEmpty>
+                                <CommandGroup>
+                                    {options.map((option) => (
+                                        <CommandItem
+                                            key={option.value}
+                                            // cmdk filters on `value` plus `keywords`; the id keeps
+                                            // selection unambiguous while the label stays searchable.
+                                            value={option.value}
+                                            keywords={[option.label]}
+                                            data-selected={option.value === value || undefined}
+                                            onSelect={() => {
+                                                onValueChange(option.value);
+                                                setOpen(false);
+                                            }}
+                                            className="gap-2"
+                                        >
+                                            {/*
+                                             * The glyph is ALWAYS drawn for a catalog: an option with no
+                                             * stored icon falls back to the foundation's default marker, so
+                                             * the option column stays uniform. A non-catalog row set opts
+                                             * out (`showStatusIcon={false}`) so its rows are plain text.
+                                             */}
+                                            {showStatusIcon ? (
+                                                <CatalogStatusIcon
+                                                    icon={icons.get(option.value)}
+                                                    color={colors.get(option.value)}
+                                                    tone="status"
+                                                    density="comfortable"
+                                                />
+                                            ) : null}
+                                            <span className="min-w-0 flex-1 truncate">
+                                                {option.label}
+                                            </span>
+                                            {option.value === value ? (
+                                                <Check
+                                                    className="size-3.5 shrink-0 text-primary"
+                                                    aria-hidden="true"
+                                                />
+                                            ) : null}
+                                        </CommandItem>
+                                    ))}
+                                </CommandGroup>
+                            </CommandList>
+                        </Command>
+                    </PopoverPrimitive.Content>
+                </PopoverPrimitive.Portal>
+            </PopoverPrimitive.Root>
+
+            {/*
+             * The clear affordance: a real X on the control, shown only while a value is
+             * selected and the control is clearable. The wrapper is fully controlled, so
+             * clearing is just `onValueChange(null)` — the escape hatch the old dropdowns
+             * buried as a fake first row labelled with the placeholder.
+             */}
+            {clearable && value !== null ? (
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    data-slot="combobox-clear"
+                    aria-label={`Clear ${ariaLabel}`}
+                    title={`Clear ${ariaLabel}`}
                     disabled={disabled}
-                    placeholder={searchPlaceholder}
-                    aria-label={`Search ${ariaLabel}`}
-                />
-                <ComboboxList>
-                    {(itemValue: string) => (
-                        <ComboboxItem key={itemValue} value={itemValue}>
-                            {/*
-                             * The glyph is ALWAYS drawn for a catalog: an option with no stored icon
-                             * falls back to the foundation's default marker, so the option column
-                             * stays uniform. A non-catalog row set opts out (`showStatusIcon={false}`)
-                             * so its rows are plain text and the selected check is the only mark.
-                             */}
-                            {showStatusIcon ? (
-                                <CatalogStatusIcon
-                                    icon={icons.get(itemValue)}
-                                    color={colors.get(itemValue)}
-                                    tone="status"
-                                    density="comfortable"
-                                />
-                            ) : null}
-                            <span className="min-w-0 truncate">
-                                {labels.get(itemValue) ?? itemValue}
-                            </span>
-                        </ComboboxItem>
-                    )}
-                </ComboboxList>
-                <ComboboxEmpty>{emptyMessage}</ComboboxEmpty>
-            </ComboboxContent>
-        </Combobox>
+                    className="shrink-0"
+                    onClick={() => onValueChange(null)}
+                >
+                    <X className="size-3.5" aria-hidden="true" />
+                </Button>
+            ) : null}
+        </div>
     );
 }
