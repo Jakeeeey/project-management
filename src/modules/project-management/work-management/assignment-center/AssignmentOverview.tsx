@@ -2,7 +2,7 @@
 
 import { ClipboardList, Users, CalendarClock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { OverviewProps } from "../shared/workspace-types";
+import type { OverviewProps } from "./workspace-types";
 import { assignmentAvailability } from "./availability";
 
 export function AssignmentOverview({ bootstrap, rows }: OverviewProps) {

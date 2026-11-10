@@ -1,8 +1,8 @@
 "use client";
 
-import { WorkWorkspace } from "../shared/WorkWorkspace";
+import { WorkWorkspace } from "./WorkWorkspace";
 import { ExecutiveDashboard } from "./ExecutiveDashboard";
-import type { DashboardData, HeaderAccount, WorkspaceDefinition } from "../shared/workspace-types";
+import type { DashboardData, HeaderAccount, WorkspaceDefinition } from "./workspace-types";
 
 const definition: WorkspaceDefinition = {
  workspace: "executive",

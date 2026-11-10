@@ -1,4 +1,4 @@
-import type { Bootstrap } from "../types";
+import type { Bootstrap } from "./types";
 
 /** UI status only. The server still authorizes and commits every business command. */
 export function assignmentAvailability(bootstrap: Pick<Bootstrap, "mode" | "writes_enabled" | "capabilities">) {
