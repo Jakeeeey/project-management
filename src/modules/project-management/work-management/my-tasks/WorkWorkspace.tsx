@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addDays as shiftDay, endOfMonth, format, startOfMonth, startOfWeek } from "date-fns";
 import { Bell, CalendarDays, ChevronLeft, ChevronRight, CircleAlert, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,15 +13,15 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cn } from "@/lib/utils";
-import type { Bootstrap, Detail, Employee, Notification, OccurrenceView, Summary, Task, Workspace } from "../types";
-import { localDate } from "../recurrence";
+import type { Bootstrap, Detail, Employee, Notification, OccurrenceView, Summary, Task, Workspace } from "./types";
+import { localDate } from "./recurrence";
 import type { HeaderAccount, WorkspaceDefinition, DashboardData } from "./workspace-types";
-import { SubmissionBin } from "../my-tasks/SubmissionBin";
-import { useSubmission } from "../my-tasks/useSubmission";
-import { TaskForm } from "../assignment-center/TaskForm";
+import { SubmissionBin } from "./SubmissionBin";
+import { useSubmission } from "./useSubmission";
+import { TaskForm } from "./TaskForm";
 import { frequencyLabels, selectClass } from "./presentation";
 
-const BASE = "/api/project-management/work-management";
+const BASE = "/api/project-management/work-management/assignee";
 const dateTime = (date: string) => new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Manila" }).format(new Date(date));
 function stateOf(o: OccurrenceView) {
  if (o.status === "CANCELLED") return "Cancelled";
@@ -55,7 +55,8 @@ export function WorkWorkspace({ definition, account }: { definition: WorkspaceDe
  const [department, setDepartment] = useState(""); const [more, setMore] = useState(false);
  const [items, setItems] = useState<OccurrenceView[]>([]); const [summary, setSummary] = useState<Summary | null>(null);
  const [total, setTotal] = useState(0); const [page, setPage] = useState(1);
- const [dashboardData, setDashboardData] = useState<DashboardData>({ employees: [], trends: [] });
+  const [dashboardData, setDashboardData] = useState<DashboardData>({ employees: [], trends: [] });
+  const bootstrapCache = useRef<Bootstrap | null>(null);
  const [selected, setSelected] = useState<string | null>(null); const [day, setDay] = useState<string | null>(null);
  const [form, setForm] = useState<Task | "new" | null>(null);
  const [notifications, setNotifications] = useState<Notification[]>([]); const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -73,21 +74,31 @@ export function WorkWorkspace({ definition, account }: { definition: WorkspaceDe
   let active = true; setLoading(true); setError("");
   (async () => {
    try {
-    const boot = await api<Bootstrap>("bootstrap"); if (!active) return; setBootstrap(boot);
-    const q = new URLSearchParams({ from, to, page: String(page), limit: "100", ...(employee ? { employee } : {}) });
-    const data = await api<{ items: OccurrenceView[]; total: number; summary: Summary }>(`occurrences/calendar?${q}`);
-    if (!active) return; setSummary(data.summary);
-    const display = view === "For review" || view === "Backlog" ? await api<{ items: OccurrenceView[]; total: number }>(`${view === "For review" ? "reviews" : "occurrences/backlog"}?${q}`) : data;
-    if (!active) return; setItems(display.items); setTotal(display.total);
-    const knownEmployees = new Map(boot.employees.map(person => [person.id, person]));
-    for (const row of display.items) knownEmployees.set(row.assignee.id, row.assignee);
-    setBootstrap({ ...boot, employees: [...knownEmployees.values()] });
-    if (definition.loadDashboard) { const dashboard = await definition.loadDashboard(api, q); if (active) setDashboardData(dashboard); }
+     const q = new URLSearchParams({ from, to, page: String(page), limit: "100", ...(employee ? { employee } : {}) });
+     const bootRequest = bootstrapCache.current ? Promise.resolve(bootstrapCache.current) : api<Bootstrap>("bootstrap");
+     const needsCalendar = !executiveDirectory;
+     const alternateRoute = view === "For review" ? "reviews" : view === "Backlog" ? "occurrences/backlog" : null;
+     const calendarRequest = needsCalendar ? api<{ items: OccurrenceView[]; total: number; summary: Summary }>(`occurrences/calendar?${q}`) : Promise.resolve(null);
+     const displayRequest = needsCalendar && alternateRoute ? api<{ items: OccurrenceView[]; total: number }>(`${alternateRoute}?${q}`) : Promise.resolve(null);
+     const reuseExecutiveMetrics = workspace === "executive" && !!employee;
+     const dashboardRequest = definition.loadDashboard && !reuseExecutiveMetrics ? definition.loadDashboard(api, q) : Promise.resolve(null);
+     const [boot, data, alternate, dashboard] = await Promise.all([bootRequest, calendarRequest, displayRequest, dashboardRequest]);
+     if (!active) return;
+     bootstrapCache.current = boot;
+     setBootstrap(boot);
+     if (data) setSummary(data.summary);
+     const display = alternate ?? data;
+     if (display) { setItems(display.items); setTotal(display.total); }
+     const knownEmployees = new Map(boot.employees.map(person => [person.id, person]));
+     for (const row of display?.items ?? []) knownEmployees.set(row.assignee.id, row.assignee);
+     setBootstrap({ ...boot, employees: [...knownEmployees.values()] });
+     if (dashboard && active) setDashboardData(dashboard);
+     else if (reuseExecutiveMetrics && data && active) setDashboardData(previous => ({ ...previous, employees: previous.employees.map(person => person.id === employee ? { ...person, ...data.summary } : person) }));
    } catch (e) { if (active) setError(e instanceof Error ? e.message : "Unable to load workspace."); }
    finally { if (active) setLoading(false); }
   })();
   return () => { active = false; };
- }, [api, from, to, page, employee, version, workspace, view, definition]);
+  }, [api, from, to, page, employee, version, workspace, view, definition, executiveDirectory]);
  useEffect(() => { const timer = setInterval(refresh, 30000); window.addEventListener("focus", refresh); return () => { clearInterval(timer); window.removeEventListener("focus", refresh); }; }, [refresh]);
  const filtered = useMemo(() => items.filter(o => (!search || `${o.task_revision.title} ${o.assignee.name}`.toLowerCase().includes(search.toLowerCase())) && (!status || stateOf(o) === status) && (!priority || o.task_revision.priority === priority) && (!recurrence || o.task_revision.schedule.frequency === recurrence) && (!department || o.assignee.department_id === department)), [items, search, status, priority, recurrence, department]);
  const clear = () => { setSearch(""); setEmployee(""); setStatus(""); setPriority(""); setRecurrence(""); setDepartment(""); setPage(1); };

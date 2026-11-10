@@ -43,8 +43,9 @@ export interface State {
 export interface Summary { due: number; submitted: number; on_time: number; overdue: number; backlog: number }
 export interface Bootstrap {
  mode: "LIVE"; actor: Employee; identities: Employee[]; employees: Employee[];
- writes_enabled?: boolean;
- uploads_enabled?: boolean;
+  writes_enabled?: boolean;
+  uploads_enabled?: boolean;
+  reference_uploads_enabled?: boolean;
  workspace_access?: Workspace[];
  capabilities: { assign: boolean; executive: boolean; global: boolean }; blockers: string[];
 }

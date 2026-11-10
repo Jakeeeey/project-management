@@ -42,23 +42,27 @@ async function readRows<T>(collection: string, fields: string[], filter: Record<
 /** Live capability bootstrap reads only authoritative employee/explicit grant rows. */
 export async function liveBootstrap(): Promise<Bootstrap> {
  const { userId } = await verifiedActor();
- const users = await readRows<{ user_id: number; user_fname: string; user_lname: string; user_department: number | null; is_deleted: unknown; role: unknown; isAdmin: unknown }>("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted", "role", "isAdmin"], { user_id: { _eq: userId } }, 1);
- requireRule(users.length && isActiveEmployeeFlag(users[0].is_deleted), 401, "INACTIVE_EMPLOYEE", "Your employee record is unavailable.");
- const grants = await readRows<{ role: Role; department_id: number | null }>("pm_work_role_grant", ["role", "department_id"], { user_id: { _eq: userId }, revoked_at: { _null: true } });
+  const [users, grants, modules] = await Promise.all([
+   readRows<{ user_id: number; user_fname: string; user_lname: string; user_department: number | null; is_deleted: unknown; role: unknown; isAdmin: unknown }>("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted", "role", "isAdmin"], { user_id: { _eq: userId } }, 1),
+   readRows<{ role: Role; department_id: number | null }>("pm_work_role_grant", ["role", "department_id"], { user_id: { _eq: userId }, revoked_at: { _null: true } }),
+   readRows<{ id: number | string; base_path: string }>("modules", ["id", "base_path"], { status: { _eq: "active" }, base_path: { _in: ["/project-management/work-management/assignor", "/project-management/work-management/assignment-center", "/project-management/work-management/assignee", "/project-management/work-management/my-tasks", "/project-management/work-management/executive", "/project-management/work-management/executive-overview"] } }),
+  ]);
+  requireRule(users.length && isActiveEmployeeFlag(users[0].is_deleted), 401, "INACTIVE_EMPLOYEE", "Your employee record is unavailable.");
  const user = users[0];
  // The initial UI only supports the actor's home-department assignor scope. Other
  // department grants are not broadened silently; multi-department selection is a live blocker.
   const roles = [...new Set(grants.filter(g => g.role !== "DEPARTMENT_ASSIGNOR" || String(g.department_id) === String(user.user_department)).map(g => g.role))];
-  const modules = await readRows<{ id: number | string; base_path: string }>("modules", ["id", "base_path"], { status: { _eq: "active" }, base_path: { _in: ["/project-management/work-management/assignor", "/project-management/work-management/assignment-center", "/project-management/work-management/assignee", "/project-management/work-management/my-tasks", "/project-management/work-management/executive", "/project-management/work-management/executive-overview"] } });
- const moduleGrants = modules.length ? await readRows<{ module_id: number | string }>("user_access_modules", ["module_id"], { user_id: { _eq: userId }, module_id: { _in: modules.map(m => m.id) } }) : [];
+  const [moduleGrants, departments] = await Promise.all([
+   modules.length ? readRows<{ module_id: number | string }>("user_access_modules", ["module_id"], { user_id: { _eq: userId }, module_id: { _in: modules.map(m => m.id) } }) : Promise.resolve([]),
+   user.user_department === null ? Promise.resolve([]) : readRows<{ department_name: string }>("department", ["department_name"], { department_id: { _eq: user.user_department } }, 1),
+  ]);
  const grantedIds = new Set(moduleGrants.map(grant => String(grant.module_id)));
  const readAccess = resolveWorkspaceReadAccess({ platformRole: user.role, isAdmin: user.isAdmin, roles, grantedModulePaths: modules.filter(m => grantedIds.has(String(m.id))).map(m => m.base_path) });
- const departments = user.user_department === null ? [] : await readRows<{ department_name: string }>("department", ["department_name"], { department_id: { _eq: user.user_department } }, 1);
   // Assignment Center access is the explicit authorization to assign within the actor's
   // home department. It never implies global scope; only a GLOBAL_ASSIGNOR grant does that.
   if (readAccess.workspaces.includes("assignor") && !roles.includes("GLOBAL_ASSIGNOR") && !roles.includes("DEPARTMENT_ASSIGNOR")) roles.push("DEPARTMENT_ASSIGNOR");
   const actor: Employee = { id: userId, name: [user.user_fname, user.user_lname].filter(Boolean).join(" "), department_id: String(user.user_department ?? ""), department: departments[0]?.department_name ?? "No department", roles, read_workspaces: readAccess.workspaces, read_all_departments: readAccess.allDepartments };
-  return { mode: "LIVE", writes_enabled: true, uploads_enabled: false, workspace_access: readAccess.workspaces, actor, identities: [], employees: [actor], capabilities: { assign: roles.includes("GLOBAL_ASSIGNOR") || roles.includes("DEPARTMENT_ASSIGNOR"), global: roles.includes("GLOBAL_ASSIGNOR"), executive: workspaceAllowed(actor, "executive") }, blockers: ["Changes are saved to the live Directus database. Multi-record operations use compensating cleanup and are not transactional.", "File uploads remain disabled until malware scanning and private storage controls are configured."] };
+   return { mode: "LIVE", writes_enabled: true, uploads_enabled: true, reference_uploads_enabled: false, workspace_access: readAccess.workspaces, actor, identities: [], employees: [actor], capabilities: { assign: roles.includes("GLOBAL_ASSIGNOR") || roles.includes("DEPARTMENT_ASSIGNOR"), global: roles.includes("GLOBAL_ASSIGNOR"), executive: workspaceAllowed(actor, "executive") }, blockers: ["Changes are saved to the live Directus database. Multi-record operations use compensating cleanup and are not transactional.", "Task reference attachments are not enabled; deliverable uploads are stored in Directus and downloaded through authorized workspace routes."] };
 }
 
 export async function liveCreateTask(raw: unknown, key: string, workspace: Workspace) {

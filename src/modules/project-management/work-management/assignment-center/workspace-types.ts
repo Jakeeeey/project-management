@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { Bootstrap, Employee, OccurrenceView, Summary, Workspace } from "../types";
+import type { Bootstrap, Employee, OccurrenceView, Summary, Workspace } from "./types";
 
 export type WorkApi = <T>(path: string, init?: RequestInit) => Promise<T>;
 export interface HeaderAccount { name: string; email: string; avatar: string }

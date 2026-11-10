@@ -4,7 +4,7 @@ import { CheckCircle2, FileUp, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { Detail } from "../types";
+import type { Detail } from "./types";
 import type { SubmissionController } from "./useSubmission";
 
 export function SubmissionBin({ detail, controller, busy, changed }: {
