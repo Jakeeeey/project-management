@@ -5,8 +5,8 @@ import { ArrowLeft, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { DashboardProps } from "../shared/workspace-types";
-import { selectClass } from "../shared/presentation";
+import type { DashboardProps } from "./workspace-types";
+import { selectClass } from "./presentation";
 
 export function ExecutiveDashboard({ data: { employees }, selectedEmployee, periodLabel, onSelectEmployee, onClearEmployee }: DashboardProps) {
  const [search, setSearch] = useState(""); const [department, setDepartment] = useState("");

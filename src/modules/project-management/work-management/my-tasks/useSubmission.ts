@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { Detail, WorkFile } from "../types";
-import type { WorkApi } from "../shared/workspace-types";
+import type { Detail, WorkFile } from "./types";
+import type { WorkApi } from "./workspace-types";
 
 interface Options {
  detail: Detail | null;

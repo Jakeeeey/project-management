@@ -137,20 +137,25 @@ export class LiveReader {
    const historical: Task = { ...current, title: typeof snapshot.title === "string" ? snapshot.title : current.title, description: typeof snapshot.description === "string" ? snapshot.description : current.description, priority: (snapshot.priority ?? current.priority) as Task["priority"], revision_number: Number(revision.revision_number) };
    return { id: id(o.id), task_id: id(o.task_id), assignment_id: id(o.assignment_id), occurrence_key: String(o.occurrence_key), scheduled_local_date: String(o.scheduled_local_date).slice(0, 10), available_at: utc(o.available_at), original_due_at: utc(o.original_due_at), due_at: utc(o.due_at), row_version: Number(o.row_version), task_revision: historical, status: o.status as Occurrence["status"], completed_at: o.completed_at ? utc(o.completed_at) : null, first_submission_id: o.first_submission_id ? id(o.first_submission_id) : null, latest_submission_id: o.latest_submission_id ? id(o.latest_submission_id) : null };
   });
-  const submissions = await this.byIds("pm_work_submission", ["*"], "occurrence_id", state.occurrences.map(o => o.id));
-  state.submissions = submissions.map(s => ({ id: id(s.id), occurrence_id: id(s.occurrence_id), version_number: Number(s.version_number), submitted_by: id(s.submitted_by), submitted_at: utc(s.submitted_at), evaluated_due_at: utc(s.evaluated_due_at), is_late: s.is_late === true || s.is_late === 1 || s.is_late === "1", remark: String(s.remark ?? ""), revision_reason: String(s.revision_reason ?? ""), file_ids: [] } satisfies Submission));
-  const peopleIds = [actor.id, ...state.assignments.map(a => a.assignee_user_id), ...state.tasks.flatMap(t => [t.created_by, t.report_to_user_id])];
-  const users = await this.byIds("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], "user_id", peopleIds);
-  const departments = await this.byIds("department", ["department_id", "department_name"], "department_id", users.filter(u => u.user_department !== null).map(u => id(u.user_department)));
-  state.employees = users.map(u => ({ id: id(u.user_id), name: [u.user_fname, u.user_lname].filter(Boolean).join(" "), department_id: u.user_department === null ? "" : id(u.user_department), department: departments.find(d => String(d.department_id) === String(u.user_department))?.department_name as string ?? "No department", roles: id(u.user_id) === actor.id ? actor.roles : [] }));
-  if (!state.employees.some(e => e.id === actor.id)) state.employees.push(actor);
-  // An authoritative, scoped directory includes employees with zero obligations.
-  if (workspace !== "my-tasks") {
+   const peopleIds = [actor.id, ...state.assignments.map(a => a.assignee_user_id), ...state.tasks.flatMap(t => [t.created_by, t.report_to_user_id])];
    const directoryScope = workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true ? {} : actor.department_id ? { user_department: { _eq: actor.department_id } } : { user_id: { _eq: actor.id } };
-   const directory = await this.all("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], directoryScope);
-   const depts = await this.byIds("department", ["department_id", "department_name"], "department_id", directory.filter(u => u.user_department !== null).map(u => id(u.user_department)));
-   for (const u of directory.filter(u => isActiveEmployeeFlag(u.is_deleted))) if (!state.employees.some(e => e.id === id(u.user_id))) state.employees.push({ id: id(u.user_id), name: [u.user_fname, u.user_lname].filter(Boolean).join(" "), department_id: u.user_department === null ? "" : id(u.user_department), department: depts.find(d => String(d.department_id) === String(u.user_department))?.department_name as string ?? "No department", roles: [] });
-  }
+   const [submissions, users, directory] = await Promise.all([
+    this.byIds("pm_work_submission", ["*"], "occurrence_id", state.occurrences.map(o => o.id)),
+    this.byIds("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], "user_id", peopleIds),
+    workspace === "my-tasks" ? Promise.resolve([]) : this.all("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], directoryScope),
+   ]);
+   state.submissions = submissions.map(s => ({ id: id(s.id), occurrence_id: id(s.occurrence_id), version_number: Number(s.version_number), submitted_by: id(s.submitted_by), submitted_at: utc(s.submitted_at), evaluated_due_at: utc(s.evaluated_due_at), is_late: s.is_late === true || s.is_late === 1 || s.is_late === "1", remark: String(s.remark ?? ""), revision_reason: String(s.revision_reason ?? ""), file_ids: [] } satisfies Submission));
+   const directoryIds = directory.filter(u => isActiveEmployeeFlag(u.is_deleted)).map(u => id(u.user_id));
+   const allUsers = [...users];
+   for (const userId of directoryIds) if (!allUsers.some(u => id(u.user_id) === userId)) {
+    const row = directory.find(u => id(u.user_id) === userId);
+    if (row) allUsers.push(row);
+   }
+   const departments = await this.byIds("department", ["department_id", "department_name"], "department_id", allUsers.filter(u => u.user_department !== null).map(u => id(u.user_department)));
+   state.employees = allUsers.map(u => ({ id: id(u.user_id), name: [u.user_fname, u.user_lname].filter(Boolean).join(" "), department_id: u.user_department === null ? "" : id(u.user_department), department: departments.find(d => String(d.department_id) === String(u.user_department))?.department_name as string ?? "No department", roles: id(u.user_id) === actor.id ? actor.roles : [] }));
+  if (!state.employees.some(e => e.id === actor.id)) state.employees.push(actor);
+   // Include active employees with zero obligations from the directory fetched in parallel.
+   for (const u of directory.filter(u => isActiveEmployeeFlag(u.is_deleted))) if (!state.employees.some(e => e.id === id(u.user_id))) state.employees.push({ id: id(u.user_id), name: [u.user_fname, u.user_lname].filter(Boolean).join(" "), department_id: u.user_department === null ? "" : id(u.user_department), department: departments.find(d => String(d.department_id) === String(u.user_department))?.department_name as string ?? "No department", roles: [] });
   return new WorkEngine(state, actor, workspace, this.now);
  }
 }

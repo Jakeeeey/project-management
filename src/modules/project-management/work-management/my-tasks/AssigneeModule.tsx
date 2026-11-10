@@ -1,7 +1,7 @@
 "use client";
 
-import { WorkWorkspace } from "../shared/WorkWorkspace";
-import type { HeaderAccount, WorkspaceDefinition } from "../shared/workspace-types";
+import { WorkWorkspace } from "./WorkWorkspace";
+import type { HeaderAccount, WorkspaceDefinition } from "./workspace-types";
 
 const definition: WorkspaceDefinition = {
  workspace: "my-tasks",

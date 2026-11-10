@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { wallToUtc } from "../recurrence";
+import { wallToUtc } from "./recurrence";
 
 /** Browser date/time values are local wall clocks, never browser-timezone instants. */
 export function validateTaskTiming(start: string, time: string, available: string, end = "") {

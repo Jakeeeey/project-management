@@ -2,8 +2,8 @@
 
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { WorkWorkspace } from "../shared/WorkWorkspace";
-import type { HeaderAccount, WorkspaceActionsProps, WorkspaceDefinition } from "../shared/workspace-types";
+import { WorkWorkspace } from "./WorkWorkspace";
+import type { HeaderAccount, WorkspaceActionsProps, WorkspaceDefinition } from "./workspace-types";
 import { AssignmentOverview } from "./AssignmentOverview";
 import { assignmentAvailability } from "./availability";
 

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
-import { liveBootstrap } from "@/modules/project-management/work-management/server";
-import type { Workspace } from "@/modules/project-management/work-management/types";
-import { workspacePath } from "@/modules/project-management/work-management/workspace-access";
+import { liveBootstrap } from "@/modules/project-management/work-management/assignment-center/server";
+import type { Workspace } from "@/modules/project-management/work-management/assignment-center/types";
+import { workspacePath } from "@/modules/project-management/work-management/assignment-center/workspace-access";
 
 export const dynamic = "force-dynamic";
 export default async function Page() {

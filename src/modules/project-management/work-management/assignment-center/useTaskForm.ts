@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { Assignment, Bootstrap, Frequency, Task, WorkFile } from "../types";
-import { localDate } from "../recurrence";
-import type { WorkApi } from "../shared/workspace-types";
+import type { Assignment, Bootstrap, Frequency, Task, WorkFile } from "./types";
+import { localDate } from "./recurrence";
+import type { WorkApi } from "./workspace-types";
 import { assignmentAvailability } from "./availability";
 import { validateTaskTiming } from "./task-timing";
 
@@ -39,7 +39,7 @@ export function useTaskForm({ task, bootstrap, api, onSaved }: {
   event.preventDefault();
   const assignmentStatus = assignmentAvailability(bootstrap);
   if (!assignmentStatus.canSave) { setError(assignmentStatus.reasons.join(" ")); return; }
-  if (bootstrap.uploads_enabled === false && references.length) { setError("Reference uploads are not enabled for this workspace."); return; }
+   if (bootstrap.reference_uploads_enabled !== true && references.length) { setError("Reference uploads are not enabled for this workspace."); return; }
   setBusy(true); setError("");
   try {
    // Validate before staging files or issuing any business write. This uses the
