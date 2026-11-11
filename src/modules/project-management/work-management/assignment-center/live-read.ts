@@ -45,13 +45,16 @@ export class LiveReader {
   if (workspace === "my-tasks") return [actor];
   const allDepartments = workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true;
   const filter = allDepartments ? {} : actor.department_id ? { user_department: { _eq: actor.department_id } } : { user_id: { _eq: actor.id } };
-  const users = (await this.all("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], filter)).filter(user => isActiveEmployeeFlag(user.is_deleted));
-  const departments = await this.byIds("department", ["department_id", "department_name"], "department_id", users.filter(user => user.user_department !== null).map(user => id(user.user_department)));
+   const users = (await this.all("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], filter)).filter(user => isActiveEmployeeFlag(user.is_deleted));
+   const [departments, grants] = await Promise.all([
+    this.byIds("department", ["department_id", "department_name"], "department_id", users.filter(user => user.user_department !== null).map(user => id(user.user_department))),
+    this.byIds("pm_work_role_grant", ["user_id", "role", "department_id", "revoked_at"], "user_id", users.map(user => id(user.user_id))),
+   ]);
   return users.map(user => ({
    id: id(user.user_id), name: [user.user_fname, user.user_lname].filter(Boolean).join(" "),
    department_id: user.user_department === null ? "" : id(user.user_department),
    department: String(departments.find(department => String(department.department_id) === String(user.user_department))?.department_name ?? "No department"),
-   roles: id(user.user_id) === actor.id ? actor.roles : [],
+    roles: id(user.user_id) === actor.id ? actor.roles : grants.filter(grant => id(grant.user_id) === id(user.user_id) && grant.revoked_at == null).map(grant => String(grant.role) as Employee["roles"][number]),
   }));
  }
  async detail(actor: Employee, workspace: Workspace, occurrenceId: string) {
