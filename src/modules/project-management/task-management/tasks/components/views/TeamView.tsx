@@ -15,6 +15,8 @@ import {
 
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
 import type { TaskListItem } from "../../hooks/useTasks";
+import { useViewTaskFilter } from "../../hooks/useViewTaskFilter";
+import { TaskFilterControl } from "../TaskFilterControl";
 import { TaskPriorityBadge, TaskStatusBadge } from "../TaskRowBadges";
 import { formatTaskDate, formatTaskDateRange } from "../TaskRow";
 
@@ -75,12 +77,18 @@ const UNASSIGNED_TITLE = "Unassigned";
  */
 export function TeamView({
     items,
+    catalogs,
+    fields,
     memberNameById,
     isLoading,
     error,
     onRetry,
     onOpenTask,
 }: TaskViewProps) {
+    // Local search + clause state: narrowing this page leaves every other view alone.
+    const filter = useViewTaskFilter({ items, fields, catalogs, memberNameById });
+    const visibleItems = filter.visibleItems;
+
     /**
      * The sections plus the two summary totals, derived in ONE pass so the layout and the summary
      * can never drift. Tasks are bucketed by user id (ids only — names are looked up through
@@ -92,7 +100,7 @@ export function TeamView({
         const unassigned: TaskListItem[] = [];
         let assigned = 0;
 
-        for (const task of items) {
+        for (const task of visibleItems) {
             if (task.assignees.length === 0) {
                 unassigned.push(task);
                 continue;
@@ -131,7 +139,7 @@ export function TeamView({
         ];
 
         return { sections: nextSections, assignedCount: assigned, unassignedCount: unassigned.length };
-    }, [items, memberNameById]);
+    }, [visibleItems, memberNameById]);
 
     /**
      * Which member sections are open. MULTI-expand and all-collapsed by default: the view's job is to
@@ -180,27 +188,64 @@ export function TeamView({
         );
     }
 
+    const isNarrowed = visibleItems.length === 0;
+
     return (
         <div data-slot="task-team" className="w-full min-w-0 space-y-3">
-            <p data-slot="task-team-summary" className="text-sm text-muted-foreground">
-                <span className="font-medium tabular-nums text-foreground">{assignedCount}</span>{" "}
-                assigned
-                <span aria-hidden="true"> · </span>
-                <span className="font-medium tabular-nums text-foreground">{unassignedCount}</span>{" "}
-                unassigned
-            </p>
+            <TaskFilterControl
+                searchValue={filter.search}
+                onSearchChange={filter.onSearchChange}
+                searchPlaceholder="Search tasks by title"
+                clauses={filter.clauses}
+                onClausesChange={filter.onClausesChange}
+                fields={fields}
+                statuses={filter.statuses}
+                priorities={filter.priorities}
+                tags={filter.tags}
+                members={filter.members}
+                currentUserId={null}
+                savedFilters={filter.savedFilters}
+                onSaveFilter={filter.onSaveFilter}
+                onApplySavedFilter={filter.onApplySavedFilter}
+                onDeleteSavedFilter={filter.onDeleteSavedFilter}
+                isFiltering={filter.isFiltering}
+                onClear={filter.clearFilters}
+            />
 
-            <div className="flex flex-col gap-3">
-                {sections.map((section) => (
-                    <TeamSectionCard
-                        key={section.key}
-                        section={section}
-                        isExpanded={expandedKeys.has(section.key)}
-                        onToggle={() => toggleSection(section.key)}
-                        onOpenTask={onOpenTask}
-                    />
-                ))}
-            </div>
+            {isNarrowed ? (
+                <div
+                    data-slot="task-team-no-matches"
+                    className="flex h-40 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/60 bg-muted/20 p-6 text-center"
+                >
+                    <ListTree className="size-8 text-muted-foreground/50" aria-hidden="true" />
+                    <p className="text-sm text-muted-foreground">No tasks match the current search and filters.</p>
+                    <Button type="button" variant="outline" size="sm" onClick={filter.clearFilters}>
+                        Clear filters
+                    </Button>
+                </div>
+            ) : (
+                <>
+                    <p data-slot="task-team-summary" className="text-sm text-muted-foreground">
+                        <span className="font-medium tabular-nums text-foreground">{assignedCount}</span>{" "}
+                        assigned
+                        <span aria-hidden="true"> · </span>
+                        <span className="font-medium tabular-nums text-foreground">{unassignedCount}</span>{" "}
+                        unassigned
+                    </p>
+
+                    <div className="flex flex-col gap-3">
+                        {sections.map((section) => (
+                            <TeamSectionCard
+                                key={section.key}
+                                section={section}
+                                isExpanded={expandedKeys.has(section.key)}
+                                onToggle={() => toggleSection(section.key)}
+                                onOpenTask={onOpenTask}
+                            />
+                        ))}
+                    </div>
+                </>
+            )}
         </div>
     );
 }

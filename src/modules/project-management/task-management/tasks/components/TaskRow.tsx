@@ -17,6 +17,7 @@ import {
 import type { TreeNode } from "../utils/tree";
 
 import { AssigneeStack, type TaskAssigneeView } from "./AssigneeStack";
+import { resolveTaskTags, TaskTagStack } from "./TaskTags";
 import { parseDateOnly } from "./SingleDatePicker";
 import {
     TaskCellEditor,
@@ -28,7 +29,7 @@ import {
     TaskStatusBadge,
     type TaskCatalogRef,
 } from "./TaskRowBadges";
-import type { TaskCatalogs, TaskField, TaskFieldValue } from "../hooks/useTasks";
+import type { TaskCatalogs, TaskField, TaskFieldValue, TaskTagRef } from "../hooks/useTasks";
 
 /**
  * Everything a single row renders. Structurally satisfies `TreeSourceRow`, so `buildTree` can
@@ -50,6 +51,8 @@ export interface TaskRowView {
     status: TaskCatalogRef | null;
     priority: TaskCatalogRef | null;
     assignees: readonly TaskAssigneeView[];
+    /** The tags attached to this task — ids only; `catalogs.tags` supplies the labels and colours. */
+    tags: readonly TaskTagRef[];
     /** This task's answers for the department's custom columns; a column with no answer is absent. */
     custom_values: readonly TaskFieldValue[];
     /** The server's per-row edit answer — the only thing an edit affordance may be gated on. */
@@ -236,6 +239,11 @@ export interface TaskRowProps {
     onCancelCellEdit?: () => void;
     /** Saves one cell edit through the module's existing mutation path. */
     onCommitCellEdit?: (taskId: number, column: string, request: CellEditRequest) => void;
+    /**
+     * Opens this row's tag modal. Absent (or `can_edit: false`) leaves the Tags cell a read-only
+     * stack — the same rule the assignees cell follows.
+     */
+    onEditTags?: (taskId: number) => void;
 }
 
 /**
@@ -268,6 +276,7 @@ export function TaskRow({
     onStartCellEdit,
     onCancelCellEdit,
     onCommitCellEdit,
+    onEditTags,
 }: TaskRowProps) {
     const indentDepth = Math.min(node.depth, MAX_INDENT_DEPTH);
     const subtaskCount = node.children.length;
@@ -434,6 +443,34 @@ export function TaskRow({
                         </span>
                     )}
                 </div>
+            </TableCell>
+
+            {/*
+             * Tags sit immediately after the name, beside assignees: they are the at-a-glance
+             * "what is this" pair with the avatars. A circle stack, and one click opens the same
+             * kind of modal as assignees. The stack cannot grow the row, so the 180px default holds
+             * however many tags a task carries; the `+N` pill accounts for the rest.
+             */}
+            <TableCell>
+                {editable && onEditTags ? (
+                    <button
+                        type="button"
+                        aria-label={`Edit tags for ${title}`}
+                        title={`Edit tags for ${title}`}
+                        data-slot="task-cell-edit"
+                        className={cn(CELL_BUTTON_CLASS, "flex cursor-pointer justify-center")}
+                        onClick={() => onEditTags(node.id)}
+                    >
+                        <TaskTagStack
+                            tags={resolveTaskTags(node.tags, catalogs?.tags ?? [])}
+                            emptyVariant="icon"
+                        />
+                    </button>
+                ) : (
+                    <div className="flex justify-center">
+                        <TaskTagStack tags={resolveTaskTags(node.tags, catalogs?.tags ?? [])} />
+                    </div>
+                )}
             </TableCell>
 
             {/*

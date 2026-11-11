@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlarmClock, CalendarOff, ChartColumn, ChartNoAxesColumn, ClipboardList, ListTree, PieChart as PieChartIcon, RotateCcw, TriangleAlert, UserX, Users } from "lucide-react";
+import { AlarmClock, CalendarOff, ChartColumn, ChartNoAxesColumn, ClipboardList, ListTree, PieChart as PieChartIcon, RotateCcw, SearchX, TriangleAlert, UserX, Users } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from "recharts";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn, formatDateLong, formatNumber } from "@/lib/utils";
 
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
+import { useViewTaskFilter } from "../../hooks/useViewTaskFilter";
+import { TaskFilterControl } from "../TaskFilterControl";
 import { parseDateOnly } from "../SingleDatePicker";
 
 /**
@@ -31,11 +33,17 @@ import { parseDateOnly } from "../SingleDatePicker";
 export function DashboardView({
     items,
     catalogs,
+    fields,
     memberNameById,
     isLoading,
     error,
     onRetry,
 }: TaskViewProps) {
+    // Local search + clause state. Every number on this page describes the FILTERED set, so the
+    // footer says as much — a total that silently ignored the filter would be worse than no filter.
+    const filter = useViewTaskFilter({ items, fields, catalogs, memberNameById });
+    const visibleItems = filter.visibleItems;
+
     /**
      * One local-midnight instant, captured once for the life of the view.
      *
@@ -61,7 +69,7 @@ export function DashboardView({
 
         // One pass over the rows: the tiles, the three charts and the footer all read the same
         // counters, so no two numbers on this view can be derived from different scans.
-        for (const task of items) {
+        for (const task of visibleItems) {
             byStatusId.set(task.status_id, (byStatusId.get(task.status_id) ?? 0) + 1);
             byPriorityId.set(task.priority_id, (byPriorityId.get(task.priority_id) ?? 0) + 1);
 
@@ -119,7 +127,7 @@ export function DashboardView({
         }
 
         return {
-            total: items.length,
+            total: visibleItems.length,
             unassignedCount,
             noDateCount,
             pastDueCount,
@@ -135,7 +143,7 @@ export function DashboardView({
             priorityConfig: buildConfig(priorityData),
             assigneeConfig: buildConfig(assigneeData),
         };
-    }, [items, catalogs, memberNameById, todayStartMs]);
+    }, [visibleItems, catalogs, memberNameById, todayStartMs]);
 
     if (isLoading) return <DashboardSkeleton />;
 
@@ -170,6 +178,41 @@ export function DashboardView({
 
     return (
         <div data-slot="task-dashboard" className="w-full min-w-0 space-y-4">
+            <TaskFilterControl
+                searchValue={filter.search}
+                onSearchChange={filter.onSearchChange}
+                searchPlaceholder="Search tasks by title"
+                clauses={filter.clauses}
+                onClausesChange={filter.onClausesChange}
+                fields={fields}
+                statuses={filter.statuses}
+                priorities={filter.priorities}
+                tags={filter.tags}
+                members={filter.members}
+                currentUserId={null}
+                savedFilters={filter.savedFilters}
+                onSaveFilter={filter.onSaveFilter}
+                onApplySavedFilter={filter.onApplySavedFilter}
+                onDeleteSavedFilter={filter.onDeleteSavedFilter}
+                isFiltering={filter.isFiltering}
+                onClear={filter.clearFilters}
+            />
+
+            {visibleItems.length === 0 ? (
+                <div
+                    data-slot="task-dashboard-no-matches"
+                    className="flex h-40 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/60 bg-muted/20 p-6 text-center"
+                >
+                    <SearchX className="size-8 text-muted-foreground/50" aria-hidden="true" />
+                    <p className="text-sm text-muted-foreground">
+                        No tasks match the current search and filters.
+                    </p>
+                    <Button type="button" variant="outline" size="sm" onClick={filter.clearFilters}>
+                        Clear filters
+                    </Button>
+                </div>
+            ) : (
+                <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <KpiTile icon={ClipboardList} label="Total tasks" value={stats.total} />
                 <KpiTile
@@ -246,16 +289,27 @@ export function DashboardView({
 
             <p data-slot="task-dashboard-footer" className="text-xs text-muted-foreground">
                 Snapshot as of {formatDateLong(new Date(todayStartMs))} — built from{" "}
-                <Metric>{countText(stats.total)}</Metric> tasks
+                <Metric>{countText(stats.total)}</Metric> {plural(stats.total, "task")}
                 <span aria-hidden="true"> · </span>
                 <Metric>{countText(stats.statusCovered)}</Metric> with a live status
                 <span aria-hidden="true"> · </span>
                 <Metric>{countText(stats.priorityCovered)}</Metric> with a live priority
                 <span aria-hidden="true"> · </span>
                 <Metric>{countText(stats.assignmentCount)}</Metric> assignee links across{" "}
-                <Metric>{countText(stats.total - stats.unassignedCount)}</Metric> assigned tasks (a
-                shared task counts once per assignee).
+                <Metric>{countText(stats.total - stats.unassignedCount)}</Metric> assigned{" "}
+                {plural(stats.total - stats.unassignedCount, "task")} (a shared task counts once per
+                assignee).
+                {filter.isFiltering ? (
+                    <>
+                        {" "}
+                        Every figure covers the {countText(visibleItems.length)}{" "}
+                        {plural(visibleItems.length, "task")} that match the current search and
+                        filters, not the whole list.
+                    </>
+                ) : null}
             </p>
+                </>
+            )}
         </div>
     );
 }
@@ -290,6 +344,11 @@ const CATEGORY_AXIS_WIDTH = 116;
 
 function countText(value: number): string {
     return formatNumber(value, "en-PH", 0);
+}
+
+/** Keeps the footer reading "1 task" instead of "1 tasks" when a filter narrows the list. */
+function plural(value: number, word: string): string {
+    return value === 1 ? word : `${word}s`;
 }
 
 function hasDate(value: string | null): boolean {

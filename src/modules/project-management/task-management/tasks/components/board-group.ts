@@ -1,4 +1,4 @@
-import type { TaskCatalogOption, TaskCatalogs, TaskField, TaskListItem } from "../hooks/useTasks";
+import type { TaskCatalogOption, TaskCatalogs, TaskField, TaskListItem, TaskTagOption } from "../hooks/useTasks";
 import { assigneeName } from "../types/task-view";
 import { assigneeColorFor } from "./assignee-color";
 import { parseDateOnly } from "./SingleDatePicker";
@@ -20,6 +20,9 @@ export const BOARD_DEFAULT_GROUP_ID = "status";
 
 /** The built-in due-date axis; every other non-built-in axis is a custom column, addressed as `field:<id>`. */
 export const BOARD_GROUP_DUE_DATE_ID = "due_date";
+
+/** The built-in tag axis. Unlike a catalog axis there is no drop target, because a tag column is many-to-many. */
+export const BOARD_GROUP_TAGS_ID = "tags";
 
 const BOARD_FIELD_PREFIX = "field:";
 
@@ -78,6 +81,7 @@ export function boardGroupDimensions(fields: readonly TaskField[]): BoardGroupDi
         { id: "status", label: "Status" },
         { id: "assignee", label: "Assignee" },
         { id: "priority", label: "Priority" },
+        { id: BOARD_GROUP_TAGS_ID, label: "Tags" },
         { id: BOARD_GROUP_DUE_DATE_ID, label: "Due date" },
         ...fields.map((field) => ({
             id: `${BOARD_FIELD_PREFIX}${field.id}`,
@@ -150,6 +154,10 @@ function buildSpecs(
 
     if (dimensionId === "assignee") {
         return assigneeSpecs(items, direction, context.memberNameById);
+    }
+
+    if (dimensionId === BOARD_GROUP_TAGS_ID) {
+        return tagSpecs(items, direction, context.catalogs.tags);
     }
 
     if (dimensionId === BOARD_GROUP_DUE_DATE_ID) {
@@ -283,6 +291,34 @@ function assigneeSpecs(
             drop: null,
             matches: (item: TaskListItem) => item.assignees.length === 0,
         },
+    ];
+}
+
+/**
+ * The tag axis. Membership is an OR over a task's tags, like the people axis: a task carrying two
+ * tags appears under both, because a tag column answers "what is tagged X", not "what is tagged only
+ * X". No column is a drop target — dropping a card onto a tag would have to guess whether it adds the
+ * tag or replaces the others, and the service has no such verb.
+ */
+function tagSpecs(
+    items: readonly TaskListItem[],
+    direction: BoardGroupDirection,
+    tags: readonly TaskTagOption[],
+): ColumnSpec[] {
+    const named = [...tags]
+        .sort((left, right) => left.sort_order - right.sort_order || left.id - right.id)
+        .map((tag) => ({
+            key: `${BOARD_GROUP_TAGS_ID}:${tag.id}`,
+            label: tag.label,
+            color: tag.color,
+            icon: null,
+            drop: null,
+            matches: (item: TaskListItem) => item.tags.some((link) => link.tag_id === tag.id),
+        }));
+
+    return [
+        ...withDirection(named, direction),
+        residualSpec(BOARD_GROUP_TAGS_ID, "No tags", (item) => item.tags.length === 0),
     ];
 }
 

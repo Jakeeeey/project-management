@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { CalendarDays, Check, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 
 import {
@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/sheet";
 import type { Capabilities } from "../types/capabilities";
 
-import type { TaskField, TaskListItem } from "../hooks/useTasks";
+import type { TaskField, TaskListItem, TaskTagOption } from "../hooks/useTasks";
 import { AssigneeStack } from "./AssigneeStack";
 import { AttachmentList } from "./AttachmentList";
 import { AttachmentUploader } from "./AttachmentUploader";
@@ -31,6 +31,8 @@ import { TaskActivityTimeline } from "./TaskActivityTimeline";
 import { isVisuallyEmptyHtml } from "./description-html";
 import { formatTaskDate } from "./TaskRow";
 import { TaskPriorityBadge, TaskStatusBadge } from "./TaskRowBadges";
+import { resolveTaskTags, TaskTagStack } from "./TaskTags";
+import { TaskTagsDialog } from "./TaskTagsDialog";
 
 /**
  * The read view for one task, opened from a tree row.
@@ -81,6 +83,11 @@ export interface TaskDetailSheetProps {
     readonly onUploadAttachment: (taskId: number, file: File) => Promise<boolean>;
     /** Detaches one attachment link through the module route; the Directus file is kept. */
     readonly onDetachAttachment: (taskId: number, attachmentId: number, label: string) => Promise<boolean>;
+    /** The department's tag catalog — the sheet's only source of tag labels and colours. */
+    readonly tags: readonly TaskTagOption[];
+    /** Attaches / detaches a tag straight from the sheet; both resolve `false` on failure. */
+    readonly onAssignTag: (taskId: number, tagId: number, label: string) => Promise<boolean>;
+    readonly onUnassignTag: (taskId: number, tagId: number, label: string) => Promise<boolean>;
 }
 
 export function TaskDetailSheet({
@@ -96,8 +103,12 @@ export function TaskDetailSheet({
     onDelete,
     onUploadAttachment,
     onDetachAttachment,
+    tags,
+    onAssignTag,
+    onUnassignTag,
 }: TaskDetailSheetProps) {
     const [confirmOpen, setConfirmOpen] = useState(false);
+    const [isTagsDialogOpen, setIsTagsDialogOpen] = useState(false);
 
     const assignees = useMemo(
         () =>
@@ -111,6 +122,35 @@ export function TaskDetailSheet({
     const canCreate = capabilities?.canCreate === true;
     const canEdit = task?.can_edit === true;
     const canDelete = task?.can_delete === true;
+
+    const selectedTagIds = useMemo(() => (task?.tags ?? []).map((tag) => tag.tag_id), [task]);
+    const selectedTags = useMemo(
+        () => resolveTaskTags(task?.tags ?? [], tags),
+        [task, tags],
+    );
+
+    /**
+     * The modal saves a whole set, so it is diffed here into the same attach/detach calls the row's
+     * stack makes. Both write and then the module's refetch re-reads the row — never an optimistic
+     * patch, since two editors on one task would otherwise disagree.
+     */
+    const handleSaveTags = useCallback(
+        async (tagIds: readonly number[]): Promise<void> => {
+            if (task === null) return;
+            const current = new Set((task.tags ?? []).map((tag) => tag.tag_id));
+            const next = new Set(tagIds);
+            const labelOf = (tagId: number): string =>
+                tags.find((tag) => tag.id === tagId)?.label ?? `Tag #${tagId}`;
+
+            for (const tagId of next) {
+                if (!current.has(tagId)) await onAssignTag(task.id, tagId, labelOf(tagId));
+            }
+            for (const tagId of current) {
+                if (!next.has(tagId)) await onUnassignTag(task.id, tagId, labelOf(tagId));
+            }
+        },
+        [task, tags, onAssignTag, onUnassignTag],
+    );
 
     const handleDelete = async (): Promise<void> => {
         if (task === null) return;
@@ -187,6 +227,42 @@ export function TaskDetailSheet({
                                         <p className="text-xs font-medium text-muted-foreground">Assignees</p>
                                         <AssigneeStack assignees={assignees} />
                                     </div>
+                                </div>
+
+                                {/*
+                                 * The same circle stack and the same modal as the table cell: the
+                                 * card is a read view, so it opens the picker instead of hosting a
+                                 * popover inside a sheet.
+                                 */}
+                                <div data-slot="task-detail-tags" className="space-y-1.5">
+                                    <p className="text-xs font-medium text-muted-foreground">Tags</p>
+                                    {canEdit && tags.length > 0 ? (
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            onClick={() => setIsTagsDialogOpen(true)}
+                                            disabled={isSubmitting}
+                                            aria-label="Edit tags"
+                                            className="h-auto w-full justify-start px-1 py-1"
+                                        >
+                                            <TaskTagStack tags={selectedTags} />
+                                        </Button>
+                                    ) : (
+                                        <TaskTagStack tags={selectedTags} />
+                                    )}
+
+                                    <TaskTagsDialog
+                                        open={isTagsDialogOpen}
+                                        onOpenChange={setIsTagsDialogOpen}
+                                        task={{ id: task.id, title: task.title }}
+                                        tags={tags}
+                                        selectedIds={selectedTagIds}
+                                        isSubmitting={isSubmitting}
+                                        onSave={(tagIds) => {
+                                            void handleSaveTags(tagIds);
+                                            setIsTagsDialogOpen(false);
+                                        }}
+                                    />
                                 </div>
 
                                 <div className="space-y-1">

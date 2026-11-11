@@ -40,6 +40,7 @@ import {
     type TaskRowView,
 } from "./TaskRow";
 import { TaskPriorityBadge, TaskStatusBadge } from "./TaskRowBadges";
+import { resolveTaskTags, TaskTagStack } from "./TaskTags";
 import type { CellEditRequest, CellMemberOption } from "./TaskCellEditor";
 import type { TaskCatalogs, TaskField } from "../hooks/useTasks";
 
@@ -68,12 +69,15 @@ interface TaskTreeColumn {
  * are the INITIAL layout only — the page is full-width now, so once the department's columns (custom
  * columns included) outgrow the viewport the grid scrolls inside its own container instead.
  *
- * Order: the expand gutter, then task title, assignees, start, due, priority and status; the
- * custom columns follow the fixed set and the actions gutter is appended last.
+ * Order: the expand gutter, then task title, tags and assignees, then start, due, priority, status;
+ * the custom columns follow the fixed set and the actions gutter is appended last. Tags and
+ * assignees are the two at-a-glance "what is this and who has it" cells, so they sit immediately
+ * after the name; the scheduling and catalog cells follow.
  */
 const BASE_COLUMNS: readonly TaskTreeColumn[] = [
     { key: "expand", label: "Expand", srOnly: true },
     { key: "title", label: "Task" },
+    { key: "tags", label: "Tags", align: "center" },
     { key: "assignees", label: "Assignees", align: "center" },
     { key: "start", label: "Start" },
     { key: "due", label: "Due" },
@@ -186,6 +190,11 @@ export interface TaskTreeProps {
     onStartCellEdit?: (taskId: number, column: string) => void;
     onCancelCellEdit?: () => void;
     onCommitCellEdit?: (taskId: number, column: string, request: CellEditRequest) => void;
+    /**
+     * Opens a row's tag modal — the same one-click affordance the assignees cell has. The stack is
+     * the button's face, so a 180px column never has to grow to fit a picker.
+     */
+    onEditTags?: (taskId: number) => void;
     className?: string;
     /** Accessible name of the grid. */
     "aria-label"?: string;
@@ -250,6 +259,7 @@ export function TaskTree({
     onStartCellEdit,
     onCancelCellEdit,
     onCommitCellEdit,
+    onEditTags,
     className,
     "aria-label": ariaLabel = "Task list",
 }: TaskTreeProps) {
@@ -492,6 +502,24 @@ export function TaskTree({
                                             >
                                                 <TaskPriorityBadge priority={node.priority} />
                                                 <TaskStatusBadge status={node.status} />
+                                                {node.can_edit && onEditTags ? (
+                                                    <button
+                                                        type="button"
+                                                        aria-label={`Edit tags for ${node.title}`}
+                                                        title={`Edit tags for ${node.title}`}
+                                                        className="rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                                                        onClick={() => onEditTags(node.id)}
+                                                    >
+                                                        <TaskTagStack
+                                                            tags={resolveTaskTags(node.tags, catalogs?.tags ?? [])}
+                                                            emptyVariant="icon"
+                                                        />
+                                                    </button>
+                                                ) : (
+                                                    <TaskTagStack
+                                                        tags={resolveTaskTags(node.tags, catalogs?.tags ?? [])}
+                                                    />
+                                                )}
                                             </div>
                                             {fields.length > 0 ? (
                                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -612,6 +640,7 @@ export function TaskTree({
                                               onStartCellEdit,
                                               onCancelCellEdit,
                                               onCommitCellEdit,
+                                              onEditTags,
                                           };
                                           return <TaskRow key={node.id} {...rowProps} />;
                                       })}

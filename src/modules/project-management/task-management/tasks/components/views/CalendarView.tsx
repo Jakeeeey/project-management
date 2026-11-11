@@ -7,6 +7,7 @@ import {
     ChevronLeft,
     ChevronRight,
     RotateCcw,
+    SearchX,
     TriangleAlert,
 } from "lucide-react";
 
@@ -21,6 +22,8 @@ import {
 
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
 import type { TaskListItem } from "../../hooks/useTasks";
+import { useViewTaskFilter } from "../../hooks/useViewTaskFilter";
+import { TaskFilterControl } from "../TaskFilterControl";
 import { parseDateOnly } from "../SingleDatePicker";
 import { NO_STATUS_LABEL } from "../TaskRowBadges";
 
@@ -45,12 +48,18 @@ import { NO_STATUS_LABEL } from "../TaskRowBadges";
  */
 export function CalendarView({
     items,
+    catalogs,
+    fields,
     memberNameById,
     isLoading,
     error,
     onRetry,
     onOpenTask,
 }: TaskViewProps) {
+    // Local search + clause state: the month grid narrows alone, the List keeps its own.
+    const filter = useViewTaskFilter({ items, fields, catalogs, memberNameById });
+    const visibleItems = filter.visibleItems;
+
     const [viewMonth, setViewMonth] = useState<Date>(() => startOfMonth(new Date()));
 
     /**
@@ -64,7 +73,7 @@ export function CalendarView({
         const tasksByIso = new Map<string, TaskListItem[]>();
         let placed = 0;
 
-        for (const task of items) {
+        for (const task of visibleItems) {
             const date = parseDateOnly(task.start_date);
             if (date === undefined) continue;
 
@@ -97,8 +106,8 @@ export function CalendarView({
             });
         }
 
-        return { cells, undated: items.length - placed };
-    }, [items, viewMonth, todayIso]);
+        return { cells, undated: visibleItems.length - placed };
+    }, [visibleItems, viewMonth, todayIso]);
 
     const showError = error !== null && error !== "";
     const isEmpty = !isLoading && !showError && items.length === 0;
@@ -139,6 +148,41 @@ export function CalendarView({
 
     return (
         <section data-slot="task-calendar" aria-label="Task calendar" className="w-full min-w-0 space-y-3">
+            <TaskFilterControl
+                searchValue={filter.search}
+                onSearchChange={filter.onSearchChange}
+                searchPlaceholder="Search tasks by title"
+                clauses={filter.clauses}
+                onClausesChange={filter.onClausesChange}
+                fields={fields}
+                statuses={filter.statuses}
+                priorities={filter.priorities}
+                tags={filter.tags}
+                members={filter.members}
+                currentUserId={null}
+                savedFilters={filter.savedFilters}
+                onSaveFilter={filter.onSaveFilter}
+                onApplySavedFilter={filter.onApplySavedFilter}
+                onDeleteSavedFilter={filter.onDeleteSavedFilter}
+                isFiltering={filter.isFiltering}
+                onClear={filter.clearFilters}
+            />
+
+            {visibleItems.length === 0 ? (
+                <div
+                    data-slot="task-calendar-no-matches"
+                    className="flex h-40 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/60 bg-muted/20 p-6 text-center"
+                >
+                    <SearchX className="size-8 text-muted-foreground/50" aria-hidden="true" />
+                    <p className="text-sm text-muted-foreground">
+                        No tasks match the current search and filters.
+                    </p>
+                    <Button type="button" variant="outline" size="sm" onClick={filter.clearFilters}>
+                        Clear filters
+                    </Button>
+                </div>
+            ) : (
+            <>
             <div className="rounded-2xl border border-border/50 bg-card shadow-sm">
                 <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 p-3">
                     <h2 data-slot="task-calendar-month" className="text-sm font-semibold">
@@ -216,6 +260,8 @@ export function CalendarView({
             >
                 {undatedLabel(calendar.undated)}
             </p>
+            </>
+            )}
         </section>
     );
 }

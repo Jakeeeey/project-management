@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Ban, Check, ChevronsUpDown } from "lucide-react";
+import { iconNames } from "lucide-react/dynamic";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { resolveCatalogHex } from "./CatalogChip";
-import { CatalogStatusIcon } from "./CatalogStatusIcon";
+import { CatalogStatusIcon, toAnyIconName } from "./CatalogStatusIcon";
 import { CATALOG_ICON_GROUPS, normalizeIconName } from "./catalog-icon";
 
 /**
@@ -48,21 +49,30 @@ import { CATALOG_ICON_GROUPS, normalizeIconName } from "./catalog-icon";
  * ## Contract
  *
  * Fully controlled and presentational: the caller owns `value`, this component never fetches. `value`
- * is a raw stored string — it is resolved through `normalizeIconName`, so an unknown or malformed
- * value reads as "No icon" instead of throwing, and `onChange(null)` is always offered so an icon is
- * never mandatory.
+ * is a raw stored string. With `allowAnyIcon` off (statuses, priorities) it is resolved through
+ * `normalizeIconName`, so an unknown or malformed value reads as "No icon"; with it on (tags) any
+ * lucide id is accepted, and only a value lucide does not know falls back. `onChange(null)` is always
+ * offered so an icon is never mandatory.
  */
 
 export interface CatalogIconPickerProps {
     /** The raw stored icon name, or `null` for none. Resolved through `normalizeIconName`. */
     readonly value: string | null;
-    /** Receives the next allow-listed icon name, or `null` when the clear row is used. */
+    /** Receives the next icon name, or `null` when the clear row is used. */
     readonly onChange: (next: string | null) => void;
     /** The colour the row currently holds, so every glyph previews in its true final ink. */
     readonly color?: string | null;
     readonly disabled?: boolean;
     /** Applied to the trigger so a `FormLabel htmlFor` can name the control. */
     readonly id?: string;
+    /**
+     * Offer EVERY lucide id instead of the 44-name allow-list — the tag picker.
+     *
+     * A tag icon is arbitrary: it is stored as any kebab-case id and drawn through
+     * `lucide-react/dynamic`, so clamping the choice to the allow-list would make most of lucide
+     * unpickable. Statuses and priorities keep the grouped list: their icons are a fixed vocabulary.
+     */
+    readonly allowAnyIcon?: boolean;
 }
 
 /** Shown in the trigger, and as the clear row's label, while no icon is chosen. */
@@ -76,6 +86,18 @@ const CLEAR_ITEM_VALUE = "__none__";
 
 /** Extra search terms for the clear row, so "none", "clear" and "empty" all reach it. */
 const CLEAR_ITEM_KEYWORDS = ["none", "clear", "empty", "no icon"];
+
+/**
+ * How many arbitrary icons mount at once, out of the ~540 lucide ids.
+ *
+ * Every `CommandItem` is a DOM node and a cmdk registration; mounting the whole set at once stalls
+ * the popover on open. The list is filtered by typing instead, and the count is stated under the
+ * list when it truncates, so a missing icon never reads as "lucide has no such icon".
+ */
+const MAX_ANY_ICON_MATCHES = 80;
+
+/** Every id lucide can draw, sorted once at module scope so the popover sorts nothing per render. */
+const ANY_ICON_IDS: readonly string[] = [...iconNames].sort();
 
 /**
  * The dashed placeholder swatch the trigger shows while nothing is chosen — a slot that is visibly
@@ -135,12 +157,33 @@ export function CatalogIconPicker({
     color = null,
     disabled = false,
     id,
+    allowAnyIcon = false,
 }: CatalogIconPickerProps) {
     const [open, setOpen] = useState(false);
+    const [query, setQuery] = useState("");
 
-    /** A stored value outside the allow-list resolves to `null` — the same as no icon, never a throw. */
-    const selected = normalizeIconName(value);
+    /**
+     * A stored value that neither the allow-list nor lucide knows resolves to `null` — the same as
+     * no icon, never a throw.
+     */
+    const selected = allowAnyIcon ? toAnyIconName(value) : normalizeIconName(value);
     const hex = resolveCatalogHex(color);
+
+    // The whole list is filtered here rather than by cmdk: `shouldFilter` is off so the arbitrary
+    // list can be sliced before it mounts.
+    const needle = query.trim().toLowerCase();
+    const matchedAnyIcons = !allowAnyIcon
+        ? []
+        : needle.length === 0
+          ? ANY_ICON_IDS
+          : ANY_ICON_IDS.filter((name) => name.includes(needle));
+    const visibleAnyIcons = matchedAnyIcons.slice(0, MAX_ANY_ICON_MATCHES);
+
+    const handleOpenChange = (next: boolean): void => {
+        setOpen(next);
+        // A stale query would reopen an already-narrowed list.
+        if (!next) setQuery("");
+    };
 
     const choose = (next: string | null): void => {
         onChange(next);
@@ -149,7 +192,7 @@ export function CatalogIconPicker({
     };
 
     return (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover open={open} onOpenChange={handleOpenChange}>
             <PopoverTrigger asChild>
                 <Button
                     type="button"
@@ -187,13 +230,19 @@ export function CatalogIconPicker({
                 className="w-(--radix-popover-trigger-width) max-w-[calc(100vw-2rem)] overflow-hidden p-0"
                 align="start"
             >
-                <Command>
-                    <CommandInput placeholder="Search icons..." aria-label="Search icons" />
+                <Command shouldFilter={!allowAnyIcon}>
+                    <CommandInput
+                        placeholder="Search icons..."
+                        aria-label="Search icons"
+                        {...(allowAnyIcon
+                            ? { value: query, onValueChange: (next: string) => setQuery(next) }
+                            : {})}
+                    />
                     <CommandList
                         className="max-h-64"
                         onWheel={(event) => event.stopPropagation()}
                     >
-                        <CommandEmpty>No matching icon.</CommandEmpty>
+                        {!allowAnyIcon && <CommandEmpty>No matching icon.</CommandEmpty>}
 
                         {/*
                          * The explicit clear row: an icon is optional, so "no icon" has to be
@@ -217,37 +266,83 @@ export function CatalogIconPicker({
                             </CommandItem>
                         </CommandGroup>
 
-                        {CATALOG_ICON_GROUPS.map((group) => (
-                            <CommandGroup
-                                key={group.group}
-                                heading={
-                                    hex === null ? (
-                                        group.group
-                                    ) : (
-                                        <span style={{ color: hex }}>{group.group}</span>
-                                    )
-                                }
-                            >
-                                {group.names.map((name) => (
-                                    <CommandItem
-                                        key={name}
-                                        value={name}
-                                        keywords={[group.group]}
-                                        onSelect={() => choose(name)}
+                        {allowAnyIcon ? (
+                            visibleAnyIcons.length === 0 ? (
+                                <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+                                    No matching icon.
+                                </div>
+                            ) : (
+                                <>
+                                    <CommandGroup
+                                        heading={
+                                            hex === null ? (
+                                                "All icons"
+                                            ) : (
+                                                <span style={{ color: hex }}>All icons</span>
+                                            )
+                                        }
                                     >
-                                        <IconSwatch name={name} color={color} />
-                                        <span className="min-w-0 flex-1 truncate">{name}</span>
-                                        <Check
-                                            className={cn(
-                                                "size-4",
-                                                name === selected ? "opacity-100" : "opacity-0",
-                                            )}
-                                            aria-hidden="true"
-                                        />
-                                    </CommandItem>
-                                ))}
-                            </CommandGroup>
-                        ))}
+                                        {visibleAnyIcons.map((name) => (
+                                            <CommandItem
+                                                key={name}
+                                                value={name}
+                                                onSelect={() => choose(name)}
+                                            >
+                                                <IconSwatch name={name} color={color} />
+                                                <span className="min-w-0 flex-1 truncate">{name}</span>
+                                                <Check
+                                                    className={cn(
+                                                        "size-4",
+                                                        name === selected
+                                                            ? "opacity-100"
+                                                            : "opacity-0",
+                                                    )}
+                                                    aria-hidden="true"
+                                                />
+                                            </CommandItem>
+                                        ))}
+                                    </CommandGroup>
+                                    {matchedAnyIcons.length > visibleAnyIcons.length && (
+                                        <p className="px-2 py-2 text-xs text-muted-foreground">
+                                            Showing {visibleAnyIcons.length} of{" "}
+                                            {matchedAnyIcons.length} icons. Type to narrow.
+                                        </p>
+                                    )}
+                                </>
+                            )
+                        ) : (
+                            CATALOG_ICON_GROUPS.map((group) => (
+                                <CommandGroup
+                                    key={group.group}
+                                    heading={
+                                        hex === null ? (
+                                            group.group
+                                        ) : (
+                                            <span style={{ color: hex }}>{group.group}</span>
+                                        )
+                                    }
+                                >
+                                    {group.names.map((name) => (
+                                        <CommandItem
+                                            key={name}
+                                            value={name}
+                                            keywords={[group.group]}
+                                            onSelect={() => choose(name)}
+                                        >
+                                            <IconSwatch name={name} color={color} />
+                                            <span className="min-w-0 flex-1 truncate">{name}</span>
+                                            <Check
+                                                className={cn(
+                                                    "size-4",
+                                                    name === selected ? "opacity-100" : "opacity-0",
+                                                )}
+                                                aria-hidden="true"
+                                            />
+                                        </CommandItem>
+                                    ))}
+                                </CommandGroup>
+                            ))
+                        )}
                     </CommandList>
                 </Command>
             </PopoverContent>
