@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
-import type { State, Employee, Task, Occurrence, Workspace, Summary, Detail, OccurrenceView } from "./types";
+import type { State, Employee, Task, Schedule, Occurrence, Workspace, Summary, Detail, OccurrenceView } from "./types";
 import { canAssign, canEdit, canRead, assertMutableWorkspace, globalAssignor, requireRule, workspaceAllowed } from "./policies";
 import { addDays, localDate, scheduleDates, wallToUtc } from "./recurrence";
 import { Amendment, DeadlineInput, ReasonInput, SubmissionInput, TaskInput } from "./schemas";
@@ -53,7 +53,7 @@ export class WorkEngine {
   const o = this.state.occurrences.find(o => o.id === occurrenceId);
   const task = o && this.state.tasks.find(t => t.id === o.task_id);
   const assignment = o && this.state.assignments.find(a => a.id === o.assignment_id);
-  requireRule(o && task && assignment && canRead(this.actor, task, assignment, this.workspace, true), 404, "NOT_FOUND", "Occurrence not found.");
+  requireRule(o && task && assignment && canRead(this.actor, task, assignment, this.workspace), 404, "NOT_FOUND", "Occurrence not found.");
   return o;
  }
  private editable(task: Task) { requireRule(canEdit(this.actor, task) && this.workspace === "assignor", 403, "FORBIDDEN", "Task editing is not allowed."); requireRule(task.lifecycle_status !== "CANCELLED", 422, "CANCELLED", "Cancelled tasks cannot be changed."); }
@@ -114,7 +114,8 @@ export class WorkEngine {
   requireRule(input.scope_type === task.scope_type && department === task.department_id, 422, "IMMUTABLE_SCOPE", "Create another task to change ownership scope.");
   const addedReferences = input.reference_file_ids.filter(f => !task.reference_file_ids.includes(f));
   for (const file of this.files(addedReferences)) file.state = "CLAIMED";
-  const scheduleChanged = JSON.stringify(task.schedule) !== JSON.stringify(input.schedule);
+   const normalizeSchedule = (schedule: Schedule) => ({ ...schedule, due_local_time: schedule.due_local_time.slice(0, 5), days_of_week: [...schedule.days_of_week].sort((a, b) => a - b) });
+   const scheduleChanged = JSON.stringify(normalizeSchedule(task.schedule)) !== JSON.stringify(normalizeSchedule(input.schedule));
   Object.assign(task, { title: input.title, description: input.description, priority: input.priority, report_to_user_id: report, schedule: input.schedule, reference_file_ids: input.reference_file_ids, availability_start_at: new Date(input.availability_start_at).toISOString(), revision_number: task.revision_number + 1, schedule_version: task.schedule_version + (scheduleChanged ? 1 : 0), schedule_effective_at: scheduleChanged ? this.now : task.schedule_effective_at });
   for (const assignment of this.state.assignments.filter(a => a.task_id === task.id)) {
    if (!users.some(u => u.id === assignment.assignee_user_id) && assignment.status === "ACTIVE") {
@@ -193,12 +194,12 @@ export class WorkEngine {
   }
   return { acknowledged: true };
  }
- list(from: string, to: string, employee?: string, review = false): OccurrenceView[] {
+ list(from: string, to: string, employee?: string): OccurrenceView[] {
   return this.state.occurrences.flatMap(o => {
    const task = this.state.tasks.find(t => t.id === o.task_id)!; const assignment = this.state.assignments.find(a => a.id === o.assignment_id)!;
    const assignee = this.state.employees.find(e => e.id === assignment.assignee_user_id)!;
    const date = localDate(o.due_at);
-   if (!canRead(this.actor, task, assignment, this.workspace, review) || review && ![task.created_by, task.report_to_user_id].includes(this.actor.id) || date < from || date > to || employee && employee !== assignee.id) return [];
+    if (!canRead(this.actor, task, assignment, this.workspace) || date < from || date > to || employee && employee !== assignee.id) return [];
    return [{ ...o, task, assignee, submissions: this.state.submissions.filter(s => s.occurrence_id === o.id) }];
   }).sort((a, b) => a.due_at.localeCompare(b.due_at));
  }

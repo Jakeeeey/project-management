@@ -1,4 +1,4 @@
-export type Workspace = "assignor" | "my-tasks" | "executive";
+export type Workspace = "assignor" | "my-tasks" | "executive" | "departmental";
 export type Role = "DEPARTMENT_ASSIGNOR" | "GLOBAL_ASSIGNOR" | "ASSIGNEE" | "EXECUTIVE_VIEWER";
 export type Frequency = "ONCE" | "DAILY" | "WEEKLY" | "MONTHLY" | "CUSTOM";
 export interface Employee {

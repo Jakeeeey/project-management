@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { WorkError, requireRule } from "@/modules/project-management/work-management/assignment-center/policies";
-import { liveAddComment, liveAmendTask, liveBootstrap, liveCancelOccurrence, liveChangeDeadline, liveCreateTask, liveDownload, liveRead, liveReviewBulk, liveStageUpload, liveSubmitOccurrence, liveTaskLifecycle, liveReleaseBlocker } from "@/modules/project-management/work-management/assignment-center/server";
+import { liveAddComment, liveAmendTask, liveBootstrap, liveCancelOccurrence, liveChangeDeadline, liveCreateTask, liveDownload, liveRead, liveStageUpload, liveSubmitOccurrence, liveTaskLifecycle, liveReleaseBlocker } from "@/modules/project-management/work-management/assignment-center/server";
 import type { Workspace } from "@/modules/project-management/work-management/assignment-center/types";
 import { addDays } from "@/modules/project-management/work-management/assignment-center/recurrence";
 
@@ -31,7 +31,6 @@ async function handle(req: NextRequest, ctx: Context) {
    return NextResponse.json({ success: true, data: await liveRead(path, workspace, period), mode: "LIVE" }, { headers: { "Cache-Control": "no-store" } });
   }
   if (req.method === "POST" && path.join("/") === "tasks") return NextResponse.json({ success: true, data: await liveCreateTask(await req.json(), req.headers.get("Idempotency-Key") ?? "", workspace), mode: "LIVE" }, { status: 201, headers: { "Cache-Control": "no-store" } });
-  if (req.method === "POST" && path.join("/") === "reviews/bulk") return NextResponse.json({ success: true, data: await liveReviewBulk(await req.json(), req.headers.get("Idempotency-Key") ?? "", workspace), mode: "LIVE" }, { headers: { "Cache-Control": "no-store" } });
   if (req.method === "POST" && path[0] === "occurrences" && /^\d+$/.test(path[1] ?? "") && path[2] === "comments") return NextResponse.json({ success: true, data: await liveAddComment(path[1], await req.json(), req.headers.get("Idempotency-Key") ?? "", workspace), mode: "LIVE" }, { status: 201, headers: { "Cache-Control": "no-store" } });
   if (req.method === "POST" && path[0] === "occurrences" && /^\d+$/.test(path[1] ?? "") && path[2] === "cancel") return NextResponse.json({ success: true, data: await liveCancelOccurrence(path[1], await req.json(), req.headers.get("Idempotency-Key") ?? "", workspace), mode: "LIVE" }, { headers: { "Cache-Control": "no-store" } });
   if (req.method === "PATCH" && path[0] === "occurrences" && /^\d+$/.test(path[1] ?? "") && path[2] === "deadline") return NextResponse.json({ success: true, data: await liveChangeDeadline(path[1], await req.json(), req.headers.get("Idempotency-Key") ?? "", workspace), mode: "LIVE" }, { headers: { "Cache-Control": "no-store" } });

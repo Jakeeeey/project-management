@@ -11,13 +11,13 @@ export function AssignmentOverview({ bootstrap, rows, onOpen }: OverviewProps) {
  const people = new Set(rows.map(row => row.assignee.id));
  return <section aria-label="Task assignment workspace" className="space-y-3">
   <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base"><ClipboardList className="size-4" />Assigned tasks</CardTitle></CardHeader><CardContent className="space-y-3">
-   <p className="text-sm text-muted-foreground">{tasks.size} task definitions · {people.size} employees · {rows.length} individual obligations. Select a task to review submissions or manage its assignment.</p>
+    <p className="text-sm text-muted-foreground">{tasks.size} task definitions · {people.size} employees · {rows.length} individual obligations. Select a task to inspect submission history or manage its assignment.</p>
    <div className="divide-y rounded-lg border">{[...new Set(rows.map(row => row.task_id))].map(taskId => {
     const obligations = rows.filter(row => row.task_id === taskId);
     const first = obligations[0];
     const submitted = obligations.filter(row => !!row.first_submission_id).length;
     return <button key={taskId} type="button" onClick={() => onOpen(first.id)} className="flex w-full flex-wrap items-center justify-between gap-3 p-3 text-left hover:bg-muted/50">
-     <span><span className="block text-sm font-medium">{first.task_revision.title}</span><span className="text-xs text-muted-foreground">{new Set(obligations.map(row => row.assignee.name)).size} assignees · {submitted} submitted · {obligations.length} obligations</span></span>
+     <span><span className="block text-sm font-medium">{first.task.title}</span><span className="text-xs text-muted-foreground">{new Set(obligations.map(row => row.assignee.name)).size} assignees · {submitted} submitted · {obligations.length} obligations</span></span>
      <span className="text-xs text-primary underline">Open task</span>
     </button>;
    })}{!rows.length && <p className="p-4 text-sm text-muted-foreground">No tasks in this period.</p>}</div>

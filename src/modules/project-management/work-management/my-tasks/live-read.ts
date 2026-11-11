@@ -88,17 +88,13 @@ export class LiveReader {
   // acknowledgment writes are intentionally not implied by enabling Create Task.
    return { ...detail, can_edit: false, can_submit: detail.can_submit && workspace === "my-tasks", can_comment: false, unacknowledged: [] };
  }
- async load(actor: Employee, workspace: Workspace, period: ReadPeriod, review = false): Promise<WorkEngine> {
+ async load(actor: Employee, workspace: Workspace, period: ReadPeriod): Promise<WorkEngine> {
   requireRule(workspaceAllowed(actor, workspace), 403, "FORBIDDEN", "You do not have access to this workspace.");
   const state = emptyState();
   let assignmentFilter: Row;
-  // My Tasks is strictly the signed-in assignee's own work; reviewer broadening is never applied here.
-  if (workspace === "my-tasks") assignmentFilter = { assignee_user_id: { _eq: actor.id } };
-  else if (review) {
-   const tasks = await this.all("pm_work_task", ["id"], { _or: [{ created_by: { _eq: actor.id } }, { report_to_user_id: { _eq: actor.id } }] });
-   assignmentFilter = { task_id: { _in: tasks.map(t => id(t.id)) } };
-   if (!tasks.length) { state.employees = [actor]; return new WorkEngine(state, actor, workspace, this.now); }
-  } else if (workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true) assignmentFilter = {};
+   if (workspace === "my-tasks") assignmentFilter = { assignee_user_id: { _eq: actor.id } };
+   else if (workspace === "departmental") assignmentFilter = { department_id_at_assignment: { _eq: actor.department_id } };
+   else if (workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true) assignmentFilter = {};
   else assignmentFilter = actor.department_id ? { department_id_at_assignment: { _eq: actor.department_id } } : { assignee_user_id: { _eq: actor.id } };
   if (period.employee) {
    requireRule(workspace !== "my-tasks" || period.employee === actor.id, 403, "OWN_TASKS_ONLY", "My Tasks only shows your own obligations.");
@@ -141,7 +137,7 @@ export class LiveReader {
    return { id: id(o.id), task_id: id(o.task_id), assignment_id: id(o.assignment_id), occurrence_key: String(o.occurrence_key), scheduled_local_date: String(o.scheduled_local_date).slice(0, 10), available_at: utc(o.available_at), original_due_at: utc(o.original_due_at), due_at: utc(o.due_at), row_version: Number(o.row_version), task_revision: historical, status: o.status as Occurrence["status"], completed_at: o.completed_at ? utc(o.completed_at) : null, first_submission_id: o.first_submission_id ? id(o.first_submission_id) : null, latest_submission_id: o.latest_submission_id ? id(o.latest_submission_id) : null };
   });
    const peopleIds = [actor.id, ...state.assignments.map(a => a.assignee_user_id), ...state.tasks.flatMap(t => [t.created_by, t.report_to_user_id])];
-   const directoryScope = workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true ? {} : actor.department_id ? { user_department: { _eq: actor.department_id } } : { user_id: { _eq: actor.id } };
+   const directoryScope = workspace === "departmental" ? { user_department: { _eq: actor.department_id } } : workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true ? {} : actor.department_id ? { user_department: { _eq: actor.department_id } } : { user_id: { _eq: actor.id } };
    const [submissions, users, directory] = await Promise.all([
     this.byIds("pm_work_submission", ["*"], "occurrence_id", state.occurrences.map(o => o.id)),
     this.byIds("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], "user_id", peopleIds),

@@ -45,7 +45,7 @@ export async function liveBootstrap(): Promise<Bootstrap> {
   const [users, grants, modules] = await Promise.all([
    readRows<{ user_id: number; user_fname: string; user_lname: string; user_department: number | null; is_deleted: unknown; role: unknown; isAdmin: unknown }>("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted", "role", "isAdmin"], { user_id: { _eq: userId } }, 1),
    readRows<{ role: Role; department_id: number | null }>("pm_work_role_grant", ["role", "department_id"], { user_id: { _eq: userId }, revoked_at: { _null: true } }),
-   readRows<{ id: number | string; base_path: string }>("modules", ["id", "base_path"], { status: { _eq: "active" }, base_path: { _in: ["/project-management/work-management/assignor", "/project-management/work-management/assignment-center", "/project-management/work-management/assignee", "/project-management/work-management/my-tasks", "/project-management/work-management/executive", "/project-management/work-management/executive-overview"] } }),
+   readRows<{ id: number | string; base_path: string }>("modules", ["id", "base_path"], { status: { _eq: "active" }, base_path: { _in: ["/project-management/work-management/assignor", "/project-management/work-management/assignment-center", "/project-management/work-management/assignee", "/project-management/work-management/my-tasks", "/project-management/work-management/executive", "/project-management/work-management/executive-overview", "/project-management/work-management/departmental-overview"] } }),
   ]);
   requireRule(users.length && isActiveEmployeeFlag(users[0].is_deleted), 401, "INACTIVE_EMPLOYEE", "Your employee record is unavailable.");
  const user = users[0];
@@ -173,14 +173,14 @@ export async function liveRead(path: string[], workspace: Workspace, period: Rea
   return reader.directory(actor, workspace);
  }
  if (route === "notifications") return readRows("pm_work_notification", ["id", "recipient_id", "event_id", "type", "payload", "read_at", "created_at"], { recipient_id: { _eq: actor.id } }, 100);
- const supported = ["occurrences", "occurrences/calendar", "occurrences/backlog", "reviews", "analytics/company", "analytics/employees", "analytics/departments", "analytics/trends"];
+  const supported = ["occurrences", "occurrences/calendar", "occurrences/backlog", "analytics/company", "analytics/employees", "analytics/departments", "analytics/trends"];
  requireRule(supported.includes(route), 503, "LIVE_READ_NOT_READY", "This live read endpoint is not implemented yet. Calendar and reporting reads are available; no write was attempted.");
- if (path[0] === "analytics") requireRule(workspace === "executive" && workspaceAllowed(actor, "executive"), 403, "FORBIDDEN", "Executive access is required.");
+  if (path[0] === "analytics") requireRule((workspace === "executive" && workspaceAllowed(actor, "executive")) || (workspace === "departmental" && workspaceAllowed(actor, "departmental") && !!actor.department_id), 403, "FORBIDDEN", "Overview access is required.");
  const reader = new LiveReader((collection, fields, filter, limit, page) => readRows<Record<string, unknown>>(collection, fields, filter, limit, page));
- const engine = await reader.load(actor, workspace, period, route === "reviews");
- if (route === "occurrences" || route === "occurrences/calendar" || route === "reviews" || route === "occurrences/backlog") {
+  const engine = await reader.load(actor, workspace, period);
+  if (route === "occurrences" || route === "occurrences/calendar" || route === "occurrences/backlog") {
   const rows = route === "occurrences/backlog" ? engine.list("1900-01-01", period.from, period.employee).filter(o => !o.first_submission_id && o.status !== "CANCELLED" && o.due_at < engine.now && o.due_at < wallToUtc(period.from, "00:00", "Asia/Manila"))
-   : engine.list(period.from, period.to, period.employee, route === "reviews");
+    : engine.list(period.from, period.to, period.employee);
   // Final boundary check: My Tasks can only ever return the signed-in assignee's rows.
   const scoped = workspace === "my-tasks" ? rows.filter(o => o.assignee.id === actor.id) : rows;
   return { items: scoped.slice((period.page - 1) * period.limit, period.page * period.limit), total: scoped.length, summary: engine.summary(period.from, period.to, period.employee) };

@@ -5,7 +5,8 @@ export interface WorkDatabase {
  read(collection: string, fields: string[], filter: DatabaseRow, limit?: number, page?: number): Promise<DatabaseRow[]>;
  create(collection: string, body: DatabaseRow): Promise<DatabaseRow>;
  createMany(collection: string, bodies: DatabaseRow[], fields?: string[]): Promise<DatabaseRow[]>;
- update(collection: string, id: string, body: DatabaseRow): Promise<void>;
+  update(collection: string, id: string, body: DatabaseRow): Promise<void>;
+  updateMany(collection: string, rows: (DatabaseRow & { id: string })[]): Promise<void>;
  remove(collection: string, ids: string[]): Promise<void>;
 }
 
@@ -41,9 +42,14 @@ export class DirectusClient implements WorkDatabase {
   if (!bodies.length) return [];
   return await this.request(`/items/${collection}?${new URLSearchParams({ fields: fields.join(",") })}`, "POST", bodies) as DatabaseRow[];
  }
- async update(collection: string, id: string, body: DatabaseRow): Promise<void> {
-  await this.request(`/items/${collection}/${encodeURIComponent(id)}`, "PATCH", body);
- }
+  async update(collection: string, id: string, body: DatabaseRow): Promise<void> {
+   await this.request(`/items/${collection}/${encodeURIComponent(id)}`, "PATCH", body);
+  }
+  async updateMany(collection: string, rows: (DatabaseRow & { id: string })[]): Promise<void> {
+   for (let offset = 0; offset < rows.length; offset += 100) {
+    await this.request(`/items/${collection}`, "PATCH", rows.slice(offset, offset + 100));
+   }
+  }
  async remove(collection: string, ids: string[]): Promise<void> {
   if (ids.length) await this.request(`/items/${collection}`, "DELETE", ids);
  }
