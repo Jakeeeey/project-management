@@ -39,6 +39,8 @@ import { AssigneeDialog } from "./AssigneeDialog";
 import { AssigneeStack } from "./AssigneeStack";
 import { DATE_RANGE_ERROR_MESSAGE, TaskDateRange, isValidDateRange } from "./TaskDateRange";
 import { TaskDescriptionEditor } from "./TaskDescriptionEditor";
+import { resolveTaskTags, TaskTagStack } from "./TaskTags";
+import { TaskTagsDialog } from "./TaskTagsDialog";
 import { descriptionToStorage } from "./description-html";
 
 /**
@@ -71,6 +73,8 @@ const TaskFormSchema = z
         end_date: z.string().nullable(),
         /** Local to the form: assignments go through the assignees route, never a task update. */
         assignee_ids: z.array(z.number().int().positive()),
+        /** Local to the form, like `assignee_ids`: tags go through the task-tags route. */
+        tag_ids: z.array(z.number().int().positive()),
     })
     .superRefine((values, ctx) => {
         // `superRefine` rather than a per-field `refine`: a narrowing predicate would collapse the
@@ -96,6 +100,7 @@ const EMPTY_VALUES: TaskFormValues = {
     start_date: null,
     end_date: null,
     assignee_ids: [],
+    tag_ids: [],
 };
 
 /** Anchors the dates label to the start picker, so the composite control keeps a real label. */
@@ -128,6 +133,9 @@ export interface TaskFormDialogProps {
     readonly onUpdate: (taskId: number, input: UpdateTaskInput) => Promise<boolean>;
     readonly onAssign: (taskId: number, userId: number, label: string) => Promise<boolean>;
     readonly onUnassign: (taskId: number, userId: number, label: string) => Promise<boolean>;
+    /** Attaches / detaches a tag — the same assignee-style contract, keyed by tag instead of user. */
+    readonly onAssignTag: (taskId: number, tagId: number, label: string) => Promise<boolean>;
+    readonly onUnassignTag: (taskId: number, tagId: number, label: string) => Promise<boolean>;
     /** Copy overrides so the sub-task dialog can reuse this form without a second implementation. */
     readonly titleOverride?: string;
     readonly descriptionOverride?: string;
@@ -153,6 +161,8 @@ export function TaskFormDialog({
     onUpdate,
     onAssign,
     onUnassign,
+    onAssignTag,
+    onUnassignTag,
     titleOverride,
     descriptionOverride,
 }: TaskFormDialogProps) {
@@ -175,6 +185,7 @@ export function TaskFormDialog({
             start_date: task?.start_date ?? null,
             end_date: task?.end_date ?? null,
             assignee_ids: task ? task.assignees.map((assignee) => assignee.user_id) : [],
+            tag_ids: task ? task.tags.map((tag) => tag.tag_id) : [],
         });
     }, [open, task, catalogs, form]);
 
@@ -218,6 +229,18 @@ export function TaskFormDialog({
     const nameOf = (userId: number): string =>
         members.find((member) => member.user_id === userId)?.full_name ?? `User #${userId}`;
 
+    const [isTagsDialogOpen, setIsTagsDialogOpen] = useState(false);
+    const [tagsDialogTitle, setTagsDialogTitle] = useState("");
+
+    /** Same open-time subject rule as the assignee modal: the current title, or what is being typed. */
+    const handleOpenTagsDialog = (): void => {
+        setTagsDialogTitle(form.getValues("title").trim() || "this task");
+        setIsTagsDialogOpen(true);
+    };
+
+    const tagLabelOf = (tagId: number): string =>
+        catalogs.tags.find((tag) => tag.id === tagId)?.label ?? `Tag #${tagId}`;
+
     const handleSubmit = form.handleSubmit(async (values) => {
         const baseFields = {
             title: values.title.trim(),
@@ -246,6 +269,17 @@ export function TaskFormDialog({
             for (const userId of current) {
                 if (!next.has(userId)) await onUnassign(task.id, userId, nameOf(userId));
             }
+
+            // Tags follow the same rule: diff against the row's server truth, so an untouched
+            // picker writes nothing.
+            const currentTags = new Set(task.tags.map((tag) => tag.tag_id));
+            const nextTags = new Set(values.tag_ids);
+            for (const tagId of nextTags) {
+                if (!currentTags.has(tagId)) await onAssignTag(task.id, tagId, tagLabelOf(tagId));
+            }
+            for (const tagId of currentTags) {
+                if (!nextTags.has(tagId)) await onUnassignTag(task.id, tagId, tagLabelOf(tagId));
+            }
         } else {
             const createdId = await onCreate({
                 ...baseFields,
@@ -257,6 +291,11 @@ export function TaskFormDialog({
                 for (const userId of values.assignee_ids) {
                     await onAssign(createdId, userId, nameOf(userId));
                 }
+            }
+
+            // The row exists only now, so its tags attach to the id the POST just returned.
+            for (const tagId of values.tag_ids) {
+                await onAssignTag(createdId, tagId, tagLabelOf(tagId));
             }
         }
 
@@ -499,6 +538,64 @@ export function TaskFormDialog({
                                                         shouldDirty: true,
                                                     });
                                                     setIsAssigneeDialogOpen(false);
+                                                }}
+                                            />
+                                        </FormItem>
+                                    )}
+                                />
+                            ) : null}
+
+                            {/*
+                             * Tags are NOT capability-gated the way assigning is: tagging a task is
+                             * part of editing it, not an access grant. Hidden entirely when the
+                             * department has defined none — there is nothing to pick, and creating
+                             * tags belongs to the Configure section.
+                             */}
+                            {catalogs.tags.length > 0 ? (
+                                <FormField
+                                    control={form.control}
+                                    name="tag_ids"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel htmlFor={undefined}>Tags</FormLabel>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={handleOpenTagsDialog}
+                                                disabled={isSubmitting}
+                                                aria-label="Tags"
+                                                className="w-full justify-start"
+                                            >
+                                                <TaskTagStack
+                                                    tags={resolveTaskTags(
+                                                        field.value.map((tagId) => ({
+                                                            tag_id: tagId,
+                                                        })),
+                                                        catalogs.tags,
+                                                    )}
+                                                    max={3}
+                                                />
+                                            </Button>
+                                            <FormDescription>
+                                                Tags are shared across your department.
+                                            </FormDescription>
+                                            <FormMessage />
+
+                                            <TaskTagsDialog
+                                                open={isTagsDialogOpen}
+                                                onOpenChange={setIsTagsDialogOpen}
+                                                task={{
+                                                    ...(task !== null ? { id: task.id } : {}),
+                                                    title: tagsDialogTitle,
+                                                }}
+                                                tags={catalogs.tags}
+                                                selectedIds={field.value}
+                                                isSubmitting={isSubmitting}
+                                                onSave={(tagIds) => {
+                                                    form.setValue("tag_ids", [...tagIds], {
+                                                        shouldDirty: true,
+                                                    });
+                                                    setIsTagsDialogOpen(false);
                                                 }}
                                             />
                                         </FormItem>

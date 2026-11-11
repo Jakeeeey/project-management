@@ -14,6 +14,7 @@ import { TaskFormDialog, type TaskBreadcrumb } from "./components/TaskFormDialog
 import { TaskListSwitcher } from "./components/TaskListSwitcher";
 import { DEFAULT_TASK_PAGE_SIZE, TaskPagination } from "./components/TaskPagination";
 import { TaskTree } from "./components/TaskTree";
+import { TaskTagsDialog } from "./components/TaskTagsDialog";
 import { TasksHeaderActions } from "./components/TasksHeaderActions";
 import { TasksToolbar } from "./components/TasksToolbar";
 import {
@@ -46,6 +47,7 @@ import {
 import { useTaskMutations } from "./hooks/useTaskMutations";
 import { useTaskLists } from "./hooks/useTaskLists";
 import { useTaskTree, type TaskTreeRow } from "./hooks/useTaskTree";
+import { useTags } from "./hooks/useTags";
 import type { CreateTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
 
 /**
@@ -349,6 +351,16 @@ export function TasksModule({ userId }: TasksModuleProps) {
         assign,
         unassign,
     } = useAssignees({ onChanged: refresh });
+    /**
+     * The tag catalog is not fetched again — it rides on the tasks payload (`catalogs.tags`), so this
+     * hook owns only the tag writes.
+     */
+    const {
+        isSubmitting: isTagSubmitting,
+        error: tagError,
+        assignTag,
+        unassignTag,
+    } = useTags({ tags: catalogs.tags, onChanged: refresh });
     const {
         isSubmitting: isTaskSubmitting,
         error: mutationError,
@@ -401,7 +413,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
     /** The cells with a save in flight, so a double click cannot fire a second write for one cell. */
     const inFlightCellsRef = useRef<Set<string>>(new Set());
 
-    const isDialogSubmitting = isTaskSubmitting || isAssigneeSubmitting;
+    const isDialogSubmitting = isTaskSubmitting || isAssigneeSubmitting || isTagSubmitting;
 
     const taskById = useMemo(() => {
         const map = new Map<number, TaskListItem>();
@@ -424,6 +436,18 @@ export function TasksModule({ userId }: TasksModuleProps) {
     const assigneeSelectedIds = useMemo(
         () => assigneeEditingTask?.assignees.map((assignee) => assignee.user_id) ?? [],
         [assigneeEditingTask],
+    );
+
+    /**
+     * The ONE tags dialog, the same single-instance rule as the assignees one. Tagging is not a cell
+     * edit — the cell just opens this modal — so its subject is its own id, not an `editingCell`.
+     */
+    const [tagsEditingTaskId, setTagsEditingTaskId] = useState<number | null>(null);
+    const tagsEditingTask =
+        tagsEditingTaskId === null ? null : (taskById.get(tagsEditingTaskId) ?? null);
+    const tagsSelectedIds = useMemo(
+        () => tagsEditingTask?.tags.map((tag) => tag.tag_id) ?? [],
+        [tagsEditingTask],
     );
 
     const editingTrail = useMemo(
@@ -733,6 +757,40 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [assigneeEditingTaskId, handleCellCommit],
     );
 
+    const handleOpenTags = useCallback((taskId: number): void => {
+        setTagsEditingTaskId(taskId);
+    }, []);
+
+    const handleTagsDialogOpenChange = useCallback((next: boolean): void => {
+        if (!next) setTagsEditingTaskId(null);
+    }, []);
+
+    /**
+     * The modal hands back a whole set, so it is diffed here against the row's current tags and only
+     * the differences hit the tasks/<id>/tags route. `assignTag`/`unassignTag` already refetch.
+     */
+    const handleTagsSave = useCallback(
+        (tagIds: readonly number[]): void => {
+            if (tagsEditingTask === null) return;
+            const taskId = tagsEditingTask.id;
+            const current = new Set(tagsEditingTask.tags.map((tag) => tag.tag_id));
+            const next = new Set(tagIds);
+            const labelOf = (tagId: number): string =>
+                catalogs.tags.find((tag) => tag.id === tagId)?.label ?? `Tag #${tagId}`;
+
+            setTagsEditingTaskId(null);
+            void (async (): Promise<void> => {
+                for (const tagId of next) {
+                    if (!current.has(tagId)) await assignTag(taskId, tagId, labelOf(tagId));
+                }
+                for (const tagId of current) {
+                    if (!next.has(tagId)) await unassignTag(taskId, tagId, labelOf(tagId));
+                }
+            })();
+        },
+        [tagsEditingTask, catalogs.tags, assignTag, unassignTag],
+    );
+
     const handleOpenTask = useCallback((taskId: number): void => {
         /**
          * Where focus was when the sheet opened. Radix returns focus to a dialog's TRIGGER, and this
@@ -798,7 +856,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
         ],
     );
 
-    const surfaceError = error ?? mutationError ?? assigneeError;
+    const surfaceError = error ?? mutationError ?? assigneeError ?? tagError;
     const showError = surfaceError !== null && surfaceError !== "";
     const emptyMessage = isFiltering
         ? "No tasks match the current search and filters."
@@ -892,6 +950,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 fields={fields}
                 statuses={catalogs.statuses}
                 priorities={catalogs.priorities}
+                tags={catalogs.tags}
                 members={members}
                 currentUserId={userId}
                 savedFilters={savedFilters}
@@ -923,6 +982,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onStartCellEdit={handleStartCellEdit}
                 onCancelCellEdit={handleCancelCellEdit}
                 onCommitCellEdit={handleCellCommit}
+                onEditTags={handleOpenTags}
                 renderActions={renderRowActions}
                 aria-label="Task list"
             />
@@ -959,6 +1019,8 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onUpdate={updateTask}
                 onAssign={assign}
                 onUnassign={unassign}
+                onAssignTag={assignTag}
+                onUnassignTag={unassignTag}
             />
 
             <TaskFormDialog
@@ -975,6 +1037,8 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onUpdate={updateTask}
                 onAssign={assign}
                 onUnassign={unassign}
+                onAssignTag={assignTag}
+                onUnassignTag={unassignTag}
             />
 
             <SubtaskCreateDialog
@@ -994,6 +1058,8 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onUpdate={updateTask}
                 onAssign={assign}
                 onUnassign={unassign}
+                onAssignTag={assignTag}
+                onUnassignTag={unassignTag}
             />
 
             <TaskDetailSheet
@@ -1010,6 +1076,9 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onDelete={handleDeleteTask}
                 onUploadAttachment={uploadAttachment}
                 onDetachAttachment={detachAttachment}
+                tags={catalogs.tags}
+                onAssignTag={assignTag}
+                onUnassignTag={unassignTag}
             />
 
             {/*
@@ -1029,6 +1098,20 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 selectedIds={assigneeSelectedIds}
                 isSubmitting={isAssigneeSubmitting}
                 onSave={handleAssigneeSave}
+            />
+
+            <TaskTagsDialog
+                open={tagsEditingTask !== null}
+                onOpenChange={handleTagsDialogOpenChange}
+                task={
+                    tagsEditingTask === null
+                        ? null
+                        : { id: tagsEditingTask.id, title: tagsEditingTask.title }
+                }
+                tags={catalogs.tags}
+                selectedIds={tagsSelectedIds}
+                isSubmitting={isTagSubmitting}
+                onSave={handleTagsSave}
             />
         </section>
     );

@@ -1,12 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { ListChecks, ListTodo, SlidersHorizontal, type LucideIcon } from "lucide-react";
+import { ListChecks, ListTodo, SlidersHorizontal, Tags, type LucideIcon } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { TaskFieldsSection } from "@/modules/project-management/task-management/tasks/components/TaskFieldsSection";
 
+import { TagsSection } from "./TagsSection";
 import { TaskConfigurationSection } from "./TaskConfigurationSection";
 import { TaskListsSection } from "./TaskListsSection";
 import { useConfigureCapabilities } from "../hooks/useConfigureCapabilities";
@@ -26,8 +27,9 @@ interface ConfigureSection {
 }
 
 /**
- * Order is deliberate: lists come first because every task belongs to one, then the two catalogs a
- * task references (status and priority) under a single tab, then the optional columns.
+ * Order is deliberate: lists come first because every task belongs to one, then the tag catalog that
+ * rides on every task, then the two catalogs a task references (status and priority) under a single
+ * tab, then the optional columns.
  *
  * Status and priority share the "Status & priority" tab but are still two independent catalogs with
  * their own tables and id spaces — the tab merges their PRESENTATION only. `TaskConfigurationSection`
@@ -40,6 +42,12 @@ const CONFIGURE_SECTIONS: readonly ConfigureSection[] = [
         label: "Lists",
         icon: ListTodo,
         render: () => <TaskListsSection />,
+    },
+    {
+        id: "tags",
+        label: "Tags",
+        icon: Tags,
+        render: () => <TagsSection />,
     },
     {
         id: "catalogs",

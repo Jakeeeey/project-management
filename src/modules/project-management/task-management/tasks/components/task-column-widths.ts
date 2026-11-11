@@ -26,14 +26,19 @@ export type TaskColumnKey =
     | "due"
     | "priority"
     | "status"
+    | "tags"
     | "actions"
     | "field";
 
 /**
  * The default widths, seeded from the classes the table hardcoded before widths became dynamic, so
  * the initial layout stays identical to the pre-resize table: `title 220`, `assignees 160`,
- * `start 160`, `due 160`, `priority 140`, `status 140`, `actions 72`. Custom columns start at 160 —
- * the `field` entry below, which is also what an override-less custom column resolves to.
+ * `start 160`, `due 160`, `priority 140`, `status 140`, `actions 72`. Custom columns start
+ * at 160 — the `field` entry below, which is also what an override-less custom column resolves to.
+ *
+ * `tags` is the exception: a tag cell is a stack of 24px circles that overlap, capped at three plus
+ * a `+N` pill, so 104px already fits the widest cell and 180 left a band of dead space beside the
+ * icons. The same reasoning shrinks its floor.
  *
  * `expand` is the exception: it was 76 because it also held the drag handle. Drag-and-drop has been
  * removed, so the gutter now carries only the accordion chevron — keeping the old width left ~40px of
@@ -47,6 +52,7 @@ export const DEFAULT_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
     due: 160,
     priority: 140,
     status: 140,
+    tags: 104,
     actions: 72,
     field: 160,
 };
@@ -66,6 +72,7 @@ export const MIN_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
     due: 120,
     priority: 110,
     status: 110,
+    tags: 96,
     actions: 56,
     field: 120,
 };

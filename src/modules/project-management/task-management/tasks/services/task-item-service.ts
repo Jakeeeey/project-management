@@ -8,6 +8,7 @@ import { phNow } from "../utils/ph-time";
 import type { UpdateTaskInput } from "../types/pm-task.schema";
 import { TaskServiceError, assertDateOrder, resolveCatalogId } from "./task-service";
 import { TaskFieldService } from "./task-field-service";
+import { TagService } from "./tag-service";
 import {
     TASK_ACTIVITY_FIELD_LABELS,
     buildActivityChange,
@@ -101,7 +102,7 @@ export class TaskItemService {
         permissions: PermissionContext,
         task: ScopedTaskRow,
     ): Promise<TaskClientRow> {
-        const [catalogs, assignees, attachments, values, fields] = await Promise.all([
+        const [catalogs, assignees, attachments, tags, values, fields] = await Promise.all([
             TaskConfigService.listCatalog(actor),
             readItems<TaskAssigneeRow>("pm_task_assignee", {
                 filter: {
@@ -119,6 +120,7 @@ export class TaskItemService {
                 },
                 limit: -1,
             }),
+            TagService.listTaskTagRefs(actor, task.id),
             TaskFieldService.listValuesFor(actor, task.id),
             TaskFieldService.listEnabledFields(actor),
         ]);
@@ -128,6 +130,7 @@ export class TaskItemService {
                 row: toPayloadRow(task),
                 assignees: liveNestedRows<TaskAssigneeRow>(assignees),
                 attachments: liveNestedRows<ScopedAttachmentRow>(attachments),
+                tags,
                 values: liveFieldValues(values, fields),
             },
             buildShaping(catalogs, permissions),

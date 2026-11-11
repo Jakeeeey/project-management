@@ -7,6 +7,7 @@ import type {
 import type { PermissionContext } from "./permission-service";
 import type { CatalogLists } from "@/modules/project-management/task-management/configure/services/task-config-service";
 import type { TaskFieldClientRow, TaskFieldValueClientRow } from "./task-field-service";
+import type { TagWireRow, TaskTagWireRef } from "../types/tag.schema";
 import { normalizeIconName } from "../components/catalog-icon";
 
 /**
@@ -54,6 +55,8 @@ export interface TaskClientRow {
     readonly updated_by: number | null;
     readonly assignees: readonly TaskAssigneeRow[];
     readonly attachments: readonly ScopedAttachmentRow[];
+    /** The task's live tags; an id resolves through `catalogs.tags`. */
+    readonly tags: readonly TaskTagWireRef[];
     readonly custom_values: readonly TaskFieldValueClientRow[];
     /** The server's per-row edit answer: head, granted access, or this task's creator. */
     readonly can_edit: boolean;
@@ -69,10 +72,19 @@ export interface TaskClientRow {
     readonly priority_icon: string | null;
 }
 
+/**
+ * The department's catalogs as the tasks route returns them: the status/priority lists plus the tag
+ * catalog the rows' `tags` resolve through. Tags are NOT part of `CatalogLists`, because the
+ * configuration route returns that shape and a tag is not a status/priority row.
+ */
+export interface TaskCatalogs extends CatalogLists {
+    readonly tags: readonly TagWireRow[];
+}
+
 /** The GET payload: the department's flat rows, the catalogs their labels resolve from, and the custom columns the rows carry answers for. */
 export interface DepartmentTaskList {
     readonly rows: readonly TaskClientRow[];
-    readonly catalogs: CatalogLists;
+    readonly catalogs: TaskCatalogs;
     readonly fields: readonly TaskFieldClientRow[];
 }
 
@@ -103,6 +115,7 @@ export interface TaskRowSource {
     readonly row: RawTaskRow;
     readonly assignees: readonly TaskAssigneeRow[];
     readonly attachments: readonly ScopedAttachmentRow[];
+    readonly tags: readonly TaskTagWireRef[];
     readonly values: readonly ScopedFieldValueRow[];
 }
 
@@ -227,6 +240,7 @@ export function toClientRow(source: TaskRowSource, shaping: RowShaping): TaskCli
         updated_by: toNumberOrNull(row.updated_by),
         assignees: source.assignees,
         attachments: source.attachments,
+        tags: source.tags,
         custom_values: source.values.map((value) => ({
             field_id: value.field_id,
             value: value.value,

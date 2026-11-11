@@ -40,6 +40,7 @@ import {
     FILTER_OPERATOR_LABELS,
     PRIORITY_FIELD_KEY,
     STATUS_FIELD_KEY,
+    TAGS_FIELD_KEY,
     createFilterClause,
     customFieldIdFromKey,
     fieldFilterKey,
@@ -64,9 +65,9 @@ import type { TaskField } from "../hooks/useTasks";
  * sets, and this file never fetches, stores or derives a filter. The two pieces of local state it
  * does keep are the save-name input's open flag and its draft text, which are transient UI.
  *
- * Each row's value control switches on the field's TYPE: status / priority and a custom `select`
- * offer their catalog options (choice ids, never labels), a custom `date` uses the module's day
- * picker, `text` / `number` use a plain input, and assignee offers the department members. The empty
+ * Each row's value control switches on the field's TYPE: status / priority / tags and a custom
+ * `select` offer their catalog options (choice ids, never labels), a custom `date` uses the module's
+ * day picker, `text` / `number` use a plain input, and assignee offers the department members. The empty
  * operators take no value, so that control renders disabled. Picking a different FIELD clears the
  * row's value, because an option id from one column is meaningless in another.
  */
@@ -92,6 +93,8 @@ export interface TaskFilterBuilderProps {
     readonly fields: readonly TaskField[];
     readonly statuses: readonly FilterBuilderOption[];
     readonly priorities: readonly FilterBuilderOption[];
+    /** The department's tag catalog — the same shareable list every task surface reads. */
+    readonly tags: readonly FilterBuilderOption[];
     readonly members: readonly FilterBuilderMember[];
     /** Used only to mark the signed-in member's own row in the assignee value control. */
     readonly currentUserId: number | null;
@@ -154,6 +157,7 @@ function FilterValueControl({
     fields,
     statuses,
     priorities,
+    tags,
     members,
     currentUserId,
     onChange,
@@ -162,6 +166,7 @@ function FilterValueControl({
     readonly fields: readonly TaskField[];
     readonly statuses: readonly FilterBuilderOption[];
     readonly priorities: readonly FilterBuilderOption[];
+    readonly tags: readonly FilterBuilderOption[];
     readonly members: readonly FilterBuilderMember[];
     readonly currentUserId: number | null;
     readonly onChange: (value: string | null) => void;
@@ -201,6 +206,18 @@ function FilterValueControl({
                 ariaLabel={`${ariaLabel} (priority)`}
                 placeholder="Any priority"
                 options={priorities}
+                value={clause.value}
+                onChange={onChange}
+            />
+        );
+    }
+
+    if (clause.fieldKey === TAGS_FIELD_KEY) {
+        return (
+            <ChoiceValueControl
+                ariaLabel={`${ariaLabel} (tag)`}
+                placeholder="Any tag"
+                options={tags}
                 value={clause.value}
                 onChange={onChange}
             />
@@ -283,6 +300,7 @@ function FilterClauseRow({
     fields,
     statuses,
     priorities,
+    tags,
     members,
     currentUserId,
     onChange,
@@ -292,6 +310,7 @@ function FilterClauseRow({
     readonly fields: readonly TaskField[];
     readonly statuses: readonly FilterBuilderOption[];
     readonly priorities: readonly FilterBuilderOption[];
+    readonly tags: readonly FilterBuilderOption[];
     readonly members: readonly FilterBuilderMember[];
     readonly currentUserId: number | null;
     readonly onChange: (next: FilterClause) => void;
@@ -302,6 +321,7 @@ function FilterClauseRow({
             { value: STATUS_FIELD_KEY, label: "Status" },
             { value: PRIORITY_FIELD_KEY, label: "Priority" },
             { value: ASSIGNEE_FIELD_KEY, label: "Assignee" },
+            { value: TAGS_FIELD_KEY, label: "Tags" },
             ...fields.map((field) => ({ value: fieldFilterKey(field.id), label: field.label })),
         ],
         [fields],
@@ -386,6 +406,7 @@ function FilterClauseRow({
                     fields={fields}
                     statuses={statuses}
                     priorities={priorities}
+                    tags={tags}
                     members={members}
                     currentUserId={currentUserId}
                     onChange={(value) => onChange({ ...clause, value })}
@@ -414,6 +435,7 @@ export function TaskFilterBuilder({
     fields,
     statuses,
     priorities,
+    tags,
     members,
     currentUserId,
     savedFilters,
@@ -572,6 +594,7 @@ export function TaskFilterBuilder({
                             fields={fields}
                             statuses={statuses}
                             priorities={priorities}
+                            tags={tags}
                             members={members}
                             currentUserId={currentUserId}
                             onChange={updateClause}

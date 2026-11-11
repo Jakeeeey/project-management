@@ -236,6 +236,15 @@ export function TaskCombobox({
                         data-slot="task-combobox-content"
                         align="start"
                         sideOffset={4}
+                        /*
+                         * Inside a dialog the popup lives in the dialog's DOM, and a dialog clips its
+                         * overflow — so the popup must be laid out to FIT the dialog rather than
+                         * escape it. Collision is measured against the dialog box, which makes Radix
+                         * flip the list above the trigger when there is no room below, and the list
+                         * caps itself to the height Radix reports (see `CommandList` below).
+                         */
+                        collisionBoundary={container ?? undefined}
+                        collisionPadding={8}
                         aria-label={`${ariaLabel} options`}
                         className={cn(
                             "z-[9999] w-(--radix-popover-trigger-width) min-w-(--radix-popover-trigger-width) overflow-hidden rounded-md border bg-popover p-0 text-popover-foreground shadow-md outline-hidden",
@@ -247,7 +256,16 @@ export function TaskCombobox({
                                 placeholder={searchPlaceholder}
                                 aria-label={`Search ${ariaLabel}`}
                             />
-                            <CommandList id={listId}>
+                            <CommandList
+                                id={listId}
+                                // Radix reports how much room the popup has inside its collision
+                                // boundary; the search field above takes the rest, so the list
+                                // scrolls instead of growing past the dialog's edge.
+                                style={{
+                                    maxHeight:
+                                        "calc(var(--radix-popover-content-available-height) - 2.75rem)",
+                                }}
+                            >
                                 <CommandEmpty>{emptyMessage}</CommandEmpty>
                                 <CommandGroup>
                                     {options.map((option) => (

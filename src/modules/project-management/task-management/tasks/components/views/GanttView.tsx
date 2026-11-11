@@ -28,11 +28,12 @@ import { assigneeColorFor, assigneeForegroundFor } from "../assignee-color";
 import { AssigneeFilterCombobox, filterItemsByAssignees } from "../AssigneeFilterCombobox";
 import { CatalogStatusIcon } from "../CatalogStatusIcon";
 import { NO_STATUS_LABEL } from "../TaskRowBadges";
+import { TagFilterCombobox, filterItemsByTags } from "../TagFilterCombobox";
 
 import { parseDateOnly } from "../SingleDatePicker";
 import { GANTT_TODAY_CLASS, highlightToday } from "./gantt-today";
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
-import type { TaskCatalogRef, TaskListItem } from "../../hooks/useTasks";
+import type { TaskCatalogRef, TaskListItem, TaskTagOption } from "../../hooks/useTasks";
 
 /**
  * The SVAR Gantt chart, loaded lazily **on the client only**.
@@ -165,10 +166,13 @@ interface GanttTooltipCardProps {
     readonly data: GanttTooltipData;
     readonly taskById: ReadonlyMap<number, TaskListItem>;
     readonly memberNameById: ReadonlyMap<number, string>;
+    /** Tags by id — the row only carries link ids, the catalog carries the label, colour and icon. */
+    readonly tagById: ReadonlyMap<number, TaskTagOption>;
 }
 
 /**
- * The hover card for one bar: name, date range, status and assignees — compact, not a detail sheet.
+ * The hover card for one bar: name, date range, status, tags and assignees — compact, not a detail
+ * sheet.
  *
  * The store row is NOT read for these: the vendor normalises tasks into its own shape, so the card
  * looks the module row up by id and renders from `TaskListItem` (the same source the tree reads).
@@ -178,7 +182,7 @@ interface GanttTooltipCardProps {
  * The status LABEL is always rendered beside the glyph, so meaning never depends on the
  * glyph's contrast alone.
  */
-function GanttTooltipCard({ data, taskById, memberNameById }: GanttTooltipCardProps) {
+function GanttTooltipCard({ data, taskById, memberNameById, tagById }: GanttTooltipCardProps) {
     if (!("task" in data)) {
         return null;
     }
@@ -215,6 +219,24 @@ function GanttTooltipCard({ data, taskById, memberNameById }: GanttTooltipCardPr
                 )}
                 <span>{item.status?.label ?? NO_STATUS_LABEL}</span>
             </p>
+            {item.tags.length === 0 ? null : (
+                <p className="flex flex-wrap items-center gap-1 text-xs opacity-90">
+                    {item.tags.map((link) => {
+                        const tag = tagById.get(link.tag_id);
+                        return (
+                            <span
+                                key={link.tag_id}
+                                className="flex items-center gap-1 rounded-full border border-current/25 px-1.5 py-0.5"
+                            >
+                                {tag?.icon ? (
+                                    <CatalogStatusIcon icon={tag.icon} tone="status" density="dense" />
+                                ) : null}
+                                {tag?.label ?? `Tag #${link.tag_id}`}
+                            </span>
+                        );
+                    })}
+                </p>
+            )}
             {item.assignees.length === 0 ? null : (
                 <p className="text-xs opacity-90">
                     {item.assignees
@@ -897,7 +919,7 @@ function buildBarColourCss(items: readonly TaskListItem[]): string {
  * @param props - the frozen `TaskViewProps` contract; the shell passes already-fetched data and the
  *                retry callback, and this view never fetches.
  */
-export function GanttView({ items, memberNameById, isLoading, error, onRetry, onOpenTask }: TaskViewProps) {
+export function GanttView({ items, catalogs, memberNameById, isLoading, error, onRetry, onOpenTask }: TaskViewProps) {
     /**
      * The assignee filter, held as the picked user ids rendered to decimal strings (the option
      * contract). Empty means "no filter", so the chart shows every task — that is both the initial
@@ -905,9 +927,12 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry, on
      */
     const [assigneeFilter, setAssigneeFilter] = useState<readonly string[]>([]);
 
+    /** The tag filter, same contract as the assignee one: picked tag ids as strings, empty is all. */
+    const [tagFilter, setTagFilter] = useState<readonly string[]>([]);
+
     const visibleItems = useMemo<readonly TaskListItem[]>(
-        () => filterItemsByAssignees(items, assigneeFilter),
-        [items, assigneeFilter],
+        () => filterItemsByTags(filterItemsByAssignees(items, assigneeFilter), tagFilter),
+        [items, assigneeFilter, tagFilter],
     );
 
     /**
@@ -1153,12 +1178,26 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry, on
         return map;
     }, [items]);
 
+    /** Tags keyed by id, so the tooltip draws the chip without the row carrying its label or icon. */
+    const tagById = useMemo(() => {
+        const map = new Map<number, TaskTagOption>();
+        for (const tag of catalogs.tags) {
+            map.set(tag.id, tag);
+        }
+        return map;
+    }, [catalogs.tags]);
+
     /** Adapts the vendor's `{ api, data }` call into the module's tooltip card. */
     const tooltipContent = useCallback(
         ({ data }: { readonly api: IApi; readonly data: GanttTooltipData }) => (
-            <GanttTooltipCard data={data} taskById={taskById} memberNameById={memberNameById} />
+            <GanttTooltipCard
+                data={data}
+                taskById={taskById}
+                memberNameById={memberNameById}
+                tagById={tagById}
+            />
         ),
-        [taskById, memberNameById],
+        [taskById, memberNameById, tagById],
     );
 
     const openModal = useCallback(() => {
@@ -1306,13 +1345,14 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry, on
         <section data-slot="task-gantt" aria-label="Task timeline" className="w-full min-w-0 space-y-3">
             <style>{GANTT_THEME_CSS + GANTT_TODAY_CSS + GANTT_MODAL_DAY_LABELS_CSS + GANTT_MODAL_SCROLL_CSS + GANTT_QUIET_GRID_CSS + barColourRules}</style>
 
-            {/* One row: the month stepper centred by the two equal side columns, the assignee filter
-                parked in the right one. The library exposes the store action but renders no toolbar
-                of its own, so the stepper is hosted here — its buttons use the app's own Lucide icons
-                and are therefore never blank, independent of the vendor font.
+            {/* One row: the month stepper centred by the two equal side columns, the tag and assignee
+                filters parked in the right one. The library exposes the store action but renders no
+                toolbar of its own, so the stepper is hosted here — its buttons use the app's own
+                Lucide icons and are therefore never blank, independent of the vendor font.
 
-                The filter widens by OR, not intersect: picking a second assignee adds their tasks,
-                and the clear (X) returns to everyone. Below `sm` the row stacks, stepper first. */}
+                Both filters widen by OR, not intersect: picking a second tag or assignee adds their
+                tasks, and the clear (X) returns to all of them. Below `sm` the row stacks, stepper
+                first. */}
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
                 <div aria-hidden="true" className="hidden sm:block" />
 
@@ -1368,8 +1408,15 @@ export function GanttView({ items, memberNameById, isLoading, error, onRetry, on
 
                 <div
                     data-slot="task-gantt-assignee-filter"
-                    className="flex items-center justify-center sm:justify-end"
+                    className="flex flex-wrap items-center justify-center gap-2 sm:justify-end"
                 >
+                    <TagFilterCombobox
+                        items={items}
+                        tags={catalogs.tags}
+                        values={tagFilter}
+                        onValuesChange={setTagFilter}
+                        className="sm:w-fit"
+                    />
                     <AssigneeFilterCombobox
                         items={items}
                         memberNameById={memberNameById}

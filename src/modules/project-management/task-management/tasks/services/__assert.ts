@@ -22,6 +22,8 @@ import { containsExactlyOnce, isCompletePostMoveChildSet, type MoveChildRow } fr
 import { TASK_ACTIVITY_CUSTOM_FIELD_KEY, TASK_ACTIVITY_FIELD_LABELS, buildActivityChange, buildTaskActivityDeltas, catalogLabelOf, formatActivityValue, hasActivityChanged, joinUserDisplayName, type TaskActivityChange } from "./task-activity-delta.ts";
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
 import { TaskListError, deleteListRefusal, duplicateNameRow, effectiveDefaultList, isListCompatible, resolveTaskListId, sortListRows } from "./task-list-policy.ts";
+// @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
+import { duplicateTagRow, isTagDeleted, liveTagRows, sortTagRows, tagLinksOf, tagRefsByTask, tagReviveCandidate } from "./tag-policy.ts";
 
 let checks = 0;
 let failures = 0;
@@ -333,6 +335,8 @@ registerHooks({
 
 // @ts-expect-error -- Node needs the real ".ts" extension; tsc forbids it (see the file header).
 const { CreateTaskFieldOptionSchema, UpdateTaskFieldOptionSchema } = await import("../types/task-field.schema.ts");
+// @ts-expect-error -- Node needs the real ".ts" extension; tsc forbids it (see the file header).
+const { CreateTagSchema, UpdateTagSchema, TaskTagMutationSchema } = await import("../types/tag.schema.ts");
 
 /** The first issue message a create-option payload produces, or `null` when it is accepted. */
 function firstOptionIssueMessage(value: unknown): string | null {
@@ -379,6 +383,101 @@ check(
     "TaskListError carries its code and a CODE-prefixed message",
     listRefusal instanceof Error && listRefusal.code === "VALIDATION_FAILED" && listRefusal.message.startsWith("VALIDATION_FAILED:"),
     listRefusal.message,
+);
+
+// --- Task tags: live-row filtering (every is_deleted shape) ----------------------------------------
+
+const TAG_BUG = { id: 1, label: "Bug", sort_order: 0, is_deleted: 0 };
+const TAG_URGENT = { id: 2, label: "Urgent", sort_order: 1, is_deleted: 0 };
+const TAG_LATER = { id: 3, label: "Later", sort_order: 1, is_deleted: 0 };
+const TAG_BUG_GONE = { id: 9, label: "Bug", sort_order: 0, is_deleted: 1 };
+const TAG_BUFFER_GONE = { id: 10, label: "Legacy", sort_order: 2, is_deleted: { type: "Buffer", data: [1] } };
+const TAG_STRING_GONE = { id: 11, label: "Spent", sort_order: 3, is_deleted: "1" };
+
+check("tag flags: a zero flag is live, a one flag is deleted", !isTagDeleted(0) && isTagDeleted(1));
+check("tag flags: the Buffer JSON shape reads as deleted", isTagDeleted({ type: "Buffer", data: [1] }));
+check("tag flags: a Buffer zero reads as live", !isTagDeleted({ type: "Buffer", data: [0] }));
+check("tag flags: a string-shaped flag is honoured", isTagDeleted("1") && !isTagDeleted("0"));
+check("tag flags: an absent flag is live", !isTagDeleted(undefined) && !isTagDeleted(null));
+check(
+    "tag liveness: live rows survive every deleted shape",
+    ids(liveTagRows([TAG_BUG, TAG_BUG_GONE, TAG_BUFFER_GONE, TAG_STRING_GONE])) === "[1]",
+    ids(liveTagRows([TAG_BUG, TAG_BUG_GONE, TAG_BUFFER_GONE, TAG_STRING_GONE])),
+);
+check("tag order: (sort_order, id), tie broken by id", ids(sortTagRows([TAG_LATER, TAG_URGENT, TAG_BUG])) === "[1,2,3]");
+
+// --- Task tags: duplicate-label verdict and the revive candidate -----------------------------------
+
+check("tag labels: a trimmed, case-only variant is a duplicate", duplicateTagRow([TAG_BUG, TAG_URGENT], "  BUG ")?.id === 1);
+check("tag labels: a soft-deleted label never blocks a live one", duplicateTagRow([TAG_BUG_GONE], "Bug") === null);
+check("tag labels: a row may keep its own label on update", duplicateTagRow([TAG_BUG, TAG_URGENT], "Bug", 1) === null);
+check("tag labels: a fresh label is free", duplicateTagRow([TAG_BUG, TAG_URGENT], "Blocked") === null);
+check(
+    "tag labels: two live duplicates resolve to the lowest id",
+    duplicateTagRow([{ ...TAG_URGENT, label: "Bug" }, TAG_BUG], "Bug")?.id === 1,
+);
+
+check("tag revive: a soft-deleted row with the same label is the revive target", tagReviveCandidate([TAG_BUG_GONE], "bug")?.id === 9);
+check("tag revive: a live match is returned too, so the caller can refuse", tagReviveCandidate([TAG_BUG], "Bug")?.id === 1);
+check("tag revive: an unrelated label has no candidate", tagReviveCandidate([TAG_URGENT], "Bug") === null);
+check(
+    "tag revive: the lowest id wins among soft-deleted duplicates",
+    tagReviveCandidate([{ ...TAG_URGENT, label: "Bug", is_deleted: 1 }, { ...TAG_LATER, label: "bug", is_deleted: 1 }], "Bug")?.id === 2,
+);
+
+// --- Task tags: grouping links by task --------------------------------------------------------------
+
+const TAG_LINKS = [
+    { task_id: 5, tag_id: 1, is_deleted: 0 },
+    { task_id: 5, tag_id: 2, is_deleted: 1 },
+    { task_id: "5", tag_id: 3, is_deleted: 0 },
+    { task_id: null, tag_id: 4, is_deleted: 0 },
+    { task_id: 6, tag_id: 0, is_deleted: 0 },
+    { task_id: 5, tag_id: 1, is_deleted: 0 },
+];
+const TAG_REFS = tagRefsByTask(TAG_LINKS);
+
+check("tag grouping: live links group by their task", JSON.stringify(TAG_REFS.get(5)?.map((ref) => ref.tag_id)) === "[1,3]");
+check("tag grouping: a deleted link is never attached", TAG_REFS.get(5)?.every((ref) => ref.tag_id !== 2) === true);
+check("tag grouping: a row without a task id is attached to nothing", TAG_REFS.has(0) === false && TAG_REFS.size === 1);
+check("tag grouping: a repeated link is carried once", TAG_REFS.get(5)?.length === 2);
+check("tag grouping: a task with no links has no bucket", TAG_REFS.get(7) === undefined);
+check("tag grouping: a non-array alias slot is empty", tagLinksOf(undefined).length === 0 && tagLinksOf({ task_id: 1 }).length === 0);
+check("tag grouping: an array alias slot keeps its row objects", tagLinksOf([{ task_id: 1, tag_id: 2 }]).length === 1);
+
+// --- Task tags: the payload schemas ----------------------------------------------------------------
+
+const TAG_CREATED = CreateTagSchema.safeParse({ label: "  Bug  " });
+check("tag schema: a plain label is accepted and trimmed", TAG_CREATED.success && TAG_CREATED.data.label === "Bug");
+check("tag schema: a blank label is rejected", !CreateTagSchema.safeParse({ label: "   " }).success);
+check("tag schema: a 101-character label is rejected", !CreateTagSchema.safeParse({ label: "x".repeat(101) }).success);
+check(
+    "tag schema: a 6-digit hex colour is accepted in either case",
+    CreateTagSchema.safeParse({ label: "Bug", color: "#16a34a" }).success &&
+        CreateTagSchema.safeParse({ label: "Bug", color: "#16A34A" }).success,
+);
+check("tag schema: a null colour is accepted", CreateTagSchema.parse({ label: "Bug", color: null }).color === null);
+check(
+    "tag schema: a short, long or named colour is rejected",
+    !CreateTagSchema.safeParse({ label: "Bug", color: "#16a34" }).success &&
+        !CreateTagSchema.safeParse({ label: "Bug", color: "#16a34aa" }).success &&
+        !CreateTagSchema.safeParse({ label: "Bug", color: "red" }).success,
+);
+check("tag schema: a negative sort order is rejected", !CreateTagSchema.safeParse({ label: "Bug", sort_order: -1 }).success);
+const TAG_ICON = CreateTagSchema.safeParse({ label: "Bug", icon: "  flame  " });
+check("tag icon schema: any lucide id is accepted and trimmed", TAG_ICON.success && TAG_ICON.data.icon === "flame");
+check("tag icon schema: a 64-character id is the length limit", CreateTagSchema.safeParse({ label: "Bug", icon: "x".repeat(64) }).success);
+check("tag icon schema: a 65-character id is rejected", !CreateTagSchema.safeParse({ label: "Bug", icon: "x".repeat(65) }).success);
+check("tag icon schema: a blank id is rejected, not stored as empty text", !CreateTagSchema.safeParse({ label: "Bug", icon: "   " }).success);
+check("tag icon schema: null is accepted and omitted stays omitted", CreateTagSchema.parse({ label: "Bug", icon: null }).icon === null && !("icon" in CreateTagSchema.parse({ label: "Bug" })));
+check("tag icon schema: the update patch may carry an id, a null or neither", UpdateTagSchema.safeParse({ icon: "flame" }).success && UpdateTagSchema.parse({ icon: null }).icon === null && UpdateTagSchema.safeParse({}).success);
+check("tag icon schema: the patch rejects a blank id too", !UpdateTagSchema.safeParse({ icon: "" }).success);
+check("tag schema: the update body is fully optional", UpdateTagSchema.safeParse({}).success && !UpdateTagSchema.safeParse({ label: "" }).success);
+check(
+    "tag mutation schema: a positive tag id is accepted, zero and numeric strings are not",
+    TaskTagMutationSchema.safeParse({ tag_id: 7 }).success &&
+        !TaskTagMutationSchema.safeParse({ tag_id: 0 }).success &&
+        !TaskTagMutationSchema.safeParse({ tag_id: "7" }).success,
 );
 
 if (failures > 0) {
