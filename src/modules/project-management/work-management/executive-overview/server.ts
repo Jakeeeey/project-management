@@ -172,7 +172,7 @@ export async function liveRead(path: string[], workspace: Workspace, period: Rea
   const reader = new LiveReader((collection, fields, filter, limit, page) => readRows<Record<string, unknown>>(collection, fields, filter, limit, page));
   return reader.directory(actor, workspace);
  }
- if (route === "notifications") return readRows("pm_work_notification", ["id", "recipient_id", "event_id", "type", "read_at", "created_at"], { recipient_id: { _eq: actor.id } }, 100);
+ if (route === "notifications") return readRows("pm_work_notification", ["id", "recipient_id", "event_id", "type", "payload", "read_at", "created_at"], { recipient_id: { _eq: actor.id } }, 100);
  const supported = ["occurrences", "occurrences/calendar", "occurrences/backlog", "reviews", "analytics/company", "analytics/employees", "analytics/departments", "analytics/trends"];
  requireRule(supported.includes(route), 503, "LIVE_READ_NOT_READY", "This live read endpoint is not implemented yet. Calendar and reporting reads are available; no write was attempted.");
  if (path[0] === "analytics") requireRule(workspace === "executive" && workspaceAllowed(actor, "executive"), 403, "FORBIDDEN", "Executive access is required.");

@@ -17,7 +17,7 @@ const definition: WorkspaceDefinition = {
  workspace: "assignor",
  title: "Assignment Center",
  description: "Coordinate work. Track individual deliverables. Keep every change accountable.",
- views: ["Calendar", "All Tasks", "By Employee"],
+ views: ["Calendar", "All Tasks", "By Employee", "For review"],
  initialView: "All Tasks",
  progressLabel: "Team delivery progress",
  Overview: AssignmentOverview,

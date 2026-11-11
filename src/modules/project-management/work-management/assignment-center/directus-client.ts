@@ -20,7 +20,11 @@ export class DirectusClient implements WorkDatabase {
   if (!response.ok) {
    const error = await response.json().catch(() => ({}));
    const code = error.errors?.[0]?.extensions?.code ?? "DIRECTUS_ERROR";
-   throw new WorkError(502, code, `Data service request failed (${response.status}, ${code}).`);
+   // Keep the operation context: Directus errors often otherwise collapse to
+   // an unhelpful generic 500 in a multi-step amendment.
+   const operation = `${method} ${path.split("?")[0]}`;
+   console.error("[work-management] Directus operation failed", { operation, status: response.status, code });
+   throw new WorkError(502, code, `Data service request failed during ${operation} (${response.status}, ${code}).`);
   }
   if (response.status === 204) return null;
   const payload = await response.json(); return payload.data;

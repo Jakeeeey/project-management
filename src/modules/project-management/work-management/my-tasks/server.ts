@@ -6,7 +6,7 @@ import { requireRule, WorkError, workspaceAllowed } from "./policies";
 import type { Bootstrap, Employee, Role, Workspace } from "./types";
 import { isActiveEmployeeFlag } from "./employee-policy";
 import { LiveReader, type ReadPeriod } from "./live-read";
-import { addDays, parseUtcTimestamp, wallToUtc } from "./recurrence";
+import { addDays, localDate, parseUtcTimestamp } from "./recurrence";
 import { resolveWorkspaceReadAccess } from "./workspace-access";
 import { DirectusClient } from "./directus-client";
 import { TaskWriter } from "./task-writer";
@@ -172,7 +172,7 @@ export async function liveRead(path: string[], workspace: Workspace, period: Rea
   const reader = new LiveReader((collection, fields, filter, limit, page) => readRows<Record<string, unknown>>(collection, fields, filter, limit, page));
   return reader.directory(actor, workspace);
  }
- if (route === "notifications") return readRows("pm_work_notification", ["id", "recipient_id", "event_id", "type", "read_at", "created_at"], { recipient_id: { _eq: actor.id } }, 100);
+ if (route === "notifications") return readRows("pm_work_notification", ["id", "recipient_id", "event_id", "type", "payload", "read_at", "created_at"], { recipient_id: { _eq: actor.id } }, 100);
  const supported = ["occurrences", "occurrences/calendar", "occurrences/backlog", "reviews", "analytics/company", "analytics/employees", "analytics/departments", "analytics/trends"];
  requireRule(supported.includes(route), 503, "LIVE_READ_NOT_READY", "This live read endpoint is not implemented yet. Calendar and reporting reads are available; no write was attempted.");
  if (path[0] === "analytics") requireRule(workspace === "executive" && workspaceAllowed(actor, "executive"), 403, "FORBIDDEN", "Executive access is required.");
@@ -180,8 +180,9 @@ export async function liveRead(path: string[], workspace: Workspace, period: Rea
  const reviewView = route === "reviews" && workspace !== "my-tasks";
  const engine = await reader.load(actor, workspace, period, reviewView);
  if (route === "occurrences" || route === "occurrences/calendar" || route === "reviews" || route === "occurrences/backlog") {
-  const rows = route === "occurrences/backlog" ? engine.list("1900-01-01", period.from, period.employee).filter(o => !o.first_submission_id && o.status !== "CANCELLED" && o.due_at < engine.now && o.due_at < wallToUtc(period.from, "00:00", "Asia/Manila"))
-   : engine.list(period.from, period.to, period.employee, reviewView);
+  const today = addDays(localDate(new Date(engine.now)), 1);
+  const rows = route === "occurrences/backlog" ? engine.list("1900-01-01", today, period.employee).filter(o => !o.first_submission_id && o.status !== "CANCELLED" && o.due_at < engine.now)
+   : engine.list(period.from, period.to, period.employee, reviewView).filter(o => route !== "reviews" || !!o.first_submission_id);
   // Final boundary check: My Tasks can only ever return the signed-in assignee's rows.
   const scoped = workspace === "my-tasks" ? rows.filter(o => o.assignee.id === actor.id) : rows;
   return { items: scoped.slice((period.page - 1) * period.limit, period.page * period.limit), total: scoped.length, summary: engine.summary(period.from, period.to, period.employee) };

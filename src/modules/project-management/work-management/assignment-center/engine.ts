@@ -77,7 +77,10 @@ export class WorkEngine {
  }
  generate(task: Task, request: string, futureOnly = false) {
   if (task.lifecycle_status !== "ACTIVE") return;
-  const through = addDays(localDate(this.now, task.schedule.timezone), 60);
+  // Persist monthly occurrences across the year so month navigation can load them.
+  // Keep higher-frequency schedules bounded to avoid excessive rows per assignment.
+  const monthly = task.schedule.frequency === "MONTHLY" || task.schedule.frequency === "CUSTOM" && task.schedule.interval_unit === "MONTH";
+  const through = addDays(localDate(this.now, task.schedule.timezone), monthly ? 400 : 60);
   const dates = scheduleDates(task.schedule, through);
   for (const assignment of this.state.assignments.filter(a => a.task_id === task.id && a.status === "ACTIVE")) {
    for (const date of dates) {
