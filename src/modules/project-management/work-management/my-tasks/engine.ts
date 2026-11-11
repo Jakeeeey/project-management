@@ -191,11 +191,13 @@ export class WorkEngine {
   return { acknowledged: true };
  }
  list(from: string, to: string, employee?: string, review = false): OccurrenceView[] {
+  const includeReview = review && this.workspace !== "my-tasks";
   return this.state.occurrences.flatMap(o => {
    const task = this.state.tasks.find(t => t.id === o.task_id)!; const assignment = this.state.assignments.find(a => a.id === o.assignment_id)!;
    const assignee = this.state.employees.find(e => e.id === assignment.assignee_user_id)!;
    const date = localDate(o.due_at);
-   if (!canRead(this.actor, task, assignment, this.workspace, review) || review && ![task.created_by, task.report_to_user_id].includes(this.actor.id) || date < from || date > to || employee && employee !== assignee.id) return [];
+   const ownScope = this.workspace !== "my-tasks" || assignment.assignee_user_id === this.actor.id;
+   if (!ownScope || !canRead(this.actor, task, assignment, this.workspace, includeReview) || includeReview && ![task.created_by, task.report_to_user_id].includes(this.actor.id) || date < from || date > to || employee && employee !== assignee.id) return [];
    return [{ ...o, task, assignee, submissions: this.state.submissions.filter(s => s.occurrence_id === o.id) }];
   }).sort((a, b) => a.due_at.localeCompare(b.due_at));
  }

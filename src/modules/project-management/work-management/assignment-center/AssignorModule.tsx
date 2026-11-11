@@ -10,7 +10,7 @@ import { assignmentAvailability } from "./availability";
 function AssignorActions({ bootstrap, onCreate }: WorkspaceActionsProps) {
  const canOpen = !!bootstrap && (bootstrap.capabilities.assign || bootstrap.workspace_access?.includes("assignor") === true || bootstrap.actor.read_workspaces?.includes("assignor") === true);
  const availability = bootstrap ? assignmentAvailability(bootstrap) : null;
- return <div className="space-y-1 text-right"><Button disabled={!canOpen} onClick={onCreate}><Plus className="mr-2 size-4" />Create &amp; Assign Task</Button>{availability && !availability.canSave && canOpen && <p className="text-xs text-muted-foreground">Form preview · saving unavailable</p>}</div>;
+ return <div className="space-y-1 text-right"><Button disabled={!canOpen} onClick={onCreate}><Plus className="mr-2 size-4" />Create &amp; Assign Task</Button>{availability && !availability.canSave && canOpen && <p className="text-xs text-muted-foreground">Read-only · saving unavailable</p>}</div>;
 }
 
 const definition: WorkspaceDefinition = {

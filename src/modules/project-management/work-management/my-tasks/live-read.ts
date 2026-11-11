@@ -8,7 +8,7 @@ type Row = Record<string, unknown>;
 export type ReadCollection = (collection: string, fields: string[], filter: Record<string, unknown>, limit: number, page?: number) => Promise<Row[]>;
 export interface ReadPeriod { from: string; to: string; page: number; limit: number; employee?: string }
 const id = (value: unknown) => {
- requireRule(typeof value === "string" || typeof value === "number" && Number.isSafeInteger(value), 502, "INVALID_DATABASE_ID", "Directus returned an invalid or unsafe identifier.");
+ requireRule(typeof value === "string" || typeof value === "number" && Number.isSafeInteger(value), 502, "INVALID_DATABASE_ID", "The stored record has an invalid identifier.");
  return String(value);
 };
 const utc = (value: unknown): string => {
@@ -61,8 +61,7 @@ export class LiveReader {
   requireRule(row, 404, "NOT_FOUND", "Occurrence not found.");
   const date = localDate(utc(row.due_at));
   const period = { from: date, to: date, page: 1, limit: 100 };
-  let engine = await this.load(actor, workspace, period);
-  if (!engine.state.occurrences.some(o => o.id === occurrenceId) && workspace === "my-tasks") engine = await this.load(actor, workspace, period, true);
+  const engine = await this.load(actor, workspace, period);
   const occurrence = engine.occurrence(occurrenceId); // Authorize before exposing files/history.
   const submissions = engine.state.submissions.filter(s => s.occurrence_id === occurrenceId);
   const [files, references, events, comments] = await Promise.all([
@@ -93,7 +92,8 @@ export class LiveReader {
   requireRule(workspaceAllowed(actor, workspace), 403, "FORBIDDEN", "You do not have access to this workspace.");
   const state = emptyState();
   let assignmentFilter: Row;
-  if (workspace === "my-tasks" && !review) assignmentFilter = { assignee_user_id: { _eq: actor.id } };
+  // My Tasks is strictly the signed-in assignee's own work; reviewer broadening is never applied here.
+  if (workspace === "my-tasks") assignmentFilter = { assignee_user_id: { _eq: actor.id } };
   else if (review) {
    const tasks = await this.all("pm_work_task", ["id"], { _or: [{ created_by: { _eq: actor.id } }, { report_to_user_id: { _eq: actor.id } }] });
    assignmentFilter = { task_id: { _in: tasks.map(t => id(t.id)) } };
@@ -101,7 +101,7 @@ export class LiveReader {
   } else if (workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true) assignmentFilter = {};
   else assignmentFilter = actor.department_id ? { department_id_at_assignment: { _eq: actor.department_id } } : { assignee_user_id: { _eq: actor.id } };
   if (period.employee) {
-   requireRule(workspace !== "my-tasks" || review || period.employee === actor.id, 403, "OWN_TASKS_ONLY", "My Tasks only shows your own obligations.");
+   requireRule(workspace !== "my-tasks" || period.employee === actor.id, 403, "OWN_TASKS_ONLY", "My Tasks only shows your own obligations.");
    assignmentFilter = { _and: [assignmentFilter, { assignee_user_id: { _eq: period.employee } }] };
   }
   const assignments = await this.all("pm_work_assignment", ["id", "task_id", "assignee_user_id", "department_id_at_assignment", "status"], assignmentFilter);

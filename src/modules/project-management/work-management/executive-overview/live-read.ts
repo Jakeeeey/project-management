@@ -8,7 +8,7 @@ type Row = Record<string, unknown>;
 export type ReadCollection = (collection: string, fields: string[], filter: Record<string, unknown>, limit: number, page?: number) => Promise<Row[]>;
 export interface ReadPeriod { from: string; to: string; page: number; limit: number; employee?: string }
 const id = (value: unknown) => {
- requireRule(typeof value === "string" || typeof value === "number" && Number.isSafeInteger(value), 502, "INVALID_DATABASE_ID", "Directus returned an invalid or unsafe identifier.");
+ requireRule(typeof value === "string" || typeof value === "number" && Number.isSafeInteger(value), 502, "INVALID_DATABASE_ID", "The stored record has an invalid identifier.");
  return String(value);
 };
 const utc = (value: unknown): string => {
