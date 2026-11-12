@@ -827,6 +827,11 @@ export function TasksModule({ userId }: TasksModuleProps) {
         setSubtaskParentId(detailTaskId);
     }, [detailTaskId]);
 
+    /** The row's `+` names its own parent, so the sheet does not have to be open first. */
+    const handleAddSubtaskFor = useCallback((taskId: number): void => {
+        setSubtaskParentId(taskId);
+    }, []);
+
     const handleDeleteTask = useCallback(
         async (task: TaskListItem): Promise<boolean> => deleteTask(task.id, task.title),
         [deleteTask],
@@ -1145,6 +1150,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onCancelCellEdit={handleCancelCellEdit}
                 onCommitCellEdit={handleCellCommit}
                 onEditTags={handleOpenTags}
+                onAddSubtask={handleAddSubtaskFor}
                 renderActions={renderRowActions}
                 aria-label="Task list"
             />

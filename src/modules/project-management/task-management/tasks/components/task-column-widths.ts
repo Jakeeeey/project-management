@@ -40,11 +40,12 @@ export type TaskColumnKey =
  * a `+N` pill, so 104px already fits the widest cell and 180 left a band of dead space beside the
  * icons. The same reasoning shrinks its floor.
  *
- * `expand` is the exception: it also holds the drag handle, so it is 76 rather than the chevron's
- * own width — the widened gutter is what keeps the handle and the accordion from colliding.
+ * `expand` now holds only the drag handle — the chevron moved into the title cell so it travels
+ * with the name it expands — so its default is the handle plus cell padding, not the old two-control
+ * gutter.
  */
 export const DEFAULT_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
-    expand: 76,
+    expand: 44,
     title: 220,
     assignees: 160,
     start: 160,
@@ -64,8 +65,8 @@ export const DEFAULT_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
  * `NON_RESIZABLE_TASK_COLUMN_KEYS` — but it stays here so the record remains total over the union.)
  */
 export const MIN_TASK_COLUMN_WIDTHS: Record<TaskColumnKey, number> = {
-    expand: 68,
-    title: 160,
+    expand: 40,
+    title: 200,
     assignees: 120,
     start: 120,
     due: 120,

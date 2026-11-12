@@ -86,8 +86,13 @@ import type { TaskField } from "../hooks/useTasks";
 export interface FilterBuilderOption {
     readonly id: number;
     readonly label: string;
-    /** Stored 6-digit hex, or `null` — rendered as the option's leading dot. */
+    /** Stored 6-digit hex, or `null` — tints the option's leading glyph. */
     readonly color: string | null;
+    /**
+     * Stored icon name, or `null`. Passed straight through: a status, priority or tag that carries a
+     * glyph shows that glyph in the value list instead of a bare coloured marker.
+     */
+    readonly icon?: string | null;
 }
 
 /** A department member the assignee value control renders. */
@@ -139,7 +144,13 @@ function ChoiceValueControl({
     readonly onChange: (value: string | null) => void;
 }) {
     const comboboxOptions = useMemo<TaskComboboxOption[]>(
-        () => options.map((option) => ({ value: String(option.id), label: option.label, color: option.color })),
+        () =>
+            options.map((option) => ({
+                value: String(option.id),
+                label: option.label,
+                color: option.color,
+                icon: option.icon ?? null,
+            })),
         [options],
     );
 

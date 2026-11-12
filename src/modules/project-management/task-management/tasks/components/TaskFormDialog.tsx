@@ -200,6 +200,7 @@ export function TaskFormDialog({
                 value: String(option.id),
                 label: option.label,
                 color: option.color,
+                icon: option.icon,
             })),
         [catalogs.statuses],
     );
@@ -209,6 +210,7 @@ export function TaskFormDialog({
                 value: String(option.id),
                 label: option.label,
                 color: option.color,
+                icon: option.icon,
             })),
         [catalogs.priorities],
     );

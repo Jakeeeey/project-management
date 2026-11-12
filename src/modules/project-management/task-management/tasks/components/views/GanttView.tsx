@@ -1006,7 +1006,7 @@ export function GanttView({ items, catalogs, fields, memberNameById, isLoading, 
         }
         return catalogs.tags
             .filter((tag) => seen.has(tag.id))
-            .map((tag) => ({ value: String(tag.id), label: tag.label, color: tag.color }));
+            .map((tag) => ({ value: String(tag.id), label: tag.label, color: tag.color, icon: tag.icon }));
     }, [items, catalogs.tags]);
 
     /**
