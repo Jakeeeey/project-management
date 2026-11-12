@@ -211,6 +211,15 @@ export interface UseTasksResult {
     readonly capabilities: Capabilities | null;
     /** The fetcher alias, standardized on `refresh`. */
     readonly refresh: () => Promise<void>;
+    /**
+     * Replaces ONE row with the server's copy of it, in place.
+     *
+     * A field edit answers with the whole updated row, so merging it keeps every dependent surface
+     * (rollups, filters, the other views) correct without re-reading the entire list. A row that is
+     * not in the current list is ignored: the payload is scoped to one list, and an edit cannot
+     * move a task between them.
+     */
+    readonly mergeTaskRow: (raw: unknown) => void;
 }
 
 /** `true` for every `TINYINT(1)` shape Directus can hand back; `false` for anything unexpected. */
@@ -471,6 +480,37 @@ export function parseTaskFieldValues(raw: unknown): TaskFieldValue[] {
     return values;
 }
 
+/** Narrows ONE route row into the shape the UI renders, or `null` when it carries no usable id. */
+function toTaskListItem(entry: Record<string, unknown>): TaskListItem | null {
+    const id = toPositiveInt(entry.id);
+    if (id === null) return null;
+
+    return {
+        id,
+        parent_id: toPositiveInt(entry.parent_id),
+        list_id: toNumber(entry.list_id),
+        sort_order: toNumber(entry.sort_order),
+        title: typeof entry.title === "string" ? entry.title : "",
+        description: toNullableString(entry.description),
+        start_date: toNullableString(entry.start_date),
+        end_date: toNullableString(entry.end_date),
+        status_id: toNumber(entry.status_id),
+        priority_id: toNumber(entry.priority_id),
+        status: toCatalogRef(entry.status_label, entry.status_color, entry.status_icon),
+        priority: toCatalogRef(entry.priority_label, entry.priority_color, entry.priority_icon),
+        can_edit: readFlag(entry.can_edit),
+        can_delete: readFlag(entry.can_delete),
+        assignees: toAssigneeRefs(entry.assignees),
+        tags: toTagRefs(entry.tags),
+        attachments: toAttachmentRefs(entry.attachments),
+        custom_values: parseTaskFieldValues(entry.custom_values),
+        created_at: toNullableString(entry.created_at),
+        created_by: toPositiveInt(entry.created_by),
+        updated_at: toNullableString(entry.updated_at),
+        updated_by: toPositiveInt(entry.updated_by),
+    };
+}
+
 /** Narrows an arbitrary route payload into the rows the UI renders, dropping malformed entries. */
 function toTaskListItems(raw: unknown): TaskListItem[] {
     if (!Array.isArray(raw)) return [];
@@ -478,33 +518,8 @@ function toTaskListItems(raw: unknown): TaskListItem[] {
     const items: TaskListItem[] = [];
     for (const entry of raw) {
         if (!isRecord(entry)) continue;
-        const id = toPositiveInt(entry.id);
-        if (id === null) continue;
-
-        items.push({
-            id,
-            parent_id: toPositiveInt(entry.parent_id),
-            list_id: toNumber(entry.list_id),
-            sort_order: toNumber(entry.sort_order),
-            title: typeof entry.title === "string" ? entry.title : "",
-            description: toNullableString(entry.description),
-            start_date: toNullableString(entry.start_date),
-            end_date: toNullableString(entry.end_date),
-            status_id: toNumber(entry.status_id),
-            priority_id: toNumber(entry.priority_id),
-            status: toCatalogRef(entry.status_label, entry.status_color, entry.status_icon),
-            priority: toCatalogRef(entry.priority_label, entry.priority_color, entry.priority_icon),
-            can_edit: readFlag(entry.can_edit),
-            can_delete: readFlag(entry.can_delete),
-            assignees: toAssigneeRefs(entry.assignees),
-            tags: toTagRefs(entry.tags),
-            attachments: toAttachmentRefs(entry.attachments),
-            custom_values: parseTaskFieldValues(entry.custom_values),
-            created_at: toNullableString(entry.created_at),
-            created_by: toPositiveInt(entry.created_by),
-            updated_at: toNullableString(entry.updated_at),
-            updated_by: toPositiveInt(entry.updated_by),
-        });
+        const item = toTaskListItem(entry);
+        if (item !== null) items.push(item);
     }
     return items;
 }
@@ -601,6 +616,22 @@ export function useTasks(listId: number | null = null): UseTasksResult {
         await fetchTasks();
     }, [fetchTasks]);
 
+    const mergeTaskRow = useCallback((raw: unknown): void => {
+        if (!isRecord(raw)) return;
+        const row = toTaskListItem(raw);
+        if (row === null) return;
+
+        setItems((previous) => {
+            let found = false;
+            const next = previous.map((item) => {
+                if (item.id !== row.id) return item;
+                found = true;
+                return row;
+            });
+            return found ? next : previous;
+        });
+    }, []);
+
     useEffect(() => {
         void refresh();
     }, [refresh]);
@@ -622,5 +653,6 @@ export function useTasks(listId: number | null = null): UseTasksResult {
         error,
         capabilities,
         refresh,
+        mergeTaskRow,
     };
 }

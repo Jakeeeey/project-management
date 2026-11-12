@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react
 
 import { Input } from "@/components/ui/input";
 import {
+    TASK_COMBOBOX_POPUP_SELECTOR,
     TaskCombobox,
     type TaskComboboxOption,
 } from "./TaskCombobox";
@@ -227,7 +228,7 @@ function ChoiceCellEditor({
             const target = event.target;
             if (!(target instanceof Element)) return;
             if (containerRef.current?.contains(target) === true) return;
-            if (target.closest('[data-slot="combobox-content"]') !== null) return;
+            if (target.closest(TASK_COMBOBOX_POPUP_SELECTOR) !== null) return;
             onCancel();
         };
 

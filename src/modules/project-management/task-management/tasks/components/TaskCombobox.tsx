@@ -113,9 +113,19 @@ export interface TaskComboboxProps {
     readonly showStatusIcon?: boolean;
 }
 
+/** Keys that move cmdk's highlight, i.e. proof the reader picked a row on purpose. */
+const NAVIGATION_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End", "PageDown", "PageUp"]);
+
 /** The three modal surfaces this module opens; their content elements are valid portal targets. */
 const MODAL_CONTENT_SELECTOR =
     '[data-slot="dialog-content"], [data-slot="sheet-content"], [data-slot="alert-dialog-content"]';
+
+/**
+ * The portalled popup element, exported so a caller that must tell "inside the list" from "outside
+ * the control" reads the slot from here instead of hard-coding it — a stale copy of this string
+ * made every inline cell editor cancel on pointer-down before the option's click could commit.
+ */
+export const TASK_COMBOBOX_POPUP_SELECTOR = '[data-slot="task-combobox-content"]';
 
 /** Labels, colours and icons keyed by option value, so the render pass does not scan the array per row. */
 function indexOptions(options: readonly TaskComboboxOption[]): {
@@ -154,6 +164,17 @@ export function TaskCombobox({
     const { labels, colors, icons } = React.useMemo(() => indexOptions(options), [options]);
 
     const [open, setOpen] = React.useState(false);
+    /**
+     * Whether the reader has moved the highlight since the popup opened.
+     *
+     * cmdk highlights the FIRST option as soon as the list exists — a cosmetic default, not a
+     * choice — while the row that carries the check is the real value. Enter would therefore commit
+     * the top option (verified: priority "high" reopened and Enter writes `priority_id` for "low"),
+     * so an un-navigated Enter only closes, leaving the current value alone.
+     */
+    const [hasNavigated, setHasNavigated] = React.useState(false);
+    /** The search text, so a typed query counts as intent even without an arrow key. */
+    const [query, setQuery] = React.useState("");
     const [container, setContainer] = React.useState<HTMLElement | null>(null);
     const rootRef = React.useRef<HTMLDivElement>(null);
     /** Ties the trigger to the list for assistive tech: `combobox` requires both aria props. */
@@ -170,10 +191,27 @@ export function TaskCombobox({
             if (next) {
                 const modal = rootRef.current?.closest(MODAL_CONTENT_SELECTOR);
                 setContainer(modal instanceof HTMLElement ? modal : null);
+                setHasNavigated(false);
+                setQuery("");
             }
             setOpen(next);
         },
         [disabled],
+    );
+
+    const handleCommandKeyDown = React.useCallback((event: React.KeyboardEvent): void => {
+        if (NAVIGATION_KEYS.has(event.key)) setHasNavigated(true);
+    }, []);
+
+    const handleInputKeyDown = React.useCallback(
+        (event: React.KeyboardEvent): void => {
+            if (event.key !== "Enter" || hasNavigated || query !== "") return;
+            // Stop cmdk from selecting the default-highlighted first option.
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+        },
+        [hasNavigated, query],
     );
 
     const selectedLabel = value === null ? null : labels.get(value) ?? value;
@@ -251,10 +289,13 @@ export function TaskCombobox({
                             "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
                         )}
                     >
-                        <Command loop>
+                        <Command loop onKeyDown={handleCommandKeyDown}>
                             <CommandInput
                                 placeholder={searchPlaceholder}
                                 aria-label={`Search ${ariaLabel}`}
+                                value={query}
+                                onValueChange={setQuery}
+                                onKeyDown={handleInputKeyDown}
                             />
                             <CommandList
                                 id={listId}
@@ -275,7 +316,6 @@ export function TaskCombobox({
                                             // selection unambiguous while the label stays searchable.
                                             value={option.value}
                                             keywords={[option.label]}
-                                            data-selected={option.value === value || undefined}
                                             onSelect={() => {
                                                 onValueChange(option.value);
                                                 setOpen(false);

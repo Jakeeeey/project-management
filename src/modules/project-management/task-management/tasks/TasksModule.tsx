@@ -14,16 +14,20 @@ import { TaskFormDialog, type TaskBreadcrumb } from "./components/TaskFormDialog
 import { TaskListSwitcher } from "./components/TaskListSwitcher";
 import { DEFAULT_TASK_PAGE_SIZE, TaskPagination } from "./components/TaskPagination";
 import { TaskTree } from "./components/TaskTree";
+import { SortableTaskRow } from "./components/tree-dnd/SortableTaskRow";
+import { TreeDndProvider } from "./components/tree-dnd/TreeDndProvider";
 import { TaskTagsDialog } from "./components/TaskTagsDialog";
 import { TasksHeaderActions } from "./components/TasksHeaderActions";
 import { TasksToolbar } from "./components/TasksToolbar";
 import {
-    anyClauseActive,
-    cloneClausesForApply,
-    rowMatchesClauses,
-    type FilterClause,
+    anyGroupActive,
+    cloneGroupsForApply,
+    failsExcludingGroup,
+    rowMatchesFilter,
+    type FilterGroup,
     type SavedTaskFilter,
 } from "./components/task-filter";
+import { knownGroups } from "./components/task-filter-state";
 import { TasksViewTabs } from "./components/TasksViewTabs";
 import { BoardView } from "./components/views/BoardView";
 import { CalendarView } from "./components/views/CalendarView";
@@ -32,7 +36,7 @@ import { GanttView } from "./components/views/GanttView";
 import { ProgressView } from "./components/views/ProgressView";
 import { TeamView } from "./components/views/TeamView";
 import type { CellEditRequest } from "./components/TaskCellEditor";
-import type { TaskRowPatch, TaskRowView } from "./components/TaskRow";
+import type { TaskRowPatch, TaskRowProps, TaskRowView } from "./components/TaskRow";
 import type { TaskViewProps, TasksViewId } from "./types/task-view";
 import { useAssignees } from "./hooks/useAssignees";
 import { useSavedTaskFilters } from "./hooks/useSavedTaskFilters";
@@ -41,14 +45,14 @@ import {
     type TaskCatalogOption,
     type TaskCatalogRef,
     type TaskCatalogs,
-    type TaskField,
     type TaskListItem,
 } from "./hooks/useTasks";
 import { useTaskMutations } from "./hooks/useTaskMutations";
+import { useTaskFilterState } from "./hooks/useTaskFilterState";
 import { useTaskLists } from "./hooks/useTaskLists";
 import { useTaskTree, type TaskTreeRow } from "./hooks/useTaskTree";
 import { useTags } from "./hooks/useTags";
-import type { CreateTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
+import type { CreateTaskInput, MoveTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
 
 /**
  * The Tasks client orchestrator.
@@ -93,30 +97,15 @@ function normaliseSearch(value: string): string {
     return value.trim().toLowerCase();
 }
 
-/**
- * Does one row satisfy the active search and every active clause?
- *
- * The search term is its own thing — it is not a clause and is never persisted. Clauses combine with
- * AND, and the per-clause semantics (empty, contains, choice ids, the assignee list) live in
- * `task-filter.ts`, so this stays the row-level conjunction alone.
- */
-function rowMatches(
-    row: TaskTreeRow,
-    search: string,
-    clauses: readonly FilterClause[],
-    fields: readonly TaskField[],
-): boolean {
-    const term = normaliseSearch(search);
-    if (term !== "" && !row.title.toLowerCase().includes(term)) return false;
-    return rowMatchesClauses(row, clauses, fields);
-}
-
 function cellKey(taskId: number, column: string): string {
     return `${taskId}:${column}`;
 }
 
 /** Nothing is saving — one shared identity so the common render hands the rows no new map. */
 const NO_CELL_PATCHES: ReadonlyMap<string, TaskRowPatch> = new Map();
+
+/** Nothing is collapsed / expanded — one shared identity so the derived sets stay stable. */
+const EMPTY_ID_SET: ReadonlySet<number> = new Set();
 
 /** The catalog ref an optimistic status/priority cell shows while the picked id is being saved. */
 function catalogRefFor(options: readonly TaskCatalogOption[], id: number): TaskCatalogRef | null {
@@ -318,6 +307,22 @@ export interface TasksModuleProps {
     readonly userId: number | null;
 }
 
+/**
+ * The row a drop just moved, plus the `items` array the payload was computed against. Remembering
+ * the array is what makes the optimistic patch self-expiring: a refetch always hands back a new
+ * array, so a rejected move reverts without an extra code path.
+ */
+interface PendingTreeMove {
+    readonly taskId: number;
+    readonly payload: MoveTaskInput;
+    readonly items: readonly TaskListItem[];
+}
+
+/** Stable row renderer: the sortable wrapper the dnd engine needs, defined once. */
+function SortableRow(props: TaskRowProps) {
+    return <SortableTaskRow {...props} />;
+}
+
 export function TasksModule({ userId }: TasksModuleProps) {
     /**
      * The switcher's source, and the owner of the one-shot default-list bootstrap: a department
@@ -342,7 +347,8 @@ export function TasksModule({ userId }: TasksModuleProps) {
         return (lists.find((list) => list.is_default) ?? lists[0])?.id ?? null;
     }, [selectedListId, lists]);
 
-    const { items, catalogs, fields, isLoading, isRefreshing, error, capabilities, refresh } = useTasks(activeListId);
+    const { items, catalogs, fields, isLoading, isRefreshing, error, capabilities, refresh, mergeTaskRow } =
+        useTasks(activeListId);
     const {
         members,
         memberNameById,
@@ -367,22 +373,49 @@ export function TasksModule({ userId }: TasksModuleProps) {
         createTask,
         updateTask,
         deleteTask,
+        moveTask,
         uploadAttachment,
         detachAttachment,
         clearError,
-    } = useTaskMutations({ onChanged: refresh });
+    } = useTaskMutations({ onChanged: refresh, onTaskUpdated: mergeTaskRow });
+    /**
+     * The dropped row renders in its new place immediately; the refetch that `moveTask` triggers
+     * replaces it a moment later. Expiring on `items` identity keeps the two from disagreeing.
+     */
+    const [pendingMove, setPendingMove] = useState<PendingTreeMove | null>(null);
+    const activeMove = pendingMove !== null && pendingMove.items === items ? pendingMove : null;
+    const displayItems = useMemo(() => {
+        if (activeMove === null) {
+            return items;
+        }
+        const { taskId, payload } = activeMove;
+        const siblingOrder = new Map(payload.sibling_ids.map((id, index) => [id, index]));
+        return items.map((row) => {
+            const sortOrder = siblingOrder.get(row.id);
+            if (row.id === taskId) {
+                return {
+                    ...row,
+                    parent_id: payload.parent_id,
+                    sort_order: sortOrder ?? row.sort_order,
+                };
+            }
+            return sortOrder === undefined ? row : { ...row, sort_order: sortOrder };
+        });
+    }, [items, activeMove]);
     const { roots, expandedIds, toggleExpand, expandAll, collapseAll } = useTaskTree(
-        items,
+        displayItems,
         memberNameById,
     );
     const { savedFilters, saveFilter, deleteFilter } = useSavedTaskFilters();
 
-    const [search, setSearch] = useState("");
     /**
-     * The active filter clauses, combined with AND. A clause with no field — or a value-taking clause
-     * with no value — is inactive, which is what keeps picking a field from blanking the list.
+     * The live filter, shared with every other tab and persisted per browser — see
+     * `useTaskFilterState`. It lives here rather than in the toolbar so switching tabs and reloading
+     * both keep it. Groups combine with AND; rows inside a group combine by the group's own setting.
+     * A clause with no field — or a value-taking clause with no value — is inactive, which is what
+     * keeps picking a field from blanking the list.
      */
-    const [clauses, setClauses] = useState<readonly FilterClause[]>([]);
+    const { search, groups, onSearchChange, onGroupsChange, clearFilters } = useTaskFilterState();
     const [page, setPage] = useState(1);
     /**
      * Roots per page. It is an INPUT to the page set, so changing it resets to page 1 exactly as a
@@ -468,24 +501,91 @@ export function TasksModule({ userId }: TasksModuleProps) {
         return counts;
     }, [items]);
 
-    const isFiltering = normaliseSearch(search) !== "" || anyClauseActive(clauses);
+    /** The custom columns this department still has — see `knownGroups`. */
+    const fieldIds = useMemo<ReadonlySet<number>>(() => new Set(fields.map((field) => field.id)), [fields]);
 
-    const filteredRoots = useMemo(
-        () => pruneForest(roots, (row) => rowMatches(row, search, clauses, fields)),
-        [roots, search, clauses, fields],
+    /** Every group that still names a live column — the set both the filter and the tree read. */
+    const appliedGroups = useMemo(() => knownGroups(groups, fieldIds), [groups, fieldIds]);
+
+    const isFiltering = normaliseSearch(search) !== "" || anyGroupActive(appliedGroups);
+
+    /**
+     * Identifies the filter currently applied. A collapse made while filtering is remembered against
+     * this key only, so it lapses the moment the filter changes and the new matches are revealed
+     * again — the same rule the Progress tab's collapse state follows.
+     */
+    const revealKey = useMemo(
+        () =>
+            `${normaliseSearch(search)}\u0000${appliedGroups
+                .map(
+                    (group) =>
+                        `${group.operator}(${group.clauses
+                            .map((clause) => `${clause.fieldKey}:${clause.operator}:${clause.value ?? ""}`)
+                            .join("\u0001")})`,
+                )
+                .join("\u0002")}`,
+        [search, appliedGroups],
     );
 
+    /** Rows the user folded away UNDER the current filter. Empty for any other filter. */
+    const [collapsedWhileFiltered, setCollapsedWhileFiltered] = useState<{
+        readonly key: string;
+        readonly ids: ReadonlySet<number>;
+    }>({ key: "", ids: EMPTY_ID_SET });
+    const collapsedFilteredIds =
+        collapsedWhileFiltered.key === revealKey ? collapsedWhileFiltered.ids : EMPTY_ID_SET;
+
+    /**
+     * The forest the List renders. Groups combine with AND; inside a group a positive row keeps its
+     * subtree and an `is not` row drops its branch — and search reveals ancestors.
+     */
+    const filteredRoots = useMemo(() => {
+        const term = normaliseSearch(search);
+        return pruneForest(roots, {
+            passesClauses: (row) => rowMatchesFilter(row, appliedGroups, fields),
+            failsExcludingClause: (row) => failsExcludingGroup(row, appliedGroups, fields),
+            ...(term === "" ? {} : { matchesSearch: (row) => row.title.toLowerCase().includes(term) }),
+        });
+    }, [roots, search, appliedGroups, fields]);
+
+    /**
+     * Rows on screen only as the ancestor path of a match. A filter selects the rows it matches and
+     * nothing else, so a parent can be visible while failing every clause; those rows are the
+     * hierarchy around a hit, and rendering them muted keeps "kept for context" from reading as
+     * "matched too". Empty when no filter or search is active.
+     */
+    const contextIds = useMemo<ReadonlySet<number>>(() => {
+        if (!isFiltering) return EMPTY_ID_SET;
+        const term = normaliseSearch(search);
+        const gating = anyGroupActive(appliedGroups);
+        const ids = new Set<number>();
+        for (const row of items) {
+            const passesFilter = !gating || rowMatchesFilter(row, appliedGroups, fields);
+            const passesSearch = term === "" || row.title.toLowerCase().includes(term);
+            if (!passesFilter || !passesSearch) ids.add(row.id);
+        }
+        return ids;
+    }, [items, isFiltering, appliedGroups, fields, search]);
+
     const autoExpandedIds = useMemo(
-        () => (isFiltering ? expandableIds(filteredRoots) : new Set<number>()),
+        () => (isFiltering ? expandableIds(filteredRoots) : EMPTY_ID_SET),
         [isFiltering, filteredRoots],
     );
 
+    /**
+     * What the tree actually renders expanded. Without a filter it is the user's own set. WITH one,
+     * the filter reveals every match's ancestors — and any row the user folded away under that same
+     * filter stays folded, which is why a collapse used to look broken while filtering: the reveal
+     * was unioned back in on every render.
+     */
     const renderExpandedIds = useMemo<ReadonlySet<number>>(() => {
-        if (autoExpandedIds.size === 0) return expandedIds;
-        const merged = new Set(expandedIds);
-        for (const id of autoExpandedIds) merged.add(id);
+        if (!isFiltering) return expandedIds;
+        if (collapsedFilteredIds.size === 0) return autoExpandedIds;
+
+        const merged = new Set(autoExpandedIds);
+        for (const id of collapsedFilteredIds) merged.delete(id);
         return merged;
-    }, [expandedIds, autoExpandedIds]);
+    }, [isFiltering, expandedIds, autoExpandedIds, collapsedFilteredIds]);
 
     /**
      * Every parent id in the WHOLE forest — the universe the `Subtasks` control's `Expanded` mode
@@ -496,19 +596,19 @@ export function TasksModule({ userId }: TasksModuleProps) {
 
     /**
      * The `Subtasks` control is a MODE, not a command, and its active option is DERIVED here rather
-     * than stored: `Expanded` holds exactly while the user's own `expandedIds` covers every
-     * expandable row. That is what keeps the checkmark honest — collapsing one row by hand drops it
-     * back to `Collapsed` with no parallel flag to fall out of sync. The filtered auto-reveal
-     * (`autoExpandedIds`) is intentionally not consulted: it is a transient view guarantee, not a
-     * user choice, so it must not make an unexpanded tree report itself as `Expanded`.
+     * than stored: `Expanded` holds exactly while every expandable row ON SCREEN is expanded. That is
+     * what keeps the checkmark honest — collapsing one row by hand drops it back to `Collapsed` with
+     * no parallel flag to fall out of sync. Under a filter the universe is the filtered forest, since
+     * the rows a filter hides cannot be expanded or collapsed by the user anyway.
      */
     const isSubtasksExpanded = useMemo(() => {
-        if (expandableRootIds.size === 0) return false;
-        for (const id of expandableRootIds) {
-            if (!expandedIds.has(id)) return false;
+        const universe = isFiltering ? autoExpandedIds : expandableRootIds;
+        if (universe.size === 0) return false;
+        for (const id of universe) {
+            if (!renderExpandedIds.has(id)) return false;
         }
         return true;
-    }, [expandableRootIds, expandedIds]);
+    }, [isFiltering, autoExpandedIds, expandableRootIds, renderExpandedIds]);
 
     /**
      * Every row the tree can render, in render order: the filtered forest with the active expansion
@@ -539,45 +639,98 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [visibleRows, currentPage, pageSize],
     );
 
-    const handleSearchChange = useCallback((value: string) => {
-        setSearch(value);
-        setPage(1);
-    }, []);
+    const handleSearchChange = useCallback(
+        (value: string) => {
+            onSearchChange(value);
+            setPage(1);
+        },
+        [onSearchChange],
+    );
 
-    const handleClausesChange = useCallback((next: readonly FilterClause[]) => {
-        setClauses(next);
-        setPage(1);
-    }, []);
+    const handleGroupsChange = useCallback(
+        (next: readonly FilterGroup[]) => {
+            onGroupsChange(next);
+            setPage(1);
+        },
+        [onGroupsChange],
+    );
 
-    /** Applying a saved set restores fresh clause rows, so its ids never collide with the live ones. */
-    const handleApplySavedFilter = useCallback((filter: SavedTaskFilter) => {
-        setClauses(cloneClausesForApply(filter.clauses));
-        setPage(1);
-    }, []);
+    /** Applying a saved set restores fresh group and row ids, so they never collide with the live ones. */
+    const handleApplySavedFilter = useCallback(
+        (filter: SavedTaskFilter) => {
+            onGroupsChange(cloneGroupsForApply(filter.groups));
+            setPage(1);
+        },
+        [onGroupsChange],
+    );
 
     const handleClearFilters = useCallback(() => {
-        setSearch("");
-        setClauses([]);
+        clearFilters();
         setPage(1);
-    }, []);
+    }, [clearFilters]);
 
     /**
-     * The `Subtasks` control's two choices drive the hook's own `expandAll` / `collapseAll`, so the
-     * toolbar writes the SAME `expandedIds` the per-row chevrons toggle. `Collapsed` clears the
-     * user's set only: a filter's ancestor reveal lives in `autoExpandedIds`, so a filtered match
-     * stays visible even while this is `Collapsed`.
+     * The `Subtasks` control's two choices. While filtering they fold UNFOLD the filtered forest,
+     * which is what the user is looking at; the hook's own set is left alone so clearing the filter
+     * returns the tree to the expansion state it had before.
      */
     const handleSubtasksExpandedChange = useCallback(
         (expanded: boolean): void => {
-            if (expanded) expandAll();
-            else collapseAll();
+            if (!isFiltering) {
+                if (expanded) expandAll();
+                else collapseAll();
+                return;
+            }
+            setCollapsedWhileFiltered({
+                key: revealKey,
+                ids: expanded ? EMPTY_ID_SET : new Set(autoExpandedIds),
+            });
         },
-        [expandAll, collapseAll],
+        [isFiltering, expandAll, collapseAll, revealKey, autoExpandedIds],
+    );
+
+    /**
+     * A chevron click. While filtering it folds the row for the duration of THIS filter, since the
+     * reveal would otherwise re-expand it on the next render.
+     */
+    const handleToggleExpand = useCallback(
+        (id: number): void => {
+            if (!isFiltering) {
+                toggleExpand(id);
+                return;
+            }
+
+            const willCollapse = renderExpandedIds.has(id);
+            setCollapsedWhileFiltered((previous) => {
+                const base = new Set(previous.key === revealKey ? previous.ids : EMPTY_ID_SET);
+                if (willCollapse) base.add(id);
+                else base.delete(id);
+                return { key: revealKey, ids: base };
+            });
+        },
+        [isFiltering, renderExpandedIds, revealKey, toggleExpand],
     );
 
     const handleRefresh = useCallback(() => {
         void refresh();
     }, [refresh]);
+
+    /**
+     * A drop persists through the pinned `{ parent_id, sibling_ids }` contract. `moveTask` refetches
+     * on success; on failure it does not, so the revert that clears the optimistic patch has to be
+     * asked for explicitly.
+     */
+    const handleTreeMove = useCallback(
+        (activeId: number, payload: MoveTaskInput): void => {
+            setPendingMove({ taskId: activeId, payload, items });
+            void moveTask(activeId, payload).then((moved) => {
+                if (!moved) {
+                    void refresh();
+                }
+            });
+        },
+        [items, moveTask, refresh],
+    );
 
     const handlePageChange = useCallback(
         (next: number) => {
@@ -945,8 +1098,8 @@ export function TasksModule({ userId }: TasksModuleProps) {
             <TasksToolbar
                 searchValue={search}
                 onSearchChange={handleSearchChange}
-                clauses={clauses}
-                onClausesChange={handleClausesChange}
+                groups={groups}
+                onGroupsChange={handleGroupsChange}
                 fields={fields}
                 statuses={catalogs.statuses}
                 priorities={catalogs.priorities}
@@ -965,11 +1118,20 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onSubtasksExpandedChange={handleSubtasksExpandedChange}
             />
 
-            <TaskTree
+            <TreeDndProvider
+                roots={filteredRoots}
+                expandedIds={renderExpandedIds}
+                allRows={items}
+                reorderDisabled={isFiltering}
+                onMove={handleTreeMove}
+            >
+                <TaskTree
                 roots={filteredRoots}
                 rows={pagedRows}
+                contextIds={contextIds}
+                renderRow={SortableRow}
                 expandedIds={renderExpandedIds}
-                onToggleExpand={toggleExpand}
+                onToggleExpand={handleToggleExpand}
                 isLoading={isLoading}
                 error={error}
                 onRetry={handleRefresh}
@@ -986,6 +1148,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 renderActions={renderRowActions}
                 aria-label="Task list"
             />
+            </TreeDndProvider>
 
             {/*
              * The pager is pinned BELOW the tree and outside its horizontal-scroll container, so one

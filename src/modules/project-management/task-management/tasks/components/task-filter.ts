@@ -5,9 +5,13 @@ import type { TaskTreeRow } from "../hooks/useTaskTree";
  * The tasks filter model: the clause the builder edits, the predicate that decides whether a row
  * satisfies it, and the per-user localStorage store of saved clause sets.
  *
- * A filter is an ARRAY OF CLAUSES combined with **AND**. Each clause is `[field] [operator] [value]`,
- * where `fieldKey` is `"status"`, `"priority"`, `"assignee"` or `"field:<id>"` for a custom column,
- * and `value` is the field's STORED string form (an option id for a Choice, `YYYY-MM-DD` for a date).
+ * A filter is a LIST OF GROUPS combined with **AND**; a group is a list of clauses combined with
+ * **AND** or **OR**. So `Tags is X` + `Status is A or Status is B` is two groups, the second one
+ * `or` — "this tag, and either status" — which a flat clause list cannot express.
+ *
+ * Each clause is `[field] [operator] [value]`, where `fieldKey` is `"status"`, `"priority"`,
+ * `"assignee"`, `"tags"` or `"field:<id>"` for a custom column, and `value` is the field's STORED
+ * string form (an option id for a Choice, `YYYY-MM-DD` for a date).
  * A clause is ACTIVE only when it names a field and — for a value-taking operator — carries a
  * non-blank value; picking a field alone therefore never blanks the list.
  *
@@ -30,6 +34,23 @@ import type { TaskTreeRow } from "../hooks/useTaskTree";
  * corrupt or absent value degrades to "no saved filters" rather than throwing. `search` is never
  * persisted — it is orchestration state, not a filter clause.
  */
+
+/** How the clauses inside ONE group combine. Groups themselves always combine with AND. */
+export type FilterGroupOperator = "and" | "or";
+
+/** The group operator labels the builder renders. */
+export const FILTER_GROUP_LABELS: Record<FilterGroupOperator, string> = {
+    and: "Match all",
+    or: "Match any",
+};
+
+/** One group of clauses, combined by its own operator. */
+export interface FilterGroup {
+    /** Stable, unique per group — the React key and the remove target. */
+    readonly id: string;
+    readonly operator: FilterGroupOperator;
+    readonly clauses: readonly FilterClause[];
+}
 
 /** The five operators a clause can carry. */
 export type FilterOperator = "is" | "is_not" | "contains" | "is_empty" | "is_not_empty";
@@ -147,6 +168,36 @@ export function anyClauseActive(clauses: readonly FilterClause[]): boolean {
     return clauses.some((clause) => isClauseActive(clause));
 }
 
+/** A stable, unique group id — same generator as the clause rows, one namespace is enough. */
+export function createFilterGroupId(): string {
+    return createFilterClauseId();
+}
+
+/** A fresh group: `and`, holding one empty clause so the row is there to fill in. */
+export function createFilterGroup(operator: FilterGroupOperator = "and"): FilterGroup {
+    return { id: createFilterGroupId(), operator, clauses: [createFilterClause()] };
+}
+
+/** A single AND group over `clauses` — the shape a flat clause list still travels in. */
+export function toFlatGroup(clauses: readonly FilterClause[]): FilterGroup {
+    return { id: "flat", operator: "and", clauses };
+}
+
+/** True when a group actually narrows anything — every group starts with an empty row. */
+export function isGroupActive(group: FilterGroup): boolean {
+    return anyClauseActive(group.clauses);
+}
+
+/** True when any group is active; groups that are still blank are ignored by every evaluator. */
+export function anyGroupActive(groups: readonly FilterGroup[]): boolean {
+    return groups.some(isGroupActive);
+}
+
+/** How many active clauses the whole filter holds — the count the trigger prints. */
+export function countActiveClauses(groups: readonly FilterGroup[]): number {
+    return groups.reduce((total, group) => total + group.clauses.filter(isClauseActive).length, 0);
+}
+
 /** A non-blank stored string, else `null`; `""` and whitespace count as absent. */
 function toPresentString(value: string | null): string | null {
     return value !== null && value.trim() !== "" ? value : null;
@@ -255,23 +306,84 @@ export function clauseMatches(
     }
 }
 
-/** Does one row satisfy every clause? Clauses combine with AND. */
+/** Does one row satisfy ONE group? A blank group matches everything, so it never blanks the list. */
+export function groupMatches(
+    row: FilterableRow,
+    group: FilterGroup,
+    fields: readonly TaskField[],
+): boolean {
+    const active = group.clauses.filter(isClauseActive);
+    if (active.length === 0) return true;
+    if (group.operator === "or") return active.some((clause) => clauseMatches(row, clause, fields));
+    return active.every((clause) => clauseMatches(row, clause, fields));
+}
+
+/** Does one row satisfy the whole filter? Groups combine with AND, clauses inside by their own operator. */
+export function rowMatchesFilter(
+    row: FilterableRow,
+    groups: readonly FilterGroup[],
+    fields: readonly TaskField[],
+): boolean {
+    return groups.every((group) => groupMatches(row, group, fields));
+}
+
+/** Does one row satisfy every clause of a flat list? Kept for callers that only ever build AND sets. */
 export function rowMatchesClauses(
     row: FilterableRow,
     clauses: readonly FilterClause[],
     fields: readonly TaskField[],
 ): boolean {
-    for (const clause of clauses) {
-        if (!clauseMatches(row, clause, fields)) return false;
-    }
-    return true;
+    return rowMatchesFilter(row, [toFlatGroup(clauses)], fields);
 }
 
-/** A saved clause set: a name plus the clauses it restores. `search` is never part of it. */
+/** Does one row satisfy at least one clause of a flat list? */
+export function rowMatchesAnyClause(
+    row: FilterableRow,
+    clauses: readonly FilterClause[],
+    fields: readonly TaskField[],
+): boolean {
+    return rowMatchesFilter(row, [{ id: "flat", operator: "or", clauses }], fields);
+}
+
+/**
+ * Is this row EXCLUDED — i.e. does it trip a negative (`is not`) clause?
+ *
+ * The tree treats that differently from a row that merely fails a positive clause: an exclusion hides
+ * the whole branch, while a positive clause only selects rows and keeps their subtrees.
+ *
+ * Only an **AND** group can veto. In an `or` group a failing `is not` is one branch that did not
+ * match, not a verdict — reading it as a veto would make `Tags is not X or Status is B` hide every
+ * B-tagged-X row, which is the opposite of what the reader asked for.
+ */
+export function failsExcludingGroup(
+    row: FilterableRow,
+    groups: readonly FilterGroup[],
+    fields: readonly TaskField[],
+): boolean {
+    for (const group of groups) {
+        if (group.operator !== "and") continue;
+        for (const clause of group.clauses) {
+            if (clause.operator !== "is_not" || !isClauseActive(clause)) continue;
+            if (!clauseMatches(row, clause, fields)) return true;
+        }
+    }
+    return false;
+}
+
+/** The flat-list form of {@link failsExcludingGroup}, for callers still holding a clause array. */
+export function failsExcludingClause(
+    row: FilterableRow,
+    clauses: readonly FilterClause[],
+    fields: readonly TaskField[],
+): boolean {
+    return failsExcludingGroup(row, [toFlatGroup(clauses)], fields);
+}
+
+/** A saved filter: a name plus the groups it restores. `search` is never part of it. */
 export interface SavedTaskFilter {
     readonly id: string;
     readonly name: string;
-    readonly clauses: readonly FilterClause[];
+    readonly groups: readonly FilterGroup[];
 }
 
 /** The versioned localStorage key — bump the suffix if the persisted shape ever changes. */
@@ -280,6 +392,15 @@ export const SAVED_TASK_FILTERS_KEY = "pm-tasks-filters:v1";
 /** A clause copy with a FRESH id, so applying a saved set creates independent rows. */
 export function cloneClausesForApply(clauses: readonly FilterClause[]): FilterClause[] {
     return clauses.map((clause) => ({ ...clause, id: createFilterClauseId() }));
+}
+
+/** A group copy with FRESH group and clause ids, so an applied saved filter is fully independent. */
+export function cloneGroupsForApply(groups: readonly FilterGroup[]): FilterGroup[] {
+    return groups.map((group) => ({
+        ...group,
+        id: createFilterGroupId(),
+        clauses: cloneClausesForApply(group.clauses),
+    }));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -307,6 +428,9 @@ function toClause(raw: unknown): FilterClause | null {
 /**
  * Parses the persisted JSON defensively: a non-JSON string, a non-array root and every malformed
  * entry all degrade to an empty / filtered list rather than throwing.
+ *
+ * A saved filter written before groups existed carries a flat `clauses` array; it is read back as one
+ * AND group, which is exactly what those clauses meant.
  */
 export function parseSavedTaskFilters(raw: string | null): SavedTaskFilter[] {
     if (raw === null || raw.trim() === "") return [];
@@ -323,19 +447,44 @@ export function parseSavedTaskFilters(raw: string | null): SavedTaskFilter[] {
     for (const entry of parsed) {
         if (!isRecord(entry)) continue;
         const name = typeof entry.name === "string" ? entry.name.trim() : "";
-        if (name === "" || !Array.isArray(entry.clauses)) continue;
+        if (name === "") continue;
 
-        const clauses: FilterClause[] = [];
-        for (const rawClause of entry.clauses) {
-            const clause = toClause(rawClause);
-            if (clause !== null) clauses.push(clause);
-        }
-        if (clauses.length === 0) continue;
+        const groups = toGroupList(entry);
+        if (groups.length === 0) continue;
 
         const id = typeof entry.id === "string" && entry.id !== "" ? entry.id : createFilterClauseId();
-        saved.push({ id, name, clauses });
+        saved.push({ id, name, groups });
     }
     return saved;
+}
+
+/** Reads `groups` (current shape) or `clauses` (legacy flat shape) off one persisted entry. */
+function toGroupList(entry: Record<string, unknown>): FilterGroup[] {
+    if (Array.isArray(entry.groups)) {
+        const groups: FilterGroup[] = [];
+        for (const rawGroup of entry.groups) {
+            if (!isRecord(rawGroup)) continue;
+            const clauses = toClauseList(rawGroup.clauses);
+            if (clauses.length === 0) continue;
+            const operator: FilterGroupOperator = rawGroup.operator === "or" ? "or" : "and";
+            groups.push({ id: createFilterGroupId(), operator, clauses });
+        }
+        return groups;
+    }
+
+    const clauses = toClauseList(entry.clauses);
+    return clauses.length === 0 ? [] : [{ id: createFilterGroupId(), operator: "and", clauses }];
+}
+
+/** Valid clauses out of a persisted array; everything malformed is dropped. */
+function toClauseList(raw: unknown): FilterClause[] {
+    if (!Array.isArray(raw)) return [];
+    const clauses: FilterClause[] = [];
+    for (const rawClause of raw) {
+        const clause = toClause(rawClause);
+        if (clause !== null) clauses.push(clause);
+    }
+    return clauses;
 }
 
 /** Reads the saved sets, tolerating missing storage, denied access and corrupt JSON alike. */

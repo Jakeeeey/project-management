@@ -20,6 +20,8 @@ import { columnWeightScore, completionFlag, computeCompletion, describeCompletio
 
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
 import { buildOffsets, windowFor } from "../components/views/window.ts";
+// @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
+import { STATUS_FIELD_KEY, TAGS_FIELD_KEY, anyGroupActive, cloneGroupsForApply, countActiveClauses, failsExcludingGroup, groupMatches, parseSavedTaskFilters, rowMatchesAnyClause, rowMatchesClauses, rowMatchesFilter, type FilterGroup, type FilterableRow } from "../components/task-filter.ts";
 
 interface FixtureRow extends TreeSourceRow {
     readonly title: string;
@@ -115,24 +117,19 @@ function allIds(nodes: readonly TreeNode<FixtureRow>[]): number[] {
 
 const roots = buildTree(SOURCE);
 
-// --- A matching row keeps its ENTIRE subtree --------------------------------------------------------
+// --- Search: a hit stays, its ancestors stay, nothing else does -------------------------------------
 
-const matchedRoot = pruneForest(roots, matchByIds([1]));
-check("a matching root is kept", rootIds(matchedRoot).includes(1));
+const matchedRoot = pruneForest(roots, { matchesSearch: matchByIds([1]) });
+check("a search hit is kept", rootIds(matchedRoot).includes(1));
 check("no non-matching root survives alongside it", sameIds(rootIds(matchedRoot), [1]));
 check(
-    "a matching parent keeps ALL of its non-matching children",
-    sameIds(childIds(requireNode(matchedRoot, 1)), [2, 3]),
+    "a hit does NOT drag its non-matching descendants along",
+    childIds(requireNode(matchedRoot, 1)).length === 0,
 );
-check(
-    "…and the non-matching grandchild under a non-matching child",
-    sameIds(childIds(requireNode(matchedRoot, 3)), [4]),
-);
-check("the deepest row beneath a match is still present", findNode(matchedRoot, 4) !== undefined);
 
 // --- A matching leaf is unchanged -------------------------------------------------------------------
 
-const matchedLeaf = pruneForest(roots, matchByIds([4]));
+const matchedLeaf = pruneForest(roots, { matchesSearch: matchByIds([4]) });
 check("a matching leaf is kept", findNode(matchedLeaf, 4) !== undefined);
 check("a matching leaf has no children", childIds(requireNode(matchedLeaf, 4)).length === 0);
 check(
@@ -147,7 +144,7 @@ check("a non-matching sibling branch is dropped", findNode(matchedLeaf, 2) === u
 
 // --- A non-matching ancestor keeps only the matching branches --------------------------------------
 
-const matchedDeep = pruneForest(roots, matchByIds([6]));
+const matchedDeep = pruneForest(roots, { matchesSearch: matchByIds([6]) });
 check("a non-matching root with a matching descendant is kept", sameIds(rootIds(matchedDeep), [5]));
 check(
     "…with only the matching branch beneath it",
@@ -158,7 +155,7 @@ check(
     findNode(matchedDeep, 1) === undefined && findNode(matchedDeep, 7) === undefined,
 );
 
-const twoBranches = pruneForest(roots, matchByIds([2, 4]));
+const twoBranches = pruneForest(roots, { matchesSearch: matchByIds([2, 4]) });
 check(
     "a non-matching ancestor keeps every branch that reaches a match",
     sameIds(rootIds(twoBranches), [1]) &&
@@ -170,7 +167,7 @@ check("a non-matching subtree with no match anywhere is dropped", findNode(twoBr
 // --- A deep match's full ancestor path survives -----------------------------------------------------
 
 const deepRoots = buildTree(DEEP);
-const deepMatch = pruneForest(deepRoots, matchByIds([24]));
+const deepMatch = pruneForest(deepRoots, { matchesSearch: matchByIds([24]) });
 check(
     "every ancestor of a deep match survives",
     [20, 21, 22, 23, 24].every((id) => findNode(deepMatch, id) !== undefined),
@@ -184,29 +181,93 @@ check(
 );
 check("the matched deep node's depth is preserved", requireNode(deepMatch, 24).depth === 4);
 
-// --- A match nested under a match keeps its subtree -------------------------------------------------
+// --- A match nested under a match keeps only what matches -------------------------------------------
 
 const nestedRoots = buildTree(NESTED);
-const nestedMatch = pruneForest(nestedRoots, matchByIds([30, 31]));
+const nestedMatch = pruneForest(nestedRoots, { matchesSearch: matchByIds([30, 31]) });
 check(
     "a match nested under a match is kept",
     findNode(nestedMatch, 30) !== undefined && findNode(nestedMatch, 31) !== undefined,
 );
 check(
-    "the nested match keeps its own subtree",
-    sameIds(childIds(requireNode(nestedMatch, 31)), [32]) &&
-        sameIds(childIds(requireNode(nestedMatch, 32)), [33]),
+    "the nested match keeps only its matching descendants",
+    sameIds(childIds(requireNode(nestedMatch, 31)), []) && findNode(nestedMatch, 32) === undefined,
 );
-check("the nested match's non-matching descendants are retained", findNode(nestedMatch, 33) !== undefined);
 
 // --- No match yields an empty forest ----------------------------------------------------------------
 
-check("a search that matches nothing yields an empty forest", pruneForest(roots, matchByIds([])).length === 0);
-check("an empty source yields an empty forest", pruneForest([], matchByIds([1])).length === 0);
+check("a search that matches nothing yields an empty forest", pruneForest(roots, { matchesSearch: matchByIds([]) }).length === 0);
+check("an empty source yields an empty forest", pruneForest([], { matchesSearch: matchByIds([1]) }).length === 0);
+
+// --- Clauses select DOWN, exclusions cascade DOWN -----------------------------------------------
+// The bug this replaced twice: `Tags is not X` hid the tagged parent but left the tagless children,
+// which pass the clause on their own; and then `Status is X` hid a match's children, which are its
+// contents rather than separate rows wanting a filter.
+
+const excludedMid = pruneForest(roots, { failsExcludingClause: (row) => row.id === 3 });
+check(
+    "an excluded mid-branch row is dropped together with its descendants",
+    findNode(excludedMid, 3) === undefined && findNode(excludedMid, 4) === undefined,
+);
+check(
+    "its passing siblings and unrelated roots still render",
+    sameIds(childIds(requireNode(excludedMid, 1)), [2]) && sameIds(rootIds(excludedMid), [1, 5, 7]),
+);
+check(
+    "an excluded root drops its whole subtree",
+    pruneForest(roots, { failsExcludingClause: (row) => row.id === 1 }).every((node) => node.id !== 1) &&
+        findNode(pruneForest(roots, { failsExcludingClause: (row) => row.id === 1 }), 2) === undefined,
+);
+check(
+    "an exclusion hides only its own branch, never a sibling's children",
+    findNode(pruneForest(roots, { failsExcludingClause: (row) => row.id === 4 }), 3) !== undefined,
+);
+
+// The positive direction selects ONE row: its children stay hidden when they do not match, and the
+// ancestors above it are kept only as context.
+const matchedBranch = pruneForest(roots, { passesClauses: (row) => row.id === 3 });
+check(
+    "a matched row does not drag its non-matching children in",
+    sameIds(childIds(requireNode(matchedBranch, 3)), []),
+);
+check(
+    "a matched row keeps its ancestors as context",
+    findNode(matchedBranch, 1) !== undefined,
+);
+check(
+    "rows outside the match and its ancestor path are dropped",
+    findNode(matchedBranch, 2) === undefined && findNode(matchedBranch, 5) === undefined,
+);
+check(
+    "a matched root keeps only itself, not the levels beneath it",
+    (() => {
+        const kept = pruneForest(roots, { passesClauses: (row) => row.id === 1 });
+        return findNode(kept, 1) !== undefined && findNode(kept, 2) === undefined && findNode(kept, 3) === undefined;
+    })(),
+);
+
+// --- Both rules: the clause set runs first, so a search hit cannot rescue a hidden branch -----------
+
+const hiddenMatch = pruneForest(roots, {
+    failsExcludingClause: (row) => row.id === 1,
+    matchesSearch: matchByIds([2]),
+});
+check(
+    "a search hit under an excluded parent does NOT surface",
+    hiddenMatch.length === 0,
+);
+check(
+    "an excluded ancestor does not block an unrelated sibling branch",
+    sameIds(rootIds(pruneForest(roots, { failsExcludingClause: (row) => row.id === 1, matchesSearch: matchByIds([6]) })), [5]),
+);
+check(
+    "search still reveals the ancestors of a hit when no clause hides them",
+    [1, 3, 4].every((id) => findNode(pruneForest(roots, { passesClauses: () => true, matchesSearch: matchByIds([4]) }), id) !== undefined),
+);
 
 // --- The count/children invariant: the number shown is the number revealed ---------------------------
 
-const pathPruned = pruneForest(roots, matchByIds([2]));
+const pathPruned = pruneForest(roots, { matchesSearch: matchByIds([2]) });
 const pathRoot = requireNode(pathPruned, 1);
 check(
     "an ancestor-path row's count equals its kept children, not the source's",
@@ -215,19 +276,19 @@ check(
 check(
     "expanding every kept row reveals exactly the kept rows (no phantom child, none hidden)",
     (() => {
-        const everyKeptId = new Set(allIds(matchedRoot));
-        return flattenVisible(matchedRoot, everyKeptId).length === everyKeptId.size;
+        const everyKeptId = new Set(allIds(matchedLeaf));
+        return flattenVisible(matchedLeaf, everyKeptId).length === everyKeptId.size;
     })(),
 );
 check(
     "a matched parent's count equals the children it retains",
-    requireNode(matchedRoot, 1).children.length === 2,
+    requireNode(matchedRoot, 1).children.length === 0,
 );
 
 // --- Copies and source isolation --------------------------------------------------------------------
 
 const sourceChildCountBefore = requireNode(roots, 1).children.length;
-const isolated = pruneForest(roots, matchByIds([4]));
+const isolated = pruneForest(roots, { matchesSearch: matchByIds([4]) });
 check(
     "pruning leaves the source forest untouched",
     requireNode(roots, 1).children.length === sourceChildCountBefore &&
@@ -244,7 +305,7 @@ check(
 
 // --- Root order is preserved ------------------------------------------------------------------------
 
-const multiRoot = pruneForest(roots, matchByIds([1, 5, 7]));
+const multiRoot = pruneForest(roots, { matchesSearch: matchByIds([1, 5, 7]) });
 check("pruning preserves the source root order", sameIds(rootIds(multiRoot), [1, 5, 7]));
 
 // --- Completion rollup: fixtures ---------------------------------------------------------------------
@@ -530,6 +591,112 @@ check(
 check(
     "the window never runs past the last row",
     windowFor(tallOffsets, 1200, 120, 10).end === 30,
+);
+
+// --- AND/OR: groups combine with AND, rows inside a group by its own operator -----------------------
+// The shape the reader asked for: "this tag, and either status A or B" is one AND of two groups.
+
+type GroupRow = FilterableRow;
+
+const groupRow = (statusId: number, tagIds: readonly number[]): GroupRow => ({
+    status_id: statusId,
+    priority_id: 0,
+    custom_values: [],
+    tags: tagIds.map((tag_id) => ({ tag_id })),
+    assignees: [],
+});
+
+const statusClause = (id: string, operator: "is" | "is_not", statusId: string) => ({
+    id,
+    fieldKey: STATUS_FIELD_KEY,
+    operator,
+    value: statusId,
+});
+
+const tagClause = (id: string, operator: "is" | "is_not", tagId: string) => ({
+    id,
+    fieldKey: TAGS_FIELD_KEY,
+    operator,
+    value: tagId,
+});
+
+/** `Tags is 2` AND `Status is 5 or Status is 6`; `fields` is empty because no custom column is used. */
+const tagAndStatuses: FilterGroup[] = [
+    { id: "g1", operator: "and", clauses: [tagClause("c1", "is", "2")] },
+    {
+        id: "g2",
+        operator: "or",
+        clauses: [statusClause("c2", "is", "5"), statusClause("c3", "is", "6")],
+    },
+];
+
+check(
+    "an OR group accepts either status",
+    rowMatchesFilter(groupRow(5, [2]), tagAndStatuses, []) &&
+        rowMatchesFilter(groupRow(6, [2]), tagAndStatuses, []),
+);
+check(
+    "the AND between groups still demands the tag",
+    !rowMatchesFilter(groupRow(5, []), tagAndStatuses, []),
+);
+check(
+    "a status outside the OR group is rejected",
+    !rowMatchesFilter(groupRow(7, [2]), tagAndStatuses, []),
+);
+check("a status outside the OR group is rejected", !groupMatches(groupRow(7, [2]), tagAndStatuses[1], []));
+check(
+    "an empty group matches everything, so adding one never blanks the list",
+    rowMatchesFilter(groupRow(99, []), [{ id: "g3", operator: "and", clauses: [] }], []),
+);
+check("anyGroupActive ignores blank groups", !anyGroupActive([{ id: "g4", operator: "or", clauses: [] }]));
+check("countActiveClauses counts filled rows across groups", countActiveClauses(tagAndStatuses) === 3);
+
+// An `is not` veto binds AND groups only: inside an OR group a failing `is not` is a missed branch.
+const notTagOrStatus: FilterGroup[] = [
+    {
+        id: "g5",
+        operator: "or",
+        clauses: [tagClause("c5", "is_not", "9"), statusClause("c6", "is", "5")],
+    },
+];
+check(
+    "an is-not inside an OR group does not veto a row that matches the other branch",
+    !failsExcludingGroup(groupRow(5, [9]), notTagOrStatus, []),
+);
+check(
+    "the same is-not inside an AND group does veto",
+    failsExcludingGroup(groupRow(5, [9]), [{ id: "g6", operator: "and", clauses: [tagClause("c7", "is_not", "9")] }], []),
+);
+check(
+    "a legacy flat clause list still reads as one AND group",
+    !rowMatchesClauses(groupRow(5, []), [tagClause("c8", "is", "2")], []) &&
+        rowMatchesAnyClause(groupRow(5, []), [tagClause("c8", "is", "2"), statusClause("c9", "is", "5")], []),
+);
+
+// Persistence keeps a legacy flat saved filter readable and preserves a group's operator on the way
+// back out. The LIVE filter's own parser is exercised in the browser against `pm-tasks-filter:v1`,
+// because importing its module here would drag a value import into this node-run harness.
+const clonedGroups = cloneGroupsForApply(tagAndStatuses);
+check(
+    "applying a saved filter mints fresh group and row ids",
+    clonedGroups.length === 2 &&
+        clonedGroups[0].id !== tagAndStatuses[0].id &&
+        clonedGroups[0].clauses[0].id !== tagAndStatuses[0].clauses[0].id &&
+        clonedGroups[0].clauses[0].value === "2",
+);
+
+const savedRoundTrip = parseSavedTaskFilters(
+    JSON.stringify([
+        { id: "s1", name: "legacy", clauses: [{ id: "a", fieldKey: "tags", operator: "is", value: "2" }] },
+        { id: "s2", name: "groups", groups: [{ operator: "or", clauses: [{ id: "b", fieldKey: "status", operator: "is", value: "5" }] }] },
+    ]),
+);
+check(
+    "saved filters read both shapes, keeping the OR operator",
+    savedRoundTrip.length === 2 &&
+        savedRoundTrip[0].groups.length === 1 &&
+        savedRoundTrip[0].groups[0].operator === "and" &&
+        savedRoundTrip[1].groups[0].operator === "or",
 );
 
 if (failures > 0) {

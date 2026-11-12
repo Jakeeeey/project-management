@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ListFilter, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -21,8 +21,15 @@ import {
     type FilterBuilderMember,
     type FilterBuilderOption,
 } from "./TaskFilterBuilder";
-import { isClauseActive, type FilterClause, type SavedTaskFilter } from "./task-filter";
+import { isClauseActive, type FilterGroup, type SavedTaskFilter } from "./task-filter";
 import type { TaskField } from "../hooks/useTasks";
+
+/**
+ * The shared shape for anything the bar draws: 36px tall, fully rounded, outline weight. A caller's
+ * own extras (selects, pickers, icon buttons) apply this so they line up with the `Filters` trigger
+ * instead of looking bolted on.
+ */
+export const FILTER_BAR_ITEM_CLASS = "h-9 rounded-full";
 
 /**
  * The module's ONE filter toolbar: a search box, the `Filters` trigger with its live count, a
@@ -43,8 +50,8 @@ import type { TaskField } from "../hooks/useTasks";
  *   passes `onClear` rather than this component reaching for state it does not own.
  */
 export interface TaskFilterControlProps {
-    readonly clauses: readonly FilterClause[];
-    readonly onClausesChange: (next: readonly FilterClause[]) => void;
+    readonly groups: readonly FilterGroup[];
+    readonly onGroupsChange: (next: readonly FilterGroup[]) => void;
     readonly fields: readonly TaskField[];
     readonly statuses: readonly FilterBuilderOption[];
     readonly priorities: readonly FilterBuilderOption[];
@@ -52,7 +59,7 @@ export interface TaskFilterControlProps {
     readonly members: readonly FilterBuilderMember[];
     readonly currentUserId: number | null;
     readonly savedFilters: readonly SavedTaskFilter[];
-    readonly onSaveFilter: (name: string, clauses: readonly FilterClause[]) => void;
+    readonly onSaveFilter: (name: string, groups: readonly FilterGroup[]) => void;
     readonly onApplySavedFilter: (filter: SavedTaskFilter) => void;
     readonly onDeleteSavedFilter: (id: string) => void;
     /** Omitted when a view has its own search elsewhere; given, the box is drawn in this bar. */
@@ -64,6 +71,18 @@ export interface TaskFilterControlProps {
     readonly onClear: () => void;
     readonly className?: string;
     /**
+     * A view's own controls, drawn in the same row directly after the `Filters` button — Board puts
+     * its group-by and order selects here, Gantt its one-click assignee and tag pickers. The point is
+     * that a view adds controls without growing a second toolbar that can drift from this one.
+     */
+    readonly extras?: ReactNode;
+    /**
+     * Controls that belong to the MIDDLE of the bar, centred between the search box and the trailing
+     * group — Gantt puts its date navigation here so the bar reads left-to-right as
+     * search → where am I → filters.
+     */
+    readonly centerExtras?: ReactNode;
+    /**
      * `true` (default) draws the bar's own rounded card, for a view that has no toolbar yet.
      * `false` renders the bare inline group, for a caller that already owns the row — the List
      * toolbar puts it beside its own Subtasks and Refresh buttons.
@@ -72,8 +91,8 @@ export interface TaskFilterControlProps {
 }
 
 export function TaskFilterControl({
-    clauses,
-    onClausesChange,
+    groups,
+    onGroupsChange,
     fields,
     statuses,
     priorities,
@@ -90,12 +109,17 @@ export function TaskFilterControl({
     isFiltering,
     onClear,
     className,
+    extras,
+    centerExtras,
     chrome = true,
 }: TaskFilterControlProps) {
     const [isFilterOpen, setIsFilterOpen] = useState(false);
 
     // Count with the matcher's own `isClauseActive` so the badge can't disagree with the rows.
-    const activeFilterCount = clauses.filter(isClauseActive).length;
+    const activeFilterCount = groups.reduce(
+        (total, group) => total + group.clauses.filter(isClauseActive).length,
+        0,
+    );
     let filterLabel = `${activeFilterCount} Filters`;
     if (activeFilterCount === 0) {
         filterLabel = "Filters";
@@ -124,6 +148,10 @@ export function TaskFilterControl({
                         className="pl-8"
                     />
                 </div>
+            ) : null}
+
+            {centerExtras ? (
+                <div className="flex items-center justify-center gap-2 sm:mx-auto">{centerExtras}</div>
             ) : null}
 
             <div className={cn("flex flex-wrap items-center gap-2", chrome && "sm:ml-auto")}>
@@ -156,8 +184,8 @@ export function TaskFilterControl({
                         {/* Only the body scrolls, so the header and footer stay pinned. */}
                         <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
                             <TaskFilterBuilder
-                                clauses={clauses}
-                                onClausesChange={onClausesChange}
+                                groups={groups}
+                                onGroupsChange={onGroupsChange}
                                 fields={fields}
                                 statuses={statuses}
                                 priorities={priorities}
@@ -177,8 +205,8 @@ export function TaskFilterControl({
                                 type="button"
                                 variant="ghost"
                                 data-slot="task-filter-clear-all"
-                                onClick={() => onClausesChange([])}
-                                disabled={clauses.length === 0}
+                                onClick={() => onGroupsChange([])}
+                                disabled={activeFilterCount === 0}
                             >
                                 Clear all filters
                             </Button>
@@ -192,6 +220,8 @@ export function TaskFilterControl({
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
+
+                {extras}
 
                 {isFiltering ? (
                     <Button type="button" variant="ghost" onClick={onClear}>

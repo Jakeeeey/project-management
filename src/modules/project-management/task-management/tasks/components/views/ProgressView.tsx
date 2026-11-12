@@ -15,26 +15,14 @@ import {
     ChevronRight,
     ChevronsDownUp,
     ChevronsUpDown,
-    ListFilter,
     ListTree,
     RotateCcw,
-    Search,
     SearchX,
     TriangleAlert,
-    X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
-} from "@/components/ui/dialog";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -44,7 +32,6 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import {
     Select,
@@ -65,6 +52,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { useSavedTaskFilters } from "../../hooks/useSavedTaskFilters";
+import { useTaskFilterState } from "../../hooks/useTaskFilterState";
 import type { TaskField, TaskListItem } from "../../hooks/useTasks";
 import type { TaskTreeRow } from "../../hooks/useTaskTree";
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
@@ -78,29 +66,24 @@ import {
     type CompletionFlag,
     type CompletionRollup,
 } from "../../utils/completion";
-import { buildTree, flattenVisible, type TreeSourceRow, type TreeNode } from "../../utils/tree";
+import { buildTree, flattenVisible, pruneForest, type TreeSourceRow, type TreeNode } from "../../utils/tree";
 import { NO_STATUS_LABEL, TaskStatusBadge } from "../TaskRowBadges";
 import { resolveTaskTags, TaskTagStack } from "../TaskTags";
+import { FILTER_BAR_ITEM_CLASS, TaskFilterControl } from "../TaskFilterControl";
+import type { FilterBuilderMember, FilterBuilderOption } from "../TaskFilterBuilder";
 import {
-    TaskFilterBuilder,
-    type FilterBuilderMember,
-    type FilterBuilderOption,
-} from "../TaskFilterBuilder";
-import {
-    anyClauseActive,
-    cloneClausesForApply,
-    isClauseActive,
-    rowMatchesClauses,
-    type FilterClause,
+    anyGroupActive,
+    cloneGroupsForApply,
+    failsExcludingGroup,
+    rowMatchesFilter,
     type SavedTaskFilter,
 } from "../task-filter";
-import { pruneToVisible, visibleTaskIds } from "./progress-tree";
 import { buildOffsets, windowFor } from "./window";
 
 /**
  * The Progress view: the department's tasks as a read-only completion tree-table.
  *
- * Every number here comes from {@link computeCompletion} — the one rollup — never from a local
+ * Every number here comes from {@link computeCompletion} â€” the one rollup â€” never from a local
  * average, so the two bases (a task's own status percentage, or the weight of the Choice-column
  * option it carries) can only differ in what a LEAF scores, never in how a parent is averaged.
  * Search and filters hide rows AFTER the rollup has run over the full list, which is why filtering
@@ -136,7 +119,7 @@ const SORT_LABELS: Record<ProgressSort, string> = {
  * The visual indent step and its cap. A rail is painted every step, so the step is also the band
  * width: 20px in the table, 16px on a card, with the rail centred in each band (x = 10 + 20k).
  *
- * The cap is PRESENTATION ONLY — `aria-level` always carries the row's true depth, so a deep branch
+ * The cap is PRESENTATION ONLY â€” `aria-level` always carries the row's true depth, so a deep branch
  * reads correctly to a screen reader while the table stays narrow. Past the cap the outermost rail
  * clips and a `+n` marker reports the levels the indent cannot show.
  */
@@ -177,7 +160,7 @@ const NOTE_COMPACT_COLUMN_PX = 40;
 const TASK_COLUMN_MIN_PX = 220;
 /**
  * The sticky `<thead>`'s height (`TableHead` is `h-10`). The row offsets index the BODY, which starts
- * below it, while `scrollTop` counts from the top of the scroll box — so an offset has to clear the
+ * below it, while `scrollTop` counts from the top of the scroll box â€” so an offset has to clear the
  * header before it can be compared with a scroll position. The card layout has no header.
  */
 const STICKY_HEADER_PX = 40;
@@ -226,8 +209,8 @@ function taskTitle(task: TaskListItem): string {
 
 /**
  * The rail colour: `--muted-foreground` at an alpha, so no new global token is needed. The alpha is
- * mode-split because that token flips direction — dark ink on white in light mode, pale ink on
- * near-black in dark mode — and one number cannot clear 3:1 on both grounds. 0.76 lands near
+ * mode-split because that token flips direction â€” dark ink on white in light mode, pale ink on
+ * near-black in dark mode â€” and one number cannot clear 3:1 on both grounds. 0.76 lands near
  * rgb(143,143,150) on white (3.21:1), 0.55 near rgb(102,102,109) on the dark card (3.38:1).
  *
  * It has to be set on the element that paints the gradient, since a custom property is read from the
@@ -240,7 +223,7 @@ const RAIL_ALPHA_CLASS = "[--rail-alpha:0.76] dark:[--rail-alpha:0.55]";
  * Tailwind class would be one class per depth per row, which defeats class hoisting across 77 rows.
  *
  * The gradient repeats every `stepPx`, so the band boundaries are arithmetic and never compress.
- * `background-size` is what terminates the set — a row paints rails for its ANCESTORS only, never
+ * `background-size` is what terminates the set â€” a row paints rails for its ANCESTORS only, never
  * for its own band. The colour is `RAIL_ALPHA_CLASS`'s `--rail-alpha` over `--muted-foreground`.
  */
 function railStyle(depth: number, stepPx: number): CSSProperties {
@@ -290,7 +273,7 @@ interface ProgressNode {
     readonly node: TreeNode<TaskListItem>;
     readonly value: number;
     readonly own: number;
-    /** Direct children in the FULL tree — the number the row's caption and badge report. */
+    /** Direct children in the FULL tree â€” the number the row's caption and badge report. */
     readonly childCount: number;
     /** Children the filter kept. Zero while `childCount` is not: every subtask was filtered out. */
     readonly visibleChildCount: number;
@@ -301,7 +284,7 @@ interface ProgressNode {
  * A media query as state, for the two things CSS alone cannot do here: the card and table layouts
  * have different row heights, and the window needs the one that is actually mounted.
  *
- * The first paint takes the wide branch — the table — so the server and the client agree; a narrow
+ * The first paint takes the wide branch â€” the table â€” so the server and the client agree; a narrow
  * viewport swaps one frame after hydration.
  */
 function useMediaQuery(query: string): boolean {
@@ -329,7 +312,7 @@ interface RowChevronProps {
 
 /**
  * A parent's expand control: a real 24px button, so it is not a pixel hunt, and its click stops
- * there — the row's own click opens the task, and expanding must never open the detail sheet.
+ * there â€” the row's own click opens the task, and expanding must never open the detail sheet.
  *
  * It is kept out of the tab order on purpose: the grid has one tab stop, the row, and ArrowRight /
  * ArrowLeft expand and collapse from there. Enter and Space on the row activate the task.
@@ -399,7 +382,7 @@ export function ProgressView({
      *
      * Each id carries the reveal chain that was in force when the reader collapsed it. A filter that
      * opens an ancestor must not undo a collapse the reader made after the filter appeared, and a
-     * collapse made under one chain must not survive into the next one — a record rather than a bare
+     * collapse made under one chain must not survive into the next one â€” a record rather than a bare
      * set, because both facts are about WHY the row is closed.
      */
     const [collapsedAt, setCollapsedAt] = useState<ReadonlyMap<number, string>>(
@@ -407,18 +390,22 @@ export function ProgressView({
     );
 
     /**
-     * This tab's own search and filters — the List keeps its own state in the shell. The filter model
-     * is the List's clause model, not a second vocabulary, so the two tabs cannot drift.
+     * The live filter, shared with the other tabs and persisted per browser (see
+     * `useTaskFilterState`). The filter model is the List's clause model, not a second vocabulary, so
+     * the tabs cannot drift; the debounce below treats the shared search box like a normal input.
      */
-    const [searchInput, setSearchInput] = useState("");
-    const [clauses, setClauses] = useState<readonly FilterClause[]>([]);
-    const [isFilterOpen, setIsFilterOpen] = useState(false);
+    const {
+        search: searchInput,
+        onSearchChange: setSearchInput,
+        groups,
+        onGroupsChange: setGroups,
+        clearFilters: clearStoredFilters,
+    } = useTaskFilterState();
     const { savedFilters, saveFilter, deleteFilter } = useSavedTaskFilters();
 
     const settledSearch = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS);
     const search = settledSearch.trim().toLowerCase();
-    const filterCount = clauses.filter(isClauseActive).length;
-    const isFiltering = search !== "" || anyClauseActive(clauses);
+    const isFiltering = search !== "" || anyGroupActive(groups);
 
     /** Status id -> the department's stored completion percentage; an absent status scores 0. */
     const percentByStatusId = useMemo(() => {
@@ -481,7 +468,7 @@ export function ProgressView({
 
     const handleBasisChange = useCallback((value: string) => {
         /**
-         * Heights change with the basis — a leaf gains a second line under a column basis — so an
+         * Heights change with the basis â€” a leaf gains a second line under a column basis â€” so an
          * offset carried across would point at a different row. Reset here rather than in an effect:
          * this is the only thing that moves the basis, and the box cannot be scrolled by anything
          * else between the click and the render.
@@ -510,7 +497,7 @@ export function ProgressView({
     }, [chosenField]);
 
     /**
-     * The one rollup. Status weights need no column, so there is always a basis to compute — a
+     * The one rollup. Status weights need no column, so there is always a basis to compute â€” a
      * column only changes what a LEAF scores, never how a parent is averaged.
      */
     const rollup = useMemo<CompletionRollup>(() => {
@@ -537,7 +524,7 @@ export function ProgressView({
 
     /**
      * The rows the clause model can read. `TaskTreeRow` is what the List's evaluator takes, and the
-     * only thing `TaskListItem` lacks is the assignee's name — which the directory already holds.
+     * only thing `TaskListItem` lacks is the assignee's name â€” which the directory already holds.
      */
     const filterRows = useMemo<TaskTreeRow[]>(
         () =>
@@ -551,8 +538,14 @@ export function ProgressView({
         [items, memberNameById],
     );
 
+    const filterRowById = useMemo(() => {
+        const byId = new Map<number, TaskTreeRow>();
+        for (const row of filterRows) byId.set(row.id, row);
+        return byId;
+    }, [filterRows]);
+
     /**
-     * The rows that MATCH — the same `rowMatchesClauses` the List runs, so a clause means the same
+     * The rows that MATCH â€” the same `rowMatchesFilter` the List runs, so a group means the same
      * thing on both tabs. Percentages and counts still come from the full rollup, which is why
      * filtering can hide a row but never move a number.
      */
@@ -560,24 +553,33 @@ export function ProgressView({
         const ids = new Set<number>();
         for (const row of filterRows) {
             if (search !== "" && !row.title.toLowerCase().includes(search)) continue;
-            if (!rowMatchesClauses(row, clauses, fields)) continue;
+            if (!rowMatchesFilter(row, groups, fields)) continue;
             ids.add(row.id);
         }
         return ids;
-    }, [filterRows, search, clauses, fields]);
+    }, [filterRows, search, groups, fields]);
 
-    /** A match plus its ancestors. `null` means nothing is filtering, so every row renders. */
-    const visibleIds = useMemo(
-        () => (isFiltering ? visibleTaskIds(items, matchedIds) : null),
-        [isFiltering, items, matchedIds],
-    );
+    /**
+     * The forest the grid renders: `pruneForest` â€” the List's rule, both clause directions included â€”
+     * so a row a negative clause excludes takes its whole subtree with it, while a row a positive
+     * clause selects keeps its children on screen.
+     */
+    const renderForest = useMemo(() => {
+        if (!isFiltering) return forest;
+        return pruneForest(forest, {
+            passesClauses: (row) => {
+                const filterRow = filterRowById.get(row.id);
+                return filterRow !== undefined && rowMatchesFilter(filterRow, groups, fields);
+            },
+            failsExcludingClause: (row) => {
+                const filterRow = filterRowById.get(row.id);
+                return filterRow !== undefined && failsExcludingGroup(filterRow, groups, fields);
+            },
+            ...(search === "" ? {} : { matchesSearch: (row: TaskListItem) => row.title.toLowerCase().includes(search) }),
+        });
+    }, [isFiltering, forest, filterRowById, groups, fields, search]);
 
-    const renderForest = useMemo(
-        () => (visibleIds === null ? forest : pruneToVisible(forest, visibleIds)),
-        [forest, visibleIds],
-    );
-
-    /** Parents that survive the filter — the only ids `flattenVisible` and Collapse all care about. */
+    /** Parents that survive the filter â€” the only ids `flattenVisible` and Collapse all care about. */
     const renderParentIds = useMemo(() => {
         const ids = new Set<number>();
         const stack: TreeNode<TaskListItem>[] = [...renderForest];
@@ -593,7 +595,7 @@ export function ProgressView({
 
     /**
      * The chain a filter must open to put its matches on screen: every ancestor of every match,
-     * encoded as one content key. A STRING on purpose — `matchedIds` and `parentById` are rebuilt
+     * encoded as one content key. A STRING on purpose â€” `matchedIds` and `parentById` are rebuilt
      * whenever `items` changes, so an id array would be a new identity on every refetch and would
      * re-open a row the reader had just collapsed. Content is the only thing this may react to.
      */
@@ -688,7 +690,7 @@ export function ProgressView({
     /**
      * The window's height, read from the scroll box's own box, never guessed from the viewport: the
      * box is capped by `max-h` and shrinks to its content below that. It cannot be read during
-     * render — the box is laid out after the commit — so it is state, seeded on mount and re-read
+     * render â€” the box is laid out after the commit â€” so it is state, seeded on mount and re-read
      * on a resize and whenever the row count changes, which is when the box's content height does.
      */
     const [viewportHeight, setViewportHeight] = useState(0);
@@ -736,7 +738,7 @@ export function ProgressView({
     );
 
     /**
-     * True while a parent ON SCREEN is open — the Collapse all / Expand all label's source.
+     * True while a parent ON SCREEN is open â€” the Collapse all / Expand all label's source.
      *
      * Visible rows only: a collapsed parent's children are off screen, so their own expansion state
      * cannot be what the button is about to change. Counting them would offer "Collapse all" over a
@@ -762,13 +764,10 @@ export function ProgressView({
         });
     }, [anyExpanded, renderParentIds, revealKey]);
 
-    const clearFilterClauses = useCallback(() => setClauses([]), []);
-
     /** The toolbar's affordance and the empty state both reset search AND filters. */
     const clearAllFilters = useCallback(() => {
-        setSearchInput("");
-        setClauses([]);
-    }, []);
+        clearStoredFilters();
+    }, [clearStoredFilters]);
 
     /**
      * Focus moves by id, not by element: the row the keyboard asked for is usually not mounted yet
@@ -892,7 +891,7 @@ export function ProgressView({
 
     /**
      * The wheel scrolls content, not focus. A row that keeps DOM focus while it is scrolled out of
-     * the window unmounts under the focus, so the box itself takes it — and only when something
+     * the window unmounts under the focus, so the box itself takes it â€” and only when something
      * inside the box had it, so a wheel flick over an unfocused page does not move the tab stop.
      */
     const handleScrollBoxWheel = useCallback(() => {
@@ -907,7 +906,7 @@ export function ProgressView({
      * A click anywhere on a task opens it, matching the List, Board, Team, Calendar and Gantt views.
      * The chevron is the one exception and stops its own click: it expands, it never opens.
      *
-     * The row is not wrapped in a button — it is a `treegrid` row, and its `aria-expanded` already
+     * The row is not wrapped in a button â€” it is a `treegrid` row, and its `aria-expanded` already
      * states the expansion. Activation is Enter/Space, and arrows stay on expansion.
      */
     const activateOnKeyDown = useCallback(
@@ -963,10 +962,13 @@ export function ProgressView({
             .sort((a, b) => a.full_name.localeCompare(b.full_name));
     }, [items, memberNameById]);
 
-    /** A saved set restores fresh clause rows, so its ids never collide with the live ones. */
-    const applySavedFilter = useCallback((filter: SavedTaskFilter) => {
-        setClauses(cloneClausesForApply(filter.clauses));
-    }, []);
+    /** A saved set restores fresh group and row ids, so they never collide with the live ones. */
+    const applySavedFilter = useCallback(
+        (filter: SavedTaskFilter) => {
+            setGroups(cloneGroupsForApply(filter.groups));
+        },
+        [setGroups],
+    );
 
     const statusPercentsUnset = useMemo(
         () => catalogs.statuses.every((status) => status.completion_percent === 0),
@@ -974,7 +976,7 @@ export function ProgressView({
     );
 
     /**
-     * A column whose options all weigh 0 scores every leaf 0 — worth saying, not worth guessing at.
+     * A column whose options all weigh 0 scores every leaf 0 â€” worth saying, not worth guessing at.
      * A column with NO options is a different state (nothing can carry an answer), and `every` is
      * vacuously true on an empty array, so the length guard has to come first.
      */
@@ -1037,11 +1039,6 @@ export function ProgressView({
         COMPLETE_COLUMN_PX +
         (isWideLayout ? NOTE_COLUMN_PX : NOTE_COMPACT_COLUMN_PX);
 
-    const filterLabel =
-        filterCount === 0 ? "Filters" : filterCount === 1 ? "1 filter" : `${filterCount} filters`;
-    const filterAriaLabel =
-        filterCount === 0 ? "Filters, none active" : `Filters, ${filterCount} active`;
-
     /**
      * The window. `offsets[start]` is the height of everything above it in the flattened list and
      * `total - offsets[end]` is the height of everything below, so two spacers reproduce the real
@@ -1054,142 +1051,57 @@ export function ProgressView({
 
     return (
         <div data-slot="task-progress" className="w-full min-w-0 space-y-3">
-            {/* The same shell as the List's toolbar, so the two tabs read as one surface. */}
-            <div
-                data-slot="task-progress-toolbar"
-                className="flex flex-col gap-3 rounded-2xl border border-border/50 bg-card p-3 shadow-sm sm:flex-row sm:items-center"
-            >
-                <div className="relative min-w-0 sm:max-w-md sm:flex-1">
-                    <Search
-                        className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                        aria-hidden="true"
-                    />
-                    <Input
-                        type="search"
-                        value={searchInput}
-                        onChange={(event) => setSearchInput(event.target.value)}
-                        placeholder="Search tasks by title"
-                        aria-label="Search tasks by title"
-                        className="pl-8"
-                    />
-                </div>
+            <TaskFilterControl
+                searchValue={searchInput}
+                onSearchChange={setSearchInput}
+                groups={groups}
+                onGroupsChange={setGroups}
+                fields={fields}
+                statuses={filterStatuses}
+                priorities={filterPriorities}
+                tags={filterTags}
+                members={filterMembers}
+                currentUserId={null}
+                savedFilters={savedFilters}
+                onSaveFilter={saveFilter}
+                onApplySavedFilter={applySavedFilter}
+                onDeleteSavedFilter={deleteFilter}
+                isFiltering={isFiltering}
+                onClear={clearStoredFilters}
+                extras={
+                    <>
+                        <Select value={sort} onValueChange={(next) => setSort(next as ProgressSort)}>
+                            <SelectTrigger
+                                className={cn(FILTER_BAR_ITEM_CLASS, "w-40")}
+                                aria-label="Sort tasks"
+                            >
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="tree">{SORT_LABELS.tree}</SelectItem>
+                                <SelectItem value="lowest">{SORT_LABELS.lowest}</SelectItem>
+                            </SelectContent>
+                        </Select>
 
-                <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-
-                    <Dialog open={isFilterOpen} onOpenChange={setIsFilterOpen}>
-                        <DialogTrigger asChild>
+                        {renderParentIds.size > 0 ? (
                             <Button
                                 type="button"
                                 variant="outline"
-                                size="sm"
-                                data-slot="task-progress-filter-trigger"
-                                aria-label={filterAriaLabel}
-                                title={filterAriaLabel}
-                                className={cn(
-                                    "shrink-0 gap-1.5 rounded-full",
-                                    filterCount > 0 &&
-                                        "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800 dark:border-indigo-500/40 dark:bg-indigo-500/15 dark:text-indigo-300 dark:hover:bg-indigo-500/25",
-                                )}
+                                onClick={toggleAll}
+                                title={anyExpanded ? "Collapse every subtask" : "Expand every subtask"}
+                                className={cn(FILTER_BAR_ITEM_CLASS, "gap-1.5")}
                             >
-                                <ListFilter className="size-4" aria-hidden="true" />
-                                {filterLabel}
+                                {anyExpanded ? (
+                                    <ChevronsDownUp className="size-4" aria-hidden="true" />
+                                ) : (
+                                    <ChevronsUpDown className="size-4" aria-hidden="true" />
+                                )}
+                                {anyExpanded ? "Collapse all" : "Expand all"}
                             </Button>
-                        </DialogTrigger>
-                        <DialogContent className="w-[95vw] gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-[720px]">
-                            <DialogHeader className="border-b px-6 pt-6 pb-4">
-                                <DialogTitle>Filters</DialogTitle>
-                                <DialogDescription>
-                                    Add rows to narrow the list of tasks.
-                                </DialogDescription>
-                            </DialogHeader>
-                            <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
-                                <TaskFilterBuilder
-                                    clauses={clauses}
-                                    onClausesChange={setClauses}
-                                    fields={fields}
-                                    statuses={filterStatuses}
-                                    priorities={filterPriorities}
-                                    tags={filterTags}
-                                    members={filterMembers}
-                                    currentUserId={null}
-                                    savedFilters={savedFilters}
-                                    onSaveFilter={saveFilter}
-                                    onApplySavedFilter={applySavedFilter}
-                                    onDeleteSavedFilter={deleteFilter}
-                                />
-                            </div>
-                            <DialogFooter className="justify-end border-t bg-muted/20 px-6 py-4">
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    data-slot="task-filter-clear-all"
-                                    onClick={clearFilterClauses}
-                                    disabled={clauses.length === 0}
-                                >
-                                    Clear all filters
-                                </Button>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => setIsFilterOpen(false)}
-                                >
-                                    Done
-                                </Button>
-                            </DialogFooter>
-                        </DialogContent>
-                    </Dialog>
-
-                    {isFiltering ? (
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={clearAllFilters}
-                            className="shrink-0 gap-1.5 text-muted-foreground"
-                        >
-                            <X className="size-4" aria-hidden="true" />
-                            Clear filters
-                        </Button>
-                    ) : null}
-
-                    <Select
-                        value={sort}
-                        onValueChange={(next) => setSort(next as ProgressSort)}
-                    >
-                        <SelectTrigger
-                            size="sm"
-                            className="w-40 shrink-0 rounded-full"
-                            aria-label="Sort tasks"
-                        >
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="tree">{SORT_LABELS.tree}</SelectItem>
-                            <SelectItem value="lowest">{SORT_LABELS.lowest}</SelectItem>
-                        </SelectContent>
-                    </Select>
-
-                    {renderParentIds.size > 0 ? (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={toggleAll}
-                            title={
-                                anyExpanded ? "Collapse every subtask" : "Expand every subtask"
-                            }
-                            className="shrink-0 gap-1.5 rounded-full"
-                        >
-                            {anyExpanded ? (
-                                <ChevronsDownUp className="size-4" aria-hidden="true" />
-                            ) : (
-                                <ChevronsUpDown className="size-4" aria-hidden="true" />
-                            )}
-                            {anyExpanded ? "Collapse all" : "Expand all"}
-                        </Button>
-                    ) : null}
-                </div>
-            </div>
+                        ) : null}
+                    </>
+                }
+            />
 
             {/* Mounted once and never re-created: a live region has to exist before it can speak. */}
             <span
@@ -1504,7 +1416,7 @@ export function ProgressView({
                                                             className="-ml-1.5 gap-1 px-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
                                                         >
                                                             {chosenField !== null
-                                                                ? `Complete · ${chosenField.label}`
+                                                                ? `Complete Â· ${chosenField.label}`
                                                                 : "Complete"}
                                                             <ChevronDown
                                                                 className="size-3.5"
@@ -1908,7 +1820,7 @@ function ProgressSkeleton() {
                     <Skeleton key={row} className="h-6 w-full rounded-md" />
                 ))}
             </div>
-            <span className="sr-only">Loading tasks…</span>
+            <span className="sr-only">Loading tasksâ€¦</span>
         </div>
     );
 }

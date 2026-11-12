@@ -32,11 +32,11 @@ import { CatalogChipDot } from "../CatalogChip";
 
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
 import type { TaskListItem, TaskTagOption } from "../../hooks/useTasks";
-import { AssigneeFilterCombobox, filterItemsByAssignees } from "../AssigneeFilterCombobox";
+import { useViewTaskFilter } from "../../hooks/useViewTaskFilter";
 import { AssigneeStack, type TaskAssigneeView } from "../AssigneeStack";
 import { CatalogStatusIcon } from "../CatalogStatusIcon";
 import { resolveTaskTags, TaskTagStack } from "../TaskTags";
-import { TaskCombobox } from "../TaskCombobox";
+import { FILTER_BAR_ITEM_CLASS, TaskFilterControl } from "../TaskFilterControl";
 import { formatTaskDateRange } from "../TaskRow";
 import { TaskPriorityBadge } from "../TaskRowBadges";
 import {
@@ -64,7 +64,6 @@ export function BoardView({
 }: TaskViewProps) {
     const [groupId, setGroupId] = useState<string>(BOARD_DEFAULT_GROUP_ID);
     const [direction, setDirection] = useState<BoardGroupDirection>("asc");
-    const [assigneeFilter, setAssigneeFilter] = useState<readonly string[]>([]);
     const [pendingByTask, setPendingByTask] = useState<ReadonlyMap<number, BoardDropTarget>>(
         () => new Map(),
     );
@@ -143,10 +142,13 @@ export function BoardView({
         });
     }, [items, activePending]);
 
-    const visibleItems = useMemo(
-        () => filterItemsByAssignees(displayItems, assigneeFilter),
-        [displayItems, assigneeFilter],
-    );
+    /*
+     * The board reads the SAME filter the List writes: the state lives in the page (`useTaskFilterState`),
+     * so a clause set here narrows every tab. Pending drag patches are folded in first, so a card that
+     * just moved columns is filtered by its new value rather than its old one.
+     */
+    const filter = useViewTaskFilter({ items: displayItems, fields, catalogs, memberNameById });
+    const visibleItems = filter.visibleItems;
 
     const columns = useMemo(
         () =>
@@ -270,7 +272,7 @@ export function BoardView({
             data-slot="task-board-filtered-empty"
             className="rounded-2xl border border-dashed border-border/60 px-4 py-10 text-center text-sm text-muted-foreground"
         >
-            No task is assigned to the selected people.
+            No tasks match the current search and filters.
         </p>
     ) : (
         <div data-slot="task-board-scroller" className="flex w-full gap-4 overflow-x-auto pb-2">
@@ -289,32 +291,75 @@ export function BoardView({
     );
 
     return (
-        <div data-slot="task-board" className="w-full min-w-0">
-            <div data-slot="task-board-group-bar" className="mb-4 flex flex-wrap items-end gap-3">
-                <div className="flex min-w-0 flex-col gap-1">
-                    <span className="text-xs font-medium text-muted-foreground">Group by</span>
-                    <TaskCombobox
-                        className="w-56"
-                        options={groupOptions}
-                        value={effectiveGroupId}
-                        onValueChange={(next) => {
-                            if (next !== null) setGroupId(next);
-                        }}
-                        ariaLabel="Group by"
-                        searchPlaceholder="Search fields..."
-                        emptyMessage="No fields match."
-                        clearable={false}
-                        showStatusIcon={false}
-                    />
+        <div data-slot="task-board" className="w-full min-w-0 space-y-4">
+            <TaskFilterControl
+                searchValue={filter.search}
+                onSearchChange={filter.onSearchChange}
+                groups={filter.groups}
+                onGroupsChange={filter.onGroupsChange}
+                fields={fields}
+                statuses={filter.statuses}
+                priorities={filter.priorities}
+                tags={filter.tags}
+                members={filter.members}
+                currentUserId={null}
+                savedFilters={filter.savedFilters}
+                onSaveFilter={filter.onSaveFilter}
+                onApplySavedFilter={filter.onApplySavedFilter}
+                onDeleteSavedFilter={filter.onDeleteSavedFilter}
+                isFiltering={filter.isFiltering}
+                onClear={filter.clearFilters}
+            />
+
+            {/* Grouping lives on its own row under the bar: two labelled selects, not two mystery
+                pills inside a shared shell. */}
+            <div
+                role="group"
+                aria-label="Grouping"
+                data-slot="task-board-grouping"
+                className="flex flex-wrap items-center gap-4 px-1"
+            >
+                <div className="flex items-center gap-2">
+                    <span
+                        id="task-board-group-by-label"
+                        className="text-xs font-medium text-muted-foreground"
+                    >
+                        Group by
+                    </span>
+                    <Select value={effectiveGroupId} onValueChange={setGroupId}>
+                        <SelectTrigger
+                            className={cn(FILTER_BAR_ITEM_CLASS, "w-40")}
+                            aria-label="Group by"
+                            aria-labelledby="task-board-group-by-label"
+                        >
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {groupOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
 
-                <div className="flex min-w-0 flex-col gap-1">
-                    <span className="text-xs font-medium text-muted-foreground">Order</span>
+                <div className="flex items-center gap-2">
+                    <span
+                        id="task-board-order-label"
+                        className="text-xs font-medium text-muted-foreground"
+                    >
+                        Order
+                    </span>
                     <Select
                         value={direction}
                         onValueChange={(next) => setDirection(toDirection(next))}
                     >
-                        <SelectTrigger className="w-36" aria-label="Group order">
+                        <SelectTrigger
+                            className={cn(FILTER_BAR_ITEM_CLASS, "w-36")}
+                            aria-label="Order"
+                            aria-labelledby="task-board-order-label"
+                        >
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -323,14 +368,6 @@ export function BoardView({
                         </SelectContent>
                     </Select>
                 </div>
-
-                <AssigneeFilterCombobox
-                    items={items}
-                    memberNameById={memberNameById}
-                    values={assigneeFilter}
-                    onValuesChange={setAssigneeFilter}
-                    className="ml-auto sm:w-fit"
-                />
             </div>
 
             {dragEnabled ? (

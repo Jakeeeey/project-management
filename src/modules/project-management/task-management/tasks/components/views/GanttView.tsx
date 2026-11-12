@@ -25,28 +25,37 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn, formatDateLong } from "@/lib/utils";
 
 import { assigneeColorFor, assigneeForegroundFor } from "../assignee-color";
-import { AssigneeFilterCombobox, filterItemsByAssignees } from "../AssigneeFilterCombobox";
+import { AssigneeStack } from "../AssigneeStack";
 import { CatalogStatusIcon } from "../CatalogStatusIcon";
 import { NO_STATUS_LABEL } from "../TaskRowBadges";
-import { TagFilterCombobox, filterItemsByTags } from "../TagFilterCombobox";
+import { MultiSelectCombobox } from "../MultiSelectCombobox";
+import { FILTER_BAR_ITEM_CLASS, TaskFilterControl } from "../TaskFilterControl";
 
 import { parseDateOnly } from "../SingleDatePicker";
 import { GANTT_TODAY_CLASS, highlightToday } from "./gantt-today";
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
 import type { TaskCatalogRef, TaskListItem, TaskTagOption } from "../../hooks/useTasks";
+import { useViewTaskFilter } from "../../hooks/useViewTaskFilter";
+import {
+    ASSIGNEE_FIELD_KEY,
+    TAGS_FIELD_KEY,
+    isClauseActive,
+    type FilterClause,
+    type FilterGroup,
+} from "../task-filter";
 
 /**
  * The SVAR Gantt chart, loaded lazily **on the client only**.
  *
  * `@svar-ui/react-gantt` ships an ES bundle with no `'use client'` banner and no SSR guard, so a
- * static import would be evaluated — and its render attempted — during the server pass that every
+ * static import would be evaluated â€” and its render attempted â€” during the server pass that every
  * "use client" component still gets in the Next 16 App Router. `next/dynamic` with `ssr: false` is
  * the chosen mount gate: it keeps the library out of the server bundle entirely (neither the module
  * body nor the render runs on the server) and hands us a chunk-loading fallback for free. The
- * alternative — a `useEffect`-set `mounted` flag — would still import and evaluate the module on the
+ * alternative â€” a `useEffect`-set `mounted` flag â€” would still import and evaluate the module on the
  * server, which is the half of the hazard this approach removes.
  *
- * The loader also binds the chart's own `columns`, for a reason that is NOT cosmetic — see below.
+ * The loader also binds the chart's own `columns`, for a reason that is NOT cosmetic â€” see below.
  *
  * ## The collapsed-sidebar "unique key" warning, and this workaround
  *
@@ -58,18 +67,18 @@ import type { TaskCatalogRef, TaskListItem, TaskTagOption } from "../../hooks/us
  *         : t
  *
  * (`Dt` in `@svar-ui/react-gantt@2.7.3`.) In `readonly` the vendor first **removes** the add-task
- * column — `if (d !== -1) { … if (e) f.splice(d, 1) }` — so the `find` returns `undefined` and the
+ * column â€” `if (d !== -1) { â€¦ if (e) f.splice(d, 1) }` â€” so the `find` returns `undefined` and the
  * spread becomes `{ ...undefined, resize: false }`: a column with **no `id`**. React Grid then keys
  * every header/footer cell by `cell.id` (`key={b.id}` in its `Lt` render), so `key={undefined}`
  * makes React warn "Each child in a list should have a unique key prop. Check the render method of
  * Lt." It is a vendor bug we cannot patch (no `node_modules` edits) and must not suppress.
  *
- * The fix from the host: pass the vendor's own `defaultColumns` back to it — all four already carry
- * ids (`text`, `start`, `duration`, `add-task`) — and append a **second, hidden `add-task` entry**.
+ * The fix from the host: pass the vendor's own `defaultColumns` back to it â€” all four already carry
+ * ids (`text`, `start`, `duration`, `add-task`) â€” and append a **second, hidden `add-task` entry**.
  * `readonly` consumes exactly one add-task (its `splice`), so the duplicate survives the lookup and
  * the collapsed column is built from a real column with `id: "add-task"` instead of `undefined`.
  * `hidden` keeps the duplicate out of the expanded sidebar, so the default `all` view is unchanged.
- * Nothing under `node_modules` is touched and the warning is not suppressed — the offending column
+ * Nothing under `node_modules` is touched and the warning is not suppressed â€” the offending column
  * is prevented rather than silenced.
  */
 const GanttChart = dynamic(
@@ -80,14 +89,14 @@ const GanttChart = dynamic(
                 ...module.defaultColumns.map((column, index) => {
                     const id = column.id ?? `column-${index}`;
                     // The `text` column carries the host label cell; the vendor folds it into its own
-                    // tree-row renderer — see `GanttTaskLabelCell`.
+                    // tree-row renderer â€” see `GanttTaskLabelCell`.
                     return id === "text" ? { ...column, id, cell: GanttTaskLabelCell } : { ...column, id };
                 }),
                 { id: "add-task", header: "", width: 0, hidden: true, sort: false, resize: false },
             ];
             return function ColumnBoundGantt(props: ComponentProps<typeof Gantt>) {
                 // The inline chart never passes `columns` and keeps the bound label column; the
-                // fullscreen modal passes `columns={[]}` so its chart renders with no sidebar —
+                // fullscreen modal passes `columns={[]}` so its chart renders with no sidebar â€”
                 // bar labels plus the tooltip replace the label column there (see `GanttBarLabel`).
                 // `[]`, not the documented `false`: the prop types intersect the two column types,
                 // so `false` is a compile error, while an empty array flows through the same
@@ -100,7 +109,7 @@ const GanttChart = dynamic(
         loading: () => (
             <GanttStatePanel
                 icon={<Spinner className="size-6 text-muted-foreground" />}
-                message="Loading timeline…"
+                message="Loading timelineâ€¦"
                 pulse
             />
         ),
@@ -111,15 +120,15 @@ const GanttChart = dynamic(
  * The vendor's hover tooltip, loaded lazily on the client only, for the same SSR reason as the
  * chart itself.
  *
- * The tooltip MUST wrap the chart (`<GanttTooltip><Gantt … /></Gantt>`): its core renders a
+ * The tooltip MUST wrap the chart (`<GanttTooltip><Gantt â€¦ /></Gantt>`): its core renders a
  * `.wx-tooltip-area` that resolves hovered bars by walking the event target UP to that wrapper, so
  * a sibling tooltip never fires. It takes the modal store's `api` so `data-task-id` lookups hit the
  * modal's own rows, and a custom `content` so each bar shows the module's detail card instead of
- * the vendor's default text. The inline chart is deliberately left unwrapped — its label column
+ * the vendor's default text. The inline chart is deliberately left unwrapped â€” its label column
  * already identifies every bar, so wrapping it would add hover noise for no gain.
  *
  * Runtime note: `Tooltip` IS in the installed bundle's exports (verified in both `dist/index.es.js`
- * and `dist/index.cjs`). The sibling `Fullscreen` is NOT — the types declare it but neither bundle
+ * and `dist/index.cjs`). The sibling `Fullscreen` is NOT â€” the types declare it but neither bundle
  * exports it, so importing it would render `undefined` and crash. The modal shell below is
  * therefore host-owned (see `task-gantt-modal`); only the tooltip comes from the vendor.
  */
@@ -166,12 +175,12 @@ interface GanttTooltipCardProps {
     readonly data: GanttTooltipData;
     readonly taskById: ReadonlyMap<number, TaskListItem>;
     readonly memberNameById: ReadonlyMap<number, string>;
-    /** Tags by id — the row only carries link ids, the catalog carries the label, colour and icon. */
+    /** Tags by id â€” the row only carries link ids, the catalog carries the label, colour and icon. */
     readonly tagById: ReadonlyMap<number, TaskTagOption>;
 }
 
 /**
- * The hover card for one bar: name, date range, status, tags and assignees — compact, not a detail
+ * The hover card for one bar: name, date range, status, tags and assignees â€” compact, not a detail
  * sheet.
  *
  * The store row is NOT read for these: the vendor normalises tasks into its own shape, so the card
@@ -205,7 +214,7 @@ function GanttTooltipCard({ data, taskById, memberNameById, tagById }: GanttTool
             </p>
             {start === undefined || end === undefined ? null : (
                 <p className="text-xs opacity-90">
-                    {formatDateLong(start)} → {formatDateLong(end)}
+                    {formatDateLong(start)} â†’ {formatDateLong(end)}
                 </p>
             )}
             <p className="flex items-center gap-1.5 text-xs">
@@ -265,7 +274,7 @@ interface GanttTaskRow extends ITask {
     readonly openTask?: () => void;
 }
 
-/** The vendor calls a label cell with the row (and column) only — see {@link GanttTaskLabelCell}. */
+/** The vendor calls a label cell with the row (and column) only â€” see {@link GanttTaskLabelCell}. */
 interface GanttTaskLabelCellProps {
     readonly row: GanttTaskRow;
 }
@@ -277,7 +286,7 @@ interface GanttTaskLabelCellProps {
  * the column's `_cell` slot and installs its own renderer (`Nn` in `@svar-ui/react-gantt@2.7.3`),
  * which draws the tree toggle and then calls `_cell` with `{ row, column }`. Setting `cell` on the
  * `text` column is therefore the vendor's per-row label slot: the glyph lands inside the tree row,
- * after the toggle and before the name — the same `[status icon][task title]` order the tree uses.
+ * after the toggle and before the name â€” the same `[status icon][task title]` order the tree uses.
  *
  * `statusRef` lives on the task because the vendor hands the cell the ROW only, and a module-scope
  * component cannot close over a per-render lookup from `items`.
@@ -332,7 +341,7 @@ function GanttTaskLabelCell({ row }: GanttTaskLabelCellProps) {
 /**
  * The vendor icon font, fetched at runtime.
  *
- * The library renders its controls as `<i class="… wxi-…">` and relies on a *separate* stylesheet for
+ * The library renders its controls as `<i class="â€¦ wxi-â€¦">` and relies on a *separate* stylesheet for
  * the glyphs. Measured facts about the installed package (`@svar-ui/react-gantt@2.7.3`):
  *
  * - `dist/index.css` (what `style.css` maps to) has ZERO `@font-face` rules and ZERO `wxi-` rules.
@@ -342,7 +351,7 @@ function GanttTaskLabelCell({ row }: GanttTaskLabelCellProps) {
  *   therefore NOT render a single icon.
  * - The glyphs live in `https://cdn.svar.dev/fonts/wxi/wx-icons.css` (96 `:before` `content` rules +
  *   a `wx-icons` `@font-face`). The library injects that stylesheet itself, but only from its
- *   `<Material>` / `<Willow>` wrappers — components this view deliberately does NOT mount, because
+ *   `<Material>` / `<Willow>` wrappers â€” components this view deliberately does NOT mount, because
  *   they add the vendor's own `.wx-*-theme` class and would override the app's remap (see below).
  *
  * So the fix is to load exactly that one stylesheet, without the theme wrapper. It contains no
@@ -360,7 +369,7 @@ const GANTT_ICON_FONT_CSS = `@import url("https://cdn.svar.dev/fonts/wxi/wx-icon
  * chart actually reads is declared here and remapped onto the app's slate/shadcn tokens
  * (`--background`, `--foreground`, `--border`, `--muted`, `--card`, `--primary`, `--destructive`,
  * `--success`, `--accent`). Because these are plain custom properties set on ONE class, they only
- * cascade into this wrapper's subtree — they cannot leak into the rest of the app.
+ * cascade into this wrapper's subtree â€” they cannot leak into the rest of the app.
  *
  * Only variables the library reads are declared; `--wx-table-*` is deliberately omitted because the
  * library sets those on its own `.wx-table` element and remaps them from these values.
@@ -466,14 +475,14 @@ const GANTT_THEME_CSS = `${GANTT_ICON_FONT_CSS}
  * The current-day marker, applied by the `highlightTime` callback to today's day columns.
  *
  * `highlightTime` returns a CLASS NAME, not a style, so the name is inert unless a rule for it
- * actually reaches the chart. It is declared here — and prefixed with `.pm-task-gantt` — for the
+ * actually reaches the chart. It is declared here â€” and prefixed with `.pm-task-gantt` â€” for the
  * same reason the theme block is: the `<style>` tag is global, so the wrapper scope keeps the rule
  * inside this view's subtree and prevents a leak or a collision anywhere else.
  *
  * The vendor emits the class in TWO places, both fed from the same callback:
  *
  * 1. On the `.wx-cell` of the sticky day scale (the day number row). No vendor rule paints a plain
- *    `.wx-cell` background, so the tint below is the one that shows — this is the marker in the
+ *    `.wx-cell` background, so the tint below is the one that shows â€” this is the marker in the
  *    header strip.
  * 2. On a full-height column div inside the vendor's `.wx-gantt-holidays` overlay. That overlay is
  *    where a shaded weekend column is normally drawn, and it is rendered *before* the bars, so the
@@ -510,7 +519,7 @@ const GANTT_TODAY_CSS = `.pm-task-gantt .${GANTT_TODAY_CLASS} {
  * `visibility` (not `display`) blanks the glyphs while keeping the cells, their borders and the
  * row height intact, so the header geometry never shifts under the scroll position; the today
  * tint lives on the `.wx-cell` background and survives, only its number goes quiet. Driven by
- * the host's React-held `modalCellWidth` via the `data-day-labels` marker — the vendor `zoom`
+ * the host's React-held `modalCellWidth` via the `data-day-labels` marker â€” the vendor `zoom`
  * prop and `scales` config are not involved, zoom stays React-held.
  */
 const GANTT_MODAL_DAY_LABELS_CSS = `[data-slot="task-gantt-modal-chart"][data-day-labels="hidden"] .wx-scale > .wx-row:last-child .wx-cell > span {
@@ -522,7 +531,7 @@ const GANTT_MODAL_DAY_LABELS_CSS = `[data-slot="task-gantt-modal-chart"][data-da
  * untouched.
  *
  * The vendor's only vertical scroller is its outer `.wx-gantt` (`height: 100%` with
- * `overflow-y: auto` in the vendor stylesheet); it overflows — and therefore scrolls — only
+ * `overflow-y: auto` in the vendor stylesheet); it overflows â€” and therefore scrolls â€” only
  * when that 100% resolves against a bounded box, with the tall `.wx-pseudo-rows` (scales
  * height plus rows times `cellHeight`) inside it. A bounded outer is self-sustaining while an
  * unbounded one is self-defeating: sized to content, nothing overflows, and the host's
@@ -547,11 +556,11 @@ const GANTT_MODAL_SCROLL_CSS = `[data-slot="task-gantt-modal-chart"] .wx-tooltip
  *
  * Two vendor facts drive this shape. First, the day/week grid behind the bars is a canvas tile
  * (`Gn` in the vendor bundle, painted by the store's grid helper): `cellBorders="column"` draws
- * the vertical date divisions only and drops the horizontal row lines — the vendor-supported
+ * the vertical date divisions only and drops the horizontal row lines â€” the vendor-supported
  * switch for choosing divisions, so it is passed on both charts instead of hiding internals.
  * Second, the tile's line colour is read from the computed `--wx-gantt-border` by cutting from
  * the first hash (`a.substring(a.indexOf("#"))`), which means the shared token's
- * `hsl(var(--border))` value (no hash) degrades to the canvas default — opaque black 1px lines
+ * `hsl(var(--border))` value (no hash) degrades to the canvas default â€” opaque black 1px lines
  * that dominate the bars. The override below is a neutral grey at ~15% alpha in hex form
  * because the extraction demands a hash; it reads as a faint picket on light themes and a
  * faint lift on dark ones. The timescale dividers are plain CSS borders, so they soften in a
@@ -657,20 +666,27 @@ function skippedLabel(withoutDates: number, invertedRange: number): string {    
         return "Every task has both dates and appears on the timeline.";
     }
 
-    return `${parts.join(", and ")} — not shown on the timeline.`;
+    return `${parts.join(", and ")} â€” not shown on the timeline.`;
 }
 
-function emptyTimelineMessage(totalRows: number, visibleRows: number, hasFilter: boolean): string {
+function emptyTimelineMessage(totalRows: number, visibleRows: number, isFiltered: boolean): string {
     if (totalRows === 0) {
         return "No tasks in this list yet.";
     }
 
-    if (hasFilter && visibleRows === 0) {
-        return "No task is assigned to the selected people.";
+    if (isFiltered && visibleRows === 0) {
+        return "No tasks match the current search and filters.";
     }
 
     return "No task has both a start date and a due date, so there is nothing to place on the timeline.";
 }
+
+/** The fixed group ids the chart's two quick pickers own inside the shared filter. */
+const QUICK_ASSIGNEE_GROUP_ID = "quick-assignees";
+const QUICK_TAG_GROUP_ID = "quick-tags";
+
+/** A stable empty selection, so an unpicked quick filter allocates nothing per render. */
+const NO_FILTER_VALUES: readonly string[] = [];
 
 /** Months of empty timeline left reachable before the first and after the last task. */
 const NAVIGABLE_PADDING_MONTHS = 6;
@@ -705,7 +721,7 @@ const MODAL_CELL_WIDTH_STEP = 12;
  * The timescale font is 500 12px (`--wx-timescale-font`), so a two-digit day number spans roughly
  * 14px of glyphs; centred in its cell with no side slack it touches its neighbours, and at the
  * 12px floor every label overlaps into an unreadable strip. 24px keeps ~5px of air on each side
- * of "31" — and it is exactly one zoom step above the floor, so only the floor level (and a Fit
+ * of "31" â€” and it is exactly one zoom step above the floor, so only the floor level (and a Fit
  * result narrower than a comfortable label) renders labelless days. Below this width the modal
  * chart box carries `data-day-labels="hidden"` and the rule in `GANTT_MODAL_DAY_LABELS_CSS`
  * blanks the day-number text; the month row is never touched. Kept as a named bound next to the
@@ -730,7 +746,7 @@ const MODAL_ROW_HEIGHT_STEP = 4;
  *
  * The modal measures its chart box and divides what remains by the row count; the scale strip and
  * the modal's gaps are vendor-internal geometry the host cannot read, so this estimate (two scale
- * rows plus padding) keeps Fit conservative rather than exact — a row too tall would overflow, a
+ * rows plus padding) keeps Fit conservative rather than exact â€” a row too tall would overflow, a
  * row slightly short just leaves a sliver of empty chart.
  */
 const MODAL_CHROME_HEIGHT = 96;
@@ -781,7 +797,7 @@ interface GanttRange {
  *
  * The range deliberately does NOT depend on the navigation anchor. It is derived only from the tasks
  * (padded on both sides and widened to include today), so stepping a month changes nothing but the
- * scroll position — the store is never re-initialised mid-navigation, and there is no window where a
+ * scroll position â€” the store is never re-initialised mid-navigation, and there is no window where a
  * re-init races the scroll. The returned anchors are the months a user may land on.
  */
 function buildRange(items: readonly TaskListItem[]): GanttRange {
@@ -831,7 +847,7 @@ function buildRange(items: readonly TaskListItem[]): GanttRange {
  * exactly one id, so this is total with no "none" or "many" case to special-case, and with a finite
  * palette the colour simply repeats every `ASSIGNEE_COLOR_PALETTE.length` tasks.
  *
- * It deliberately reuses `assigneeColorFor` — a pure id -> palette mapping — so the bar applies the
+ * It deliberately reuses `assigneeColorFor` â€” a pure id -> palette mapping â€” so the bar applies the
  * IDENTICAL algorithm with no second palette or formula that could drift from it.
  */
 function barColorFor(item: TaskListItem): string {
@@ -842,7 +858,7 @@ function barColorFor(item: TaskListItem): string {
  * How much of a bar's palette colour survives into its fill and border: 75%, the requested
  * translucency.
  *
- * The softness is applied to the COLOUR — `color-mix(…, transparent)` — and never as `opacity` on the
+ * The softness is applied to the COLOUR â€” `color-mix(â€¦, transparent)` â€” and never as `opacity` on the
  * bar element. Element opacity would also fade the bar's label, whose ink `assigneeForegroundFor`
  * picks as a WCAG contrast decision; a softened glyph would undermine that and hurt legibility on
  * light fills. Mixing the colour itself fades the paint only and leaves the label at full contrast.
@@ -859,14 +875,14 @@ const BAR_FILL_KEEP = 75;
  * but ignores it), but each bar paints itself from `--wx-gantt-task-color` (plus the border/fill/font
  * companions) on an element carrying `data-task-id`. Declaring those variables ON that element beats
  * the single chart-wide declaration on `.pm-task-gantt`, because a custom property set on the node
- * itself resolves before any inherited value — genuinely per-task, not a global tint.
+ * itself resolves before any inherited value â€” genuinely per-task, not a global tint.
  *
  * The fill is `barColorFor(item)` mixed toward `transparent` (see {@link BAR_FILL_KEEP}), so bars read
  * as slightly softened rather than fully saturated. The border carries the SAME mix as the fill, so
- * the whole bar — edge included — softens together; a full-opacity border against a translucent fill
+ * the whole bar â€” edge included â€” softens together; a full-opacity border against a translucent fill
  * would trace the bar as a saturated ring, i.e. look like a rendering artefact rather than a
- * deliberately softened edge. The label ink stays `assigneeForegroundFor(hex)` — full-contrast ink
- * derived from the UN-mixed colour — because the text is the readable element and must not be
+ * deliberately softened edge. The label ink stays `assigneeForegroundFor(hex)` â€” full-contrast ink
+ * derived from the UN-mixed colour â€” because the text is the readable element and must not be
  * softened. Every task gets a rule, so no fallback path remains that could tint a bar from anything
  * but its own id.
  *
@@ -905,7 +921,7 @@ function buildBarColourCss(items: readonly TaskListItem[]): string {
  * This view is READ-ONLY by construction, matching the view contract's intent: the library is given
  * its own `readonly` flag, which strips the editor column, drops the add-task column and disables
  * drag/resize, and **no** `on*` mutation callback is passed. Nothing here writes, and no part of the
- * row data is mutated — the projection is rebuilt with `useMemo` from `items`.
+ * row data is mutated â€” the projection is rebuilt with `useMemo` from `items`.
  *
  * Dates enter as `YYYY-MM-DD` strings and are converted only through `parseDateOnly` (local calendar
  * parts). `new Date("YYYY-MM-DD")` reads the string as UTC midnight, which would slide every bar one
@@ -919,21 +935,79 @@ function buildBarColourCss(items: readonly TaskListItem[]): string {
  * @param props - the frozen `TaskViewProps` contract; the shell passes already-fetched data and the
  *                retry callback, and this view never fetches.
  */
-export function GanttView({ items, catalogs, memberNameById, isLoading, error, onRetry, onOpenTask }: TaskViewProps) {
-    /**
-     * The assignee filter, held as the picked user ids rendered to decimal strings (the option
-     * contract). Empty means "no filter", so the chart shows every task — that is both the initial
-     * state and the state the clear (X) returns to.
+export function GanttView({ items, catalogs, fields, memberNameById, isLoading, error, onRetry, onOpenTask }: TaskViewProps) {
+    /*
+     * The SAME filter the List and the other tabs write: state lives in the page, so a clause set
+     * here narrows every tab and a switch between tabs keeps the rows narrowed.
      */
-    const [assigneeFilter, setAssigneeFilter] = useState<readonly string[]>([]);
+    const filter = useViewTaskFilter({ items, fields, catalogs, memberNameById });
+    const visibleItems = filter.visibleItems;
 
-    /** The tag filter, same contract as the assignee one: picked tag ids as strings, empty is all. */
-    const [tagFilter, setTagFilter] = useState<readonly string[]>([]);
-
-    const visibleItems = useMemo<readonly TaskListItem[]>(
-        () => filterItemsByTags(filterItemsByAssignees(items, assigneeFilter), tagFilter),
-        [items, assigneeFilter, tagFilter],
+    /*
+     * The two quick pickers are not a second filter. Each writes ONE or-group into the shared groups,
+     * so a person or tag picked here shows up in the Filters dialog and in its count, and the picker
+     * values are read back OUT of the groups â€” the control and the dialog cannot disagree.
+     */
+    const quickGroupValues = useCallback(
+        (groupId: string): readonly string[] => {
+            const group = filter.groups.find((candidate) => candidate.id === groupId);
+            if (group === undefined) return NO_FILTER_VALUES;
+            return group.clauses
+                .filter((clause) => isClauseActive(clause) && clause.value !== null)
+                .map((clause) => clause.value as string);
+        },
+        [filter],
     );
+
+    const writeQuickGroup = useCallback(
+        (groupId: string, fieldKey: string, values: readonly string[]): void => {
+            const rest = filter.groups.filter((group) => group.id !== groupId);
+            if (values.length === 0) {
+                filter.onGroupsChange(rest);
+                return;
+            }
+            const next: FilterGroup = {
+                id: groupId,
+                operator: "or",
+                clauses: values.map(
+                    (value): FilterClause => ({
+                        id: `${groupId}:${value}`,
+                        fieldKey,
+                        operator: "is",
+                        value,
+                    }),
+                ),
+            };
+            filter.onGroupsChange([...rest, next]);
+        },
+        [filter],
+    );
+
+    const assigneeOptions = useMemo(() => {
+        const seen = new Set<number>();
+        for (const item of items) {
+            for (const assignee of item.assignees) seen.add(assignee.user_id);
+        }
+        return [...seen]
+            .sort((left, right) =>
+                assigneeName(left, memberNameById).localeCompare(assigneeName(right, memberNameById)),
+            )
+            .map((userId) => ({
+                value: String(userId),
+                label: assigneeName(userId, memberNameById),
+                color: assigneeColorFor(userId),
+            }));
+    }, [items, memberNameById]);
+
+    const tagOptions = useMemo(() => {
+        const seen = new Set<number>();
+        for (const item of items) {
+            for (const link of item.tags) seen.add(link.tag_id);
+        }
+        return catalogs.tags
+            .filter((tag) => seen.has(tag.id))
+            .map((tag) => ({ value: String(tag.id), label: tag.label, color: tag.color }));
+    }, [items, catalogs.tags]);
 
     /**
      * The library's task list, derived in one pass from the department's flat rows. Kept as
@@ -984,7 +1058,7 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
     /** The month the user navigated to, or `null` while the view still follows the data. */
     const [anchor, setAnchor] = useState<Date | null>(null);
 
-    /** The store handle from `init` — the only route to the library's actions. */
+    /** The store handle from `init` â€” the only route to the library's actions. */
     const [api, setApi] = useState<IApi | null>(null);
 
     const handleReady = useCallback((next: IApi) => {
@@ -1092,7 +1166,7 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
     /**
      * Returns zoom and the anchor to the defaults, so every zoom step and Fit is reversible. The
      * anchor clears back to following the data (the inline default), because Fit parks it on the
-     * data span's start month — leaving it parked would strand the next open on Fit's month.
+     * data span's start month â€” leaving it parked would strand the next open on Fit's month.
      */
     const resetModalZoom = useCallback(() => {
         setModalCellWidth(GANTT_CELL_WIDTH);
@@ -1139,7 +1213,7 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
      * previously opened on `range.start`, months before the first task) and would shrink the
      * cells to cover empty months. The chart keeps rendering the padded `start` / `end` props,
      * so the wings stay reachable by month stepping. Widths are derived from the live box size,
-     * then clamped to the zoom bounds — clamping is what makes Fit honest: a data span too wide
+     * then clamped to the zoom bounds â€” clamping is what makes Fit honest: a data span too wide
      * for the minimum cell keeps a horizontal scrollbar, and a row set too tall for the 28px
      * floor keeps a vertical one, instead of shrinking into illegibility. Few rows never stretch
      * past the default height. The anchor moves to the data span's start month so the fitted
@@ -1220,7 +1294,7 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
      *
      * So the bar is read off the DOM instead. Each bar renders as `.wx-bar[data-task-id]`, and the
      * vendor writes that attribute through its own `setID`, which passes a numeric id through
-     * verbatim — so the attribute IS the task id. Anchoring on `.wx-bar` is what keeps this to bars:
+     * verbatim â€” so the attribute IS the task id. Anchoring on `.wx-bar` is what keeps this to bars:
      * a click anywhere in the tree pane has no `.wx-bar` ancestor and is ignored.
      */
     const handleChartClick = useCallback(
@@ -1249,7 +1323,7 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
      * widths in one action, and this single effect is the one place that scrolls, so the two
      * agree on the final position (the data span's start) with no race. The widths are deps
      * because the store re-initialises from `start`/`end` on re-render and that resets the
-     * scroll — re-running keeps the month in place across zoom steps too.
+     * scroll â€” re-running keeps the month in place across zoom steps too.
      */
     useEffect(() => {
         if (modalApi === null) {
@@ -1261,7 +1335,7 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
 
     /**
      * Closes on Escape and locks the page scroll while open. Escape never types into an input, so
-     * this cannot hijack editing anywhere on the page — and no other hotkey is registered.
+     * this cannot hijack editing anywhere on the page â€” and no other hotkey is registered.
      */
     useEffect(() => {
         if (!modalOpen) {
@@ -1288,7 +1362,132 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
     const isEmpty = !isLoading && !showError && projection.tasks.length === 0;
     const skipMessage = skippedLabel(projection.withoutDates, projection.invertedRange);
 
-    const hasAssigneeFilter = assigneeFilter.length > 0;
+    /*
+     * The month stepper lives in the bar's centre slot rather than on its own row: one bar per tab
+     * means search, timeline navigation and the filter controls read as a single line.
+     */
+    const timelineNav = (
+        <div
+            data-slot="task-gantt-nav"
+            role="group"
+            aria-label="Timeline navigation"
+            className="flex flex-wrap items-center justify-center gap-2"
+        >
+            <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="Show the previous month"
+                className={FILTER_BAR_ITEM_CLASS}
+                onClick={showPreviousMonth}
+            >
+                <ChevronLeft className="size-4" aria-hidden="true" />
+            </Button>
+
+            <p
+                data-slot="task-gantt-period"
+                aria-live="polite"
+                className="min-w-36 text-center text-sm font-medium tabular-nums text-muted-foreground"
+            >
+                {monthLabel(visibleMonth)}
+            </p>
+
+            <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="Show the next month"
+                className={FILTER_BAR_ITEM_CLASS}
+                onClick={showNextMonth}
+            >
+                <ChevronRight className="size-4" aria-hidden="true" />
+            </Button>
+
+            <Button
+                type="button"
+                variant="outline"
+                className={FILTER_BAR_ITEM_CLASS}
+                onClick={showToday}
+            >
+                <CalendarDays className="size-4" aria-hidden="true" />
+                Today
+            </Button>
+
+            <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="Open fullscreen timeline"
+                className={FILTER_BAR_ITEM_CLASS}
+                onClick={openModal}
+            >
+                <Maximize2 className="size-4" aria-hidden="true" />
+            </Button>
+        </div>
+    );
+
+    /*
+     * Built once and used by both the chart and the empty panel: a filter that hides every dated row
+     * must still leave its own controls on screen, or the reader has no way back to all rows.
+     */
+    const filterBar = (
+        <TaskFilterControl
+            searchValue={filter.search}
+            onSearchChange={filter.onSearchChange}
+            groups={filter.groups}
+            onGroupsChange={filter.onGroupsChange}
+            fields={fields}
+            statuses={filter.statuses}
+            priorities={filter.priorities}
+            tags={filter.tags}
+            members={filter.members}
+            currentUserId={null}
+            savedFilters={filter.savedFilters}
+            onSaveFilter={filter.onSaveFilter}
+            onApplySavedFilter={filter.onApplySavedFilter}
+            onDeleteSavedFilter={filter.onDeleteSavedFilter}
+            isFiltering={filter.isFiltering}
+            onClear={filter.clearFilters}
+            centerExtras={timelineNav}
+            extras={
+                <>
+                    <MultiSelectCombobox
+                        options={tagOptions}
+                        values={quickGroupValues(QUICK_TAG_GROUP_ID)}
+                        onValuesChange={(values) =>
+                            writeQuickGroup(QUICK_TAG_GROUP_ID, TAGS_FIELD_KEY, values)
+                        }
+                        placeholder="Filter by tag"
+                        searchPlaceholder="Search tags..."
+                        emptyMessage="No tags match."
+                        ariaLabel="Filter by tag"
+                        className={cn(FILTER_BAR_ITEM_CLASS, "min-h-9 py-0 sm:w-fit")}
+                    />
+                    <MultiSelectCombobox
+                        options={assigneeOptions}
+                        values={quickGroupValues(QUICK_ASSIGNEE_GROUP_ID)}
+                        onValuesChange={(values) =>
+                            writeQuickGroup(QUICK_ASSIGNEE_GROUP_ID, ASSIGNEE_FIELD_KEY, values)
+                        }
+                        placeholder="Filter by assignee"
+                        searchPlaceholder="Search assignees..."
+                        emptyMessage="No assignees match."
+                        ariaLabel="Filter by assignee"
+                        className={cn(FILTER_BAR_ITEM_CLASS, "min-h-9 py-0 sm:w-fit")}
+                        renderSelectionSummary={(picked) => (
+                            <AssigneeStack
+                                assignees={picked.map((value) => ({
+                                    user_id: Number(value),
+                                    full_name: assigneeName(Number(value), memberNameById),
+                                }))}
+                                max={3}
+                            />
+                        )}
+                    />
+                </>
+            }
+        />
+    );
 
     /**
      * Whether the day-number row is blanked. Derived from the React-held zoom width (never the
@@ -1302,7 +1501,7 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
         return (
             <GanttStatePanel
                 icon={<Spinner className="size-6 text-muted-foreground" />}
-                message="Loading tasks…"
+                message="Loading tasksâ€¦"
                 pulse
             />
         );
@@ -1322,12 +1521,13 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
     if (isEmpty) {
         return (
             <section data-slot="task-gantt" aria-label="Task timeline" className="w-full min-w-0 space-y-3">
+                {filterBar}
                 <GanttStatePanel
                     icon={<ChartGantt className="size-8 text-muted-foreground/50" aria-hidden="true" />}
                     message={emptyTimelineMessage(
                         items.length,
                         visibleItems.length,
-                        hasAssigneeFilter,
+                        filter.isFiltering,
                     )}
                 />
                 <p
@@ -1345,87 +1545,10 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
         <section data-slot="task-gantt" aria-label="Task timeline" className="w-full min-w-0 space-y-3">
             <style>{GANTT_THEME_CSS + GANTT_TODAY_CSS + GANTT_MODAL_DAY_LABELS_CSS + GANTT_MODAL_SCROLL_CSS + GANTT_QUIET_GRID_CSS + barColourRules}</style>
 
-            {/* One row: the month stepper centred by the two equal side columns, the tag and assignee
-                filters parked in the right one. The library exposes the store action but renders no
-                toolbar of its own, so the stepper is hosted here — its buttons use the app's own
-                Lucide icons and are therefore never blank, independent of the vendor font.
+            {filterBar}
 
-                Both filters widen by OR, not intersect: picking a second tag or assignee adds their
-                tasks, and the clear (X) returns to all of them. Below `sm` the row stacks, stepper
-                first. */}
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
-                <div aria-hidden="true" className="hidden sm:block" />
-
-                <div
-                    data-slot="task-gantt-nav"
-                    role="group"
-                    aria-label="Timeline navigation"
-                    className="flex flex-wrap items-center justify-center gap-2"
-                >
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        aria-label="Show the previous month"
-                        onClick={showPreviousMonth}
-                    >
-                        <ChevronLeft className="size-4" aria-hidden="true" />
-                    </Button>
-
-                    <p
-                        data-slot="task-gantt-period"
-                        aria-live="polite"
-                        className="min-w-36 text-center text-sm font-medium tabular-nums text-muted-foreground"
-                    >
-                        {monthLabel(visibleMonth)}
-                    </p>
-
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        aria-label="Show the next month"
-                        onClick={showNextMonth}
-                    >
-                        <ChevronRight className="size-4" aria-hidden="true" />
-                    </Button>
-
-                    <Button type="button" variant="outline" size="sm" onClick={showToday}>
-                        <CalendarDays className="size-4" aria-hidden="true" />
-                        Today
-                    </Button>
-
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        aria-label="Open fullscreen timeline"
-                        onClick={openModal}
-                    >
-                        <Maximize2 className="size-4" aria-hidden="true" />
-                    </Button>
-                </div>
-
-                <div
-                    data-slot="task-gantt-assignee-filter"
-                    className="flex flex-wrap items-center justify-center gap-2 sm:justify-end"
-                >
-                    <TagFilterCombobox
-                        items={items}
-                        tags={catalogs.tags}
-                        values={tagFilter}
-                        onValuesChange={setTagFilter}
-                        className="sm:w-fit"
-                    />
-                    <AssigneeFilterCombobox
-                        items={items}
-                        memberNameById={memberNameById}
-                        values={assigneeFilter}
-                        onValuesChange={setAssigneeFilter}
-                        className="sm:w-fit"
-                    />
-                </div>
-            </div>
+            {/* The month stepper now sits in the filter bar's centre slot (see `timelineNav`), so the
+                chart follows the bar directly. */}
 
             {/* `overflow-hidden` + a bounded height keep the chart's own scrolling inside this box, so a
                 375px viewport never gains a page-level horizontal scrollbar. */}
@@ -1448,10 +1571,10 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
                         from this view back to a mutation.
 
                         `autoScale` is switched off so the visible span is the one computed from the
-                        rows (plus padding), not one fitted to the tasks — without that, the range
+                        rows (plus padding), not one fitted to the tasks â€” without that, the range
                         cannot extend past the last task and month stepping has nowhere to go.
                         `cellBorders="column"` keeps the vertical date divisions only and drops the
-                        horizontal row lines — the quieted grid's vendor switch (see
+                        horizontal row lines â€” the quieted grid's vendor switch (see
                         `GANTT_QUIET_GRID_CSS`). */}
                     <GanttChart
                         tasks={projection.tasks}
@@ -1477,7 +1600,7 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
             </p>
 
             {/* The explore view. Host-owned fixed overlay (the vendor's `Fullscreen` is types-only in
-                the installed bundle — see `GanttTooltip`), kept inside this section so the theme,
+                the installed bundle â€” see `GanttTooltip`), kept inside this section so the theme,
                 today-marker and per-task bar-colour rules above cascade into it. The chart mounts
                 only while open so the vendor measures a laid-out box, never a hidden one. */}
             {modalOpen ? (
@@ -1494,7 +1617,7 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
                     >
                         {/* The modal's own month stepper, mirroring the inline chart's period
                             navigation: month stepping parks `modalAnchor`, which the shared scroll
-                            effect then follows — Fit, month step and Today all flow through it. */}
+                            effect then follows â€” Fit, month step and Today all flow through it. */}
                         <div
                             role="group"
                             aria-label="Timeline navigation"
@@ -1533,7 +1656,7 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
 
                         {/* Time-axis and row-height steppers reuse the nav group's outline/sm
                             conventions. The pairs are distinguishable by axis: magnifiers for time,
-                            vertical fold/unfold for rows — never two identical Minus/Plus pairs. */}
+                            vertical fold/unfold for rows â€” never two identical Minus/Plus pairs. */}
                         <div
                             role="group"
                             aria-label="Time axis zoom"
@@ -1626,14 +1749,14 @@ export function GanttView({ items, catalogs, memberNameById, isLoading, error, o
                                 differences: no label column (bar labels + tooltip identify bars),
                                 the bar-name template, column-only background grid lines (the day
                                 divisions without the row lines, which the quieted grid tokens then
-                                soften — see `GANTT_QUIET_GRID_CSS`), and its own `init` handle on
+                                soften â€” see `GANTT_QUIET_GRID_CSS`), and its own `init` handle on
                                 its own store. `modalApi` starts null so the wrapping tooltip simply
                                 stays quiet until the chart reports ready. */}
                             <GanttTooltip api={modalApi ?? undefined} content={tooltipContent}>
                                 {/* The modal chart takes the React-held zoom widths. The inline chart
                                     above keeps its fixed values: zoom is a modal-only concern, and
                                     holding it in props (not store-internal zoom) is what survives the
-                                    store re-init from `start`/`end` — see the zoom callbacks. */}
+                                    store re-init from `start`/`end` â€” see the zoom callbacks. */}
                                 <GanttChart
                                     tasks={projection.tasks}
                                     readonly

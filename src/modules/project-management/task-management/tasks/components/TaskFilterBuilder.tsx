@@ -36,34 +36,44 @@ import {
 import { SingleDatePicker } from "./SingleDatePicker";
 import {
     ASSIGNEE_FIELD_KEY,
+    FILTER_GROUP_LABELS,
     FILTER_OPERATORS,
     FILTER_OPERATOR_LABELS,
     PRIORITY_FIELD_KEY,
     STATUS_FIELD_KEY,
     TAGS_FIELD_KEY,
     createFilterClause,
+    createFilterGroup,
     customFieldIdFromKey,
     fieldFilterKey,
     fieldKind,
+    isClauseActive,
     operatorTakesValue,
     operatorsForKind,
     type FilterClause,
+    type FilterGroup,
+    type FilterGroupOperator,
     type FilterOperator,
     type SavedTaskFilter,
 } from "./task-filter";
 import type { TaskField } from "../hooks/useTasks";
 
 /**
- * The tasks FILTER BUILDER: the modal BODY — `[field] [operator] [value] [remove]` rows, a
- * `+ Add filter` button, and a `Saved filters` dropdown.
+ * The tasks FILTER BUILDER: the modal BODY — groups of `[field] [operator] [value] [remove]` rows,
+ * `+ Add filter` inside a group, `+ Add group`, and a `Saved filters` dropdown.
  *
- * The modal supplies the `Filters` title (see `TasksToolbar`), so this renders no heading of its own
- * and no outer card: it is a plain vertical stack so it can fill the dialog body without a box inside
- * a box. The `filters-info` tooltip stays here because it explains how the rows combine.
+ * TWO levels, and the difference matters: GROUPS always combine with AND (every group must be
+ * satisfied), while ROWS inside one group combine by that group's own operator — `Match all` is the
+ * strict AND the module had before, `Match any` is the OR that lets one question read "this tag,
+ * and either status A or B" as two groups: `[Tags is X]` and `[Status is A or Status B]`.
  *
- * Purely presentational and fully controlled — the orchestrator owns the clause array and the saved
- * sets, and this file never fetches, stores or derives a filter. The two pieces of local state it
- * does keep are the save-name input's open flag and its draft text, which are transient UI.
+ * The modal supplies the `Filters` title (see `TaskFilterControl`), so this renders no heading of its
+ * own and no outer card: it is a plain vertical stack so it can fill the dialog body without a box
+ * inside a box. The `filters-info` tooltip stays here because it explains how the rows combine.
+ *
+ * Purely presentational and fully controlled — the orchestrator owns the groups and the saved sets,
+ * and this file never fetches, stores or derives a filter. The two pieces of local state it does keep
+ * are the save-name input's open flag and its draft text, which are transient UI.
  *
  * Each row's value control switches on the field's TYPE: status / priority / tags and a custom
  * `select` offer their catalog options (choice ids, never labels), a custom `date` uses the module's
@@ -87,8 +97,8 @@ export interface FilterBuilderMember {
 }
 
 export interface TaskFilterBuilderProps {
-    readonly clauses: readonly FilterClause[];
-    readonly onClausesChange: (next: readonly FilterClause[]) => void;
+    readonly groups: readonly FilterGroup[];
+    readonly onGroupsChange: (next: readonly FilterGroup[]) => void;
     /** The department's ENABLED custom columns — the list's own `fields`, never a second fetch. */
     readonly fields: readonly TaskField[];
     readonly statuses: readonly FilterBuilderOption[];
@@ -99,7 +109,7 @@ export interface TaskFilterBuilderProps {
     /** Used only to mark the signed-in member's own row in the assignee value control. */
     readonly currentUserId: number | null;
     readonly savedFilters: readonly SavedTaskFilter[];
-    readonly onSaveFilter: (name: string, clauses: readonly FilterClause[]) => void;
+    readonly onSaveFilter: (name: string, groups: readonly FilterGroup[]) => void;
     readonly onApplySavedFilter: (filter: SavedTaskFilter) => void;
     readonly onDeleteSavedFilter: (id: string) => void;
 }
@@ -430,8 +440,8 @@ function FilterClauseRow({
 }
 
 export function TaskFilterBuilder({
-    clauses,
-    onClausesChange,
+    groups,
+    onGroupsChange,
     fields,
     statuses,
     priorities,
@@ -446,21 +456,59 @@ export function TaskFilterBuilder({
     const [isNaming, setIsNaming] = useState(false);
     const [draftName, setDraftName] = useState("");
 
-    const updateClause = (next: FilterClause): void => {
-        onClausesChange(clauses.map((clause) => (clause.id === next.id ? next : clause)));
+    const activeClauseCount = groups.reduce(
+        (total, group) => total + group.clauses.filter(isClauseActive).length,
+        0,
+    );
+
+    const replaceGroup = (next: FilterGroup): void => {
+        onGroupsChange(groups.map((group) => (group.id === next.id ? next : group)));
     };
 
-    const removeClause = (id: string): void => {
-        onClausesChange(clauses.filter((clause) => clause.id !== id));
+    const removeGroup = (groupId: string): void => {
+        onGroupsChange(groups.filter((group) => group.id !== groupId));
     };
 
-    const addClause = (): void => {
-        onClausesChange([...clauses, createFilterClause()]);
+    const addGroup = (): void => {
+        onGroupsChange([...groups, createFilterGroup()]);
+    };
+
+    /** The empty state's one-click start: a first AND group holding one fresh row. */
+    const addFirstClause = (): void => {
+        onGroupsChange([{ ...createFilterGroup("and"), clauses: [createFilterClause()] }]);
+    };
+
+    const addClause = (groupId: string): void => {
+        onGroupsChange(
+            groups.map((group) =>
+                group.id === groupId ? { ...group, clauses: [...group.clauses, createFilterClause()] } : group,
+            ),
+        );
+    };
+
+    const updateClause = (groupId: string, next: FilterClause): void => {
+        onGroupsChange(
+            groups.map((group) =>
+                group.id === groupId
+                    ? { ...group, clauses: group.clauses.map((clause) => (clause.id === next.id ? next : clause)) }
+                    : group,
+            ),
+        );
+    };
+
+    const removeClause = (groupId: string, clauseId: string): void => {
+        onGroupsChange(
+            groups.map((group) =>
+                group.id === groupId
+                    ? { ...group, clauses: group.clauses.filter((clause) => clause.id !== clauseId) }
+                    : group,
+            ),
+        );
     };
 
     const commitSave = (): void => {
-        if (draftName.trim() === "" || clauses.length === 0) return;
-        onSaveFilter(draftName, clauses);
+        if (draftName.trim() === "" || activeClauseCount === 0) return;
+        onSaveFilter(draftName, groups);
         setDraftName("");
         setIsNaming(false);
     };
@@ -483,8 +531,9 @@ export function TaskFilterBuilder({
                             </Button>
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-64">
-                            Filters combine with AND: a task must match every active row. A row with no
-                            field, or a value-taking row with no value, is ignored.
+                            Groups combine with AND: a task must satisfy every group. Inside a group,
+                            rows combine by its own setting — Match all needs every row, Match any needs
+                            one. A row with no field, or a value-taking row with no value, is ignored.
                         </TooltipContent>
                     </Tooltip>
                 </div>
@@ -571,7 +620,7 @@ export function TaskFilterBuilder({
                             )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
-                                disabled={clauses.length === 0}
+                                disabled={activeClauseCount === 0}
                                 onSelect={() => setIsNaming(true)}
                             >
                                 Save current filters…
@@ -581,25 +630,84 @@ export function TaskFilterBuilder({
                 )}
             </div>
 
-            {clauses.length === 0 ? (
+            {groups.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
                     No filters yet. Add one to narrow the list.
                 </p>
             ) : (
                 <div className="space-y-2">
-                    {clauses.map((clause) => (
-                        <FilterClauseRow
-                            key={clause.id}
-                            clause={clause}
-                            fields={fields}
-                            statuses={statuses}
-                            priorities={priorities}
-                            tags={tags}
-                            members={members}
-                            currentUserId={currentUserId}
-                            onChange={updateClause}
-                            onRemove={() => removeClause(clause.id)}
-                        />
+                    {groups.map((group) => (
+                        <section
+                            key={group.id}
+                            data-slot="task-filter-group"
+                            className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-3"
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <Select
+                                    value={group.operator}
+                                    onValueChange={(next) =>
+                                        replaceGroup({
+                                            ...group,
+                                            operator: (next === "or" ? "or" : "and") as FilterGroupOperator,
+                                        })
+                                    }
+                                >
+                                    <SelectTrigger
+                                        className="h-8 w-36 whitespace-nowrap"
+                                        aria-label="How this group's rows combine"
+                                    >
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="and" className="whitespace-nowrap">
+                                            {FILTER_GROUP_LABELS.and}
+                                        </SelectItem>
+                                        <SelectItem value="or" className="whitespace-nowrap">
+                                            {FILTER_GROUP_LABELS.or}
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
+
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    aria-label="Remove group"
+                                    title="Remove group"
+                                    data-slot="task-filter-remove-group"
+                                    className="text-muted-foreground hover:text-destructive"
+                                    onClick={() => removeGroup(group.id)}
+                                >
+                                    <Trash2 className="size-4" aria-hidden="true" />
+                                </Button>
+                            </div>
+
+                            {group.clauses.map((clause) => (
+                                <FilterClauseRow
+                                    key={clause.id}
+                                    clause={clause}
+                                    fields={fields}
+                                    statuses={statuses}
+                                    priorities={priorities}
+                                    tags={tags}
+                                    members={members}
+                                    currentUserId={currentUserId}
+                                    onChange={(next) => updateClause(group.id, next)}
+                                    onRemove={() => removeClause(group.id, clause.id)}
+                                />
+                            ))}
+
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                data-slot="task-filter-add"
+                                onClick={() => addClause(group.id)}
+                            >
+                                <Plus className="size-4" aria-hidden="true" />
+                                Add filter
+                            </Button>
+                        </section>
                     ))}
                 </div>
             )}
@@ -608,11 +716,11 @@ export function TaskFilterBuilder({
                 type="button"
                 variant="outline"
                 size="sm"
-                data-slot="task-filter-add"
-                onClick={addClause}
+                data-slot="task-filter-add-group"
+                onClick={groups.length === 0 ? addFirstClause : addGroup}
             >
                 <Plus className="size-4" aria-hidden="true" />
-                Add filter
+                {groups.length === 0 ? "Add filter" : "Add group"}
             </Button>
         </div>
     );

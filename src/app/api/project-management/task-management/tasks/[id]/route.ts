@@ -4,7 +4,6 @@ import { isScopedActor, resolveActor, type ScopedActor } from "@/modules/project
 import {
     PermissionError,
     assertCanDelete,
-    assertCanEdit,
     getPermissionContext,
 } from "@/modules/project-management/task-management/tasks/services/permission-service";
 import { loadTaskScoped } from "@/modules/project-management/task-management/tasks/services/scoping";
@@ -177,12 +176,19 @@ export async function PATCH(
         const task = await loadTaskScoped(actor, id);
         if (task === null) return notFound("Task not found");
 
-        await assertCanEdit(actor, task);
+        // One capability evaluation serves both the gate and the row the service returns.
+        // `assertCanEdit` builds its own context and the update needs the same one, so calling both
+        // spent four round trips where two do — the gate is the same predicate, only inline.
+        const permissions = await getPermissionContext(actor);
+        if (!permissions.canEditThisTask(task)) {
+            throw new PermissionError(
+                "FORBIDDEN: Editing this task requires Edit access, or being its creator",
+            );
+        }
 
         const body = await parseBody(req, UpdateTaskSchema);
         if (!body.ok) return body.response;
 
-        const permissions = await getPermissionContext(actor);
         const row = await TaskItemService.updateTask(actor, permissions, task, body.data);
 
         return NextResponse.json({ success: true, data: row });
