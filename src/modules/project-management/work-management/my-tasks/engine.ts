@@ -53,7 +53,11 @@ export class WorkEngine {
   const o = this.state.occurrences.find(o => o.id === occurrenceId);
   const task = o && this.state.tasks.find(t => t.id === o.task_id);
   const assignment = o && this.state.assignments.find(a => a.id === o.assignment_id);
+<<<<<<< HEAD
   requireRule(o && task && assignment && canRead(this.actor, task, assignment, this.workspace), 404, "NOT_FOUND", "Occurrence not found.");
+=======
+  requireRule(o && task && assignment && canRead(this.actor, task, assignment, this.workspace, true), 404, "NOT_FOUND", "Occurrence not found.");
+>>>>>>> origin
   return o;
  }
  private editable(task: Task) { requireRule(canEdit(this.actor, task) && this.workspace === "assignor", 403, "FORBIDDEN", "Task editing is not allowed."); requireRule(task.lifecycle_status !== "CANCELLED", 422, "CANCELLED", "Cancelled tasks cannot be changed."); }
@@ -77,8 +81,12 @@ export class WorkEngine {
  }
  generate(task: Task, request: string, futureOnly = false) {
   if (task.lifecycle_status !== "ACTIVE") return;
+<<<<<<< HEAD
   const monthly = task.schedule.frequency === "MONTHLY" || task.schedule.frequency === "CUSTOM" && task.schedule.interval_unit === "MONTH";
   const through = addDays(localDate(this.now, task.schedule.timezone), monthly ? 400 : 60);
+=======
+  const through = addDays(localDate(this.now, task.schedule.timezone), 60);
+>>>>>>> origin
   const dates = scheduleDates(task.schedule, through);
   for (const assignment of this.state.assignments.filter(a => a.task_id === task.id && a.status === "ACTIVE")) {
    for (const date of dates) {
@@ -191,13 +199,21 @@ export class WorkEngine {
   }
   return { acknowledged: true };
  }
+<<<<<<< HEAD
  list(from: string, to: string, employee?: string): OccurrenceView[] {
+=======
+ list(from: string, to: string, employee?: string, review = false): OccurrenceView[] {
+>>>>>>> origin
   return this.state.occurrences.flatMap(o => {
    const task = this.state.tasks.find(t => t.id === o.task_id)!; const assignment = this.state.assignments.find(a => a.id === o.assignment_id)!;
    const assignee = this.state.employees.find(e => e.id === assignment.assignee_user_id)!;
    const date = localDate(o.due_at);
+<<<<<<< HEAD
    const ownScope = this.workspace !== "my-tasks" || assignment.assignee_user_id === this.actor.id;
     if (!ownScope || !canRead(this.actor, task, assignment, this.workspace) || date < from || date > to || employee && employee !== assignee.id) return [];
+=======
+   if (!canRead(this.actor, task, assignment, this.workspace, review) || review && ![task.created_by, task.report_to_user_id].includes(this.actor.id) || date < from || date > to || employee && employee !== assignee.id) return [];
+>>>>>>> origin
    return [{ ...o, task, assignee, submissions: this.state.submissions.filter(s => s.occurrence_id === o.id) }];
   }).sort((a, b) => a.due_at.localeCompare(b.due_at));
  }

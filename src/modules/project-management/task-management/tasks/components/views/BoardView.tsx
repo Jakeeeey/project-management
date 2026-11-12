@@ -31,9 +31,11 @@ import { cn } from "@/lib/utils";
 import { CatalogChipDot } from "../CatalogChip";
 
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
-import type { TaskListItem } from "../../hooks/useTasks";
-import { AssigneeFilterCombobox, filterItemsByAssignees } from "../AssigneeFilterCombobox";import { AssigneeStack, type TaskAssigneeView } from "../AssigneeStack";
+import type { TaskListItem, TaskTagOption } from "../../hooks/useTasks";
+import { AssigneeFilterCombobox, filterItemsByAssignees } from "../AssigneeFilterCombobox";
+import { AssigneeStack, type TaskAssigneeView } from "../AssigneeStack";
 import { CatalogStatusIcon } from "../CatalogStatusIcon";
+import { resolveTaskTags, TaskTagStack } from "../TaskTags";
 import { TaskCombobox } from "../TaskCombobox";
 import { formatTaskDateRange } from "../TaskRow";
 import { TaskPriorityBadge } from "../TaskRowBadges";
@@ -278,6 +280,7 @@ export function BoardView({
                     column={column}
                     tasksById={tasksById}
                     memberNameById={memberNameById}
+                    tagCatalog={catalogs.tags}
                     dragEnabled={dragEnabled}
                     onOpenTask={onOpenTask}
                 />
@@ -349,6 +352,7 @@ export function BoardView({
                                     task={overlayTask}
                                     parentTitle={overlayParentTitle}
                                     memberNameById={memberNameById}
+                                    tagCatalog={catalogs.tags}
                                 />
                             </article>
                         )}
@@ -431,6 +435,8 @@ interface BoardColumnProps {
     column: BoardGroupColumn;
     tasksById: ReadonlyMap<number, TaskListItem>;
     memberNameById: ReadonlyMap<number, string>;
+    /** The department's tag catalog — a card carries tag ids, the chip needs label and colour. */
+    tagCatalog: readonly TaskTagOption[];
     dragEnabled: boolean;
     onOpenTask?: (taskId: number) => void;
 }
@@ -439,7 +445,7 @@ interface BoardColumnProps {
 const INITIAL_VISIBLE_CARDS = 20;
 
 /** One group column. */
-function BoardColumn({ column, tasksById, memberNameById, dragEnabled, onOpenTask }: BoardColumnProps) {
+function BoardColumn({ column, tasksById, memberNameById, tagCatalog, dragEnabled, onOpenTask }: BoardColumnProps) {
     const [showAllCards, setShowAllCards] = useState(false);
     const { setNodeRef, isOver } = useDroppable({
         id: column.key,
@@ -510,6 +516,7 @@ function BoardColumn({ column, tasksById, memberNameById, dragEnabled, onOpenTas
                                         : (tasksById.get(task.parent_id)?.title ?? null)
                                 }
                                 memberNameById={memberNameById}
+                                tagCatalog={tagCatalog}
                                 onOpenTask={onOpenTask}
                             />
                         ) : (
@@ -522,6 +529,7 @@ function BoardColumn({ column, tasksById, memberNameById, dragEnabled, onOpenTas
                                         : (tasksById.get(task.parent_id)?.title ?? null)
                                 }
                                 memberNameById={memberNameById}
+                                tagCatalog={tagCatalog}
                                 onOpenTask={onOpenTask}
                             />
                         ),
@@ -549,11 +557,12 @@ interface BoardCardProps {
     /** The parent's title, or `null` when the task is a root or its parent is not in the row set. */
     parentTitle: string | null;
     memberNameById: ReadonlyMap<number, string>;
+    tagCatalog: readonly TaskTagOption[];
     onOpenTask?: (taskId: number) => void;
 }
 
 /** One task as a board card. */
-function BoardCard({ task, parentTitle, memberNameById, onOpenTask }: BoardCardProps) {
+function BoardCard({ task, parentTitle, memberNameById, tagCatalog, onOpenTask }: BoardCardProps) {
     const interactive = onOpenTask !== undefined;
 
     return (
@@ -584,13 +593,14 @@ function BoardCard({ task, parentTitle, memberNameById, onOpenTask }: BoardCardP
                 task={task}
                 parentTitle={parentTitle}
                 memberNameById={memberNameById}
+                tagCatalog={tagCatalog}
             />
         </article>
     );
 }
 
 /** The same card as a drag source; a `can_edit === false` row renders but never lifts. */
-function DraggableBoardCard({ task, parentTitle, memberNameById, onOpenTask }: BoardCardProps) {
+function DraggableBoardCard({ task, parentTitle, memberNameById, tagCatalog, onOpenTask }: BoardCardProps) {
     const interactive = onOpenTask !== undefined;
     const { listeners, setNodeRef, transform, isDragging } = useDraggable({
         id: dragCardId(task.id),
@@ -630,6 +640,7 @@ function DraggableBoardCard({ task, parentTitle, memberNameById, onOpenTask }: B
                 task={task}
                 parentTitle={parentTitle}
                 memberNameById={memberNameById}
+                tagCatalog={tagCatalog}
             />
         </article>
     );
@@ -639,14 +650,16 @@ interface BoardCardBodyProps {
     task: TaskListItem;
     parentTitle: string | null;
     memberNameById: ReadonlyMap<number, string>;
+    tagCatalog: readonly TaskTagOption[];
 }
 
 /** The card's painted content, shared by the card, its drag source and its overlay. */
-function BoardCardBody({ task, parentTitle, memberNameById }: BoardCardBodyProps) {
+function BoardCardBody({ task, parentTitle, memberNameById, tagCatalog }: BoardCardBodyProps) {
     const assignees: TaskAssigneeView[] = task.assignees.map((assignee) => ({
         user_id: assignee.user_id,
         full_name: assigneeName(assignee.user_id, memberNameById),
     }));
+    const tags = resolveTaskTags(task.tags, tagCatalog);
     const rangeText = formatTaskDateRange(task.start_date, task.end_date);
 
     return (
@@ -671,6 +684,14 @@ function BoardCardBody({ task, parentTitle, memberNameById }: BoardCardBodyProps
             <div className="mt-2">
                 <AssigneeStack assignees={assignees} max={3} />
             </div>
+
+            {/* Only painted when the task carries tags: a board card is a glance, and an empty
+                glyph on every card would be noise rather than information. */}
+            {tags.length > 0 ? (
+                <div className="mt-2 flex justify-center">
+                    <TaskTagStack tags={tags} max={3} />
+                </div>
+            ) : null}
         </>
     );
 }

@@ -48,6 +48,7 @@ import {
     Verified,
     type LucideIcon,
 } from "lucide-react";
+import { DynamicIcon, dynamicIconImports, type IconName } from "lucide-react/dynamic";
 
 import { cn } from "@/lib/utils";
 
@@ -65,6 +66,11 @@ import { DEFAULT_CATALOG_ICON, normalizeIconName } from "./catalog-icon";
  * A garbage stored value is not an error: `normalizeIconName` resolves it to `null` and the render
  * falls back — to the caller's `fallback`, then to `DEFAULT_CATALOG_ICON` — so a bad row can never
  * throw a client component.
+ *
+ * Tags are the exception to the allow-list: their picker offers every lucide drawing, so a tag icon
+ * that the 44-name list does not hold is resolved through `lucide-react/dynamic` instead of being
+ * flattened to `circle`. The static map still wins for allow-listed names (that is what lets the
+ * bundler tree-shake lucide); the dynamic path only loads the one chunk a stored id names.
  */
 export interface CatalogStatusIconProps {
     /** Raw stored icon name; anything unresolvable falls back. */
@@ -157,6 +163,20 @@ const CATALOG_ICON_STROKE_WIDTH = 2.5;
 const CONTRAST_FALLBACK_COLOR = "#ffffff";
 
 /**
+ * Resolves a stored value that is NOT on the allow-list to any lucide id — the tag path.
+ *
+ * Membership is checked against the import map itself, because `DynamicIcon` throws on a name it
+ * does not know and the value comes from the database. Cleanup mirrors `normalizeIconName` (trim,
+ * lowercase, drop a `lucide-` prefix) without its allow-list clamp.
+ */
+export function toAnyIconName(raw: unknown): IconName | null {
+    if (typeof raw !== "string") return null;
+    const candidate = raw.trim().toLowerCase().replace(/^lucide-/, "");
+    if (candidate.length === 0 || !(candidate in dynamicIconImports)) return null;
+    return candidate as IconName;
+}
+
+/**
  * Draws one catalog icon.
  *
  * Both tones render the SAME outline glyph at the same size and stroke weight: lucide is a stroke
@@ -180,32 +200,43 @@ export function CatalogStatusIcon({
     className,
     fallback,
 }: CatalogStatusIconProps): JSX.Element {
-    const name = normalizeIconName(icon) ?? normalizeIconName(fallback) ?? DEFAULT_CATALOG_ICON;
-    const Icon = CATALOG_ICONS[name];
+    const staticName = normalizeIconName(icon) ?? normalizeIconName(fallback);
+    // Only consulted when the value is off the allow-list, so statuses and priorities never pay for
+    // loading an arbitrary lucide chunk.
+    const anyName = staticName === null ? toAnyIconName(icon) : null;
 
     const hex = resolveCatalogHex(color);
+    const glyphClassName = cn("shrink-0", ICON_SIZE_CLASS[density], className);
+    const glyphStyle =
+        tone === "contrast"
+            ? { color: hex === null ? CONTRAST_FALLBACK_COLOR : resolveCatalogForeground(hex) }
+            : hex === null
+              ? undefined
+              : { color: hex };
 
-    if (tone === "contrast") {
+    if (anyName !== null) {
         return (
-            <Icon
+            <DynamicIcon
+                name={anyName}
                 aria-hidden="true"
-                className={cn("shrink-0", ICON_SIZE_CLASS[density], className)}
+                className={glyphClassName}
                 strokeWidth={CATALOG_ICON_STROKE_WIDTH}
-                style={{
-                    color: hex === null ? CONTRAST_FALLBACK_COLOR : resolveCatalogForeground(hex),
-                }}
+                style={glyphStyle}
+                // An empty box of the glyph's own size: the chunk loads a tick later, and swapping
+                // in a wrong drawing first would flash.
+                fallback={() => <span className={glyphClassName} />}
             />
         );
     }
 
-    // Bare status: the same outline, inked in the stored hex; with no stored colour the glyph
-    // inherits `currentColor` rather than guessing one.
+    const Icon = CATALOG_ICONS[staticName ?? DEFAULT_CATALOG_ICON];
+
     return (
         <Icon
             aria-hidden="true"
-            className={cn("shrink-0", ICON_SIZE_CLASS[density], className)}
+            className={glyphClassName}
             strokeWidth={CATALOG_ICON_STROKE_WIDTH}
-            style={hex === null ? undefined : { color: hex }}
+            style={glyphStyle}
         />
     );
 }

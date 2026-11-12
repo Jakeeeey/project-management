@@ -22,8 +22,11 @@ import {
     type DepartmentTaskList,
     type RawTaskRow,
     type TaskAssigneeRow,
+    type TaskCatalogs,
     type TaskClientRow,
 } from "./task-payload";
+import { TagService } from "./tag-service";
+import { tagLinksOf, tagRefsByTask, type TaskTagRef } from "./tag-policy";
 import { TaskFieldService } from "./task-field-service";
 import { TASK_ACTIVITY_FIELD_LABELS, buildActivityChange, catalogLabelOf, type TaskActivityChange } from "./task-activity-delta";
 import { TaskActivityService } from "./task-activity-service";
@@ -57,6 +60,7 @@ import type { CreateTaskInput } from "../types/pm-task.schema";
  */
 const ASSIGNEE_ALIAS = "pm_task_assignee";
 const ATTACHMENT_ALIAS = "pm_task_attachment";
+const TASK_TAG_ALIAS = "pm_task_tag";
 
 /** The coded failure kinds this service throws. The route maps them to 400 / 404 / 500. */
 export type TaskServiceErrorCode = "VALIDATION_FAILED" | "NOT_FOUND" | "INTERNAL_FAIL";
@@ -79,6 +83,7 @@ interface DepartmentTaskRows {
     readonly tasks: readonly RawTaskRow[];
     readonly assignees: ReadonlyMap<number, TaskAssigneeRow[]>;
     readonly attachments: ReadonlyMap<number, ScopedAttachmentRow[]>;
+    readonly tags: ReadonlyMap<number, TaskTagRef[]>;
 }
 
 /**
@@ -173,12 +178,14 @@ export class TaskService {
         permissions: PermissionContext,
         listId: number | null,
     ): Promise<DepartmentTaskList> {
-        const [source, catalogs, fields, values] = await Promise.all([
+        const [source, catalog, fields, values, tags] = await Promise.all([
             TaskService.readDepartmentTasks(actor, listId),
             TaskConfigService.listCatalog(actor),
             TaskFieldService.listEnabledFields(actor),
             TaskFieldService.listValues(actor),
+            TagService.list(actor),
         ]);
+        const catalogs: TaskCatalogs = { ...catalog, tags };
         const shaping = buildShaping(catalogs, permissions);
         const valuesByTask = groupByTaskId(liveFieldValues(values, fields));
 
@@ -189,6 +196,7 @@ export class TaskService {
                         row,
                         assignees: source.assignees.get(row.id) ?? [],
                         attachments: source.attachments.get(row.id) ?? [],
+                        tags: source.tags.get(row.id) ?? [],
                         values: valuesByTask.get(row.id) ?? [],
                     },
                     shaping,
@@ -347,6 +355,7 @@ export class TaskService {
                 row,
                 assignees: [],
                 attachments: [],
+                tags: [],
                 values: await TaskFieldService.listValuesFor(actor, taskId),
             },
             buildShaping(catalogs, permissions),
@@ -373,6 +382,7 @@ export class TaskService {
                 tasks: [],
                 assignees: new Map<number, TaskAssigneeRow[]>(),
                 attachments: new Map<number, ScopedAttachmentRow[]>(),
+                tags: new Map<number, TaskTagRef[]>(),
             };
         }
 
@@ -397,7 +407,7 @@ export class TaskService {
         try {
             const tasks = await readItems<RawTaskRow>("pm_task", {
                 filter,
-                fields: ["*", `${ASSIGNEE_ALIAS}.*`, `${ATTACHMENT_ALIAS}.*`],
+                fields: ["*", `${ASSIGNEE_ALIAS}.*`, `${ATTACHMENT_ALIAS}.*`, `${TASK_TAG_ALIAS}.*`],
                 sort: ["sort_order", "id"],
                 limit: -1,
             });
@@ -410,6 +420,9 @@ export class TaskService {
                     attachments: groupByTaskId(
                         liveNestedRows<ScopedAttachmentRow>(tasks.flatMap((task) => task[ATTACHMENT_ALIAS])),
                     ),
+                    // A registered assignee alias says nothing about the tag alias, so a row set
+                    // without the tag key still needs the scoped per-collection query below.
+                    tags: TaskService.readNestedTags(tasks) ?? (await TagService.listDepartmentTagRefs(actor)),
                 };
             }
             console.warn(
@@ -432,7 +445,17 @@ export class TaskService {
             tasks,
             assignees: groupByTaskId(liveNestedRows<TaskAssigneeRow>(assignees)),
             attachments: groupByTaskId(liveNestedRows<ScopedAttachmentRow>(attachments)),
+            tags: await TagService.listDepartmentTagRefs(actor),
         };
+    }
+
+    /**
+     * The nested tag links of the rows just read, or `null` when this response carries no tag alias —
+     * the signal that the alias is not registered and the per-collection query must supply them.
+     */
+    private static readNestedTags(tasks: readonly RawTaskRow[]): Map<number, TaskTagRef[]> | null {
+        if (!tasks.some((task) => TASK_TAG_ALIAS in task)) return null;
+        return tagRefsByTask(tasks.flatMap((task) => tagLinksOf(task[TASK_TAG_ALIAS])));
     }
 
     /**

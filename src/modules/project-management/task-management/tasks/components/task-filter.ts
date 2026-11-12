@@ -56,7 +56,7 @@ export const FILTER_OPERATOR_LABELS: Record<FilterOperator, string> = {
 export interface FilterClause {
     /** Stable, unique per row — the React key and the remove/update target, never the array index. */
     readonly id: string;
-    /** `"status"`, `"priority"`, `"assignee"` or `"field:<id>"`, or `null` when no field is picked. */
+    /** `"status"`, `"priority"`, `"assignee"`, `"tags"` or `"field:<id>"`, or `null` when no field is picked. */
     readonly fieldKey: string | null;
     readonly operator: FilterOperator;
     /** The stored string form to match; `null` / `""` means the clause is inactive. */
@@ -69,6 +69,8 @@ export const STATUS_FIELD_KEY = "status";
 export const PRIORITY_FIELD_KEY = "priority";
 /** The clause key of the built-in assignee list. */
 export const ASSIGNEE_FIELD_KEY = "assignee";
+/** The clause key of the tag list. Tags are many-to-one, so a clause asks "has this tag", never "is". */
+export const TAGS_FIELD_KEY = "tags";
 /** The prefix a custom column's clause key carries before its id. */
 const CUSTOM_FIELD_KEY_PREFIX = "field:";
 
@@ -85,13 +87,14 @@ export function customFieldIdFromKey(fieldKey: string | null): number | null {
 }
 
 /** The value-control kind a clause's field resolves to. `unknown` is a persisted field that is gone. */
-export type FilterFieldKind = "status" | "priority" | "assignee" | "select" | "date" | "text" | "number" | "unknown";
+export type FilterFieldKind = "status" | "priority" | "assignee" | "tags" | "select" | "date" | "text" | "number" | "unknown";
 
 /** Resolves a clause's field key to the kind that drives its operators and value control. */
 export function fieldKind(fieldKey: string | null, fields: readonly TaskField[]): FilterFieldKind {
     if (fieldKey === STATUS_FIELD_KEY) return "status";
     if (fieldKey === PRIORITY_FIELD_KEY) return "priority";
     if (fieldKey === ASSIGNEE_FIELD_KEY) return "assignee";
+    if (fieldKey === TAGS_FIELD_KEY) return "tags";
     const fieldId = customFieldIdFromKey(fieldKey);
     if (fieldId === null) return "unknown";
     return fields.find((field) => field.id === fieldId)?.field_type ?? "unknown";
@@ -155,7 +158,7 @@ function builtinStored(id: number): string | null {
 }
 
 /** A custom answer, or `null` when the column has no answer (it is ABSENT from `custom_values`). */
-function customStored(row: TaskTreeRow, fieldId: number): string | null {
+function customStored(row: Pick<TaskTreeRow, "custom_values">, fieldId: number): string | null {
     return row.custom_values.find((entry) => entry.field_id === fieldId)?.value ?? null;
 }
 
@@ -188,28 +191,46 @@ function scalarContains(stored: string | null, value: string | null): boolean {
     return stored !== null && stored.toLowerCase().includes(needle);
 }
 
-/** The assignee list predicate: `is` = has member, `is not` = does not have member. */
-function assigneeMatches(row: TaskTreeRow, operator: FilterOperator, value: string | null): boolean {
-    const hasAny = row.assignees.length > 0;
-    if (operator === "is_empty") return !hasAny;
-    if (operator === "is_not_empty") return hasAny;
+/**
+ * The predicate shared by every multi-valued column — assignees and tags both store a list of ids, so
+ * `is` means "has one of them", `is not` means "has none of them", and the empty operators ask the
+ * list itself. Sharing one function keeps the two from drifting apart.
+ */
+function idListMatches(ids: readonly number[], operator: FilterOperator, value: string | null): boolean {
+    if (operator === "is_empty") return ids.length === 0;
+    if (operator === "is_not_empty") return ids.length > 0;
 
     const needle = value === null ? "" : value.trim();
     if (needle === "") return true;
-    const has = row.assignees.some((assignee) => String(assignee.user_id) === needle);
+    const has = ids.some((id) => String(id) === needle);
     return operator === "is_not" ? !has : has;
 }
 
+/**
+ * What a clause actually reads off a row: ids, the custom answers, and assignee/tag ids.
+ *
+ * Deliberately narrower than `TaskTreeRow` — every view filters the same `TaskListItem` rows, and
+ * none of them should have to synthesise a display name just to ask a question.
+ */
+export type FilterableRow = Pick<TaskTreeRow, "status_id" | "priority_id" | "custom_values" | "tags"> & {
+    readonly assignees: readonly { readonly user_id: number }[];
+};
+
 /** Does one row satisfy one clause? An inactive clause is a no-op and matches. */
 export function clauseMatches(
-    row: TaskTreeRow,
+    row: FilterableRow,
     clause: FilterClause,
     fields: readonly TaskField[],
 ): boolean {
     const { fieldKey, operator } = clause;
     if (!isClauseActive(clause) || fieldKey === null) return true;
 
-    if (fieldKey === ASSIGNEE_FIELD_KEY) return assigneeMatches(row, operator, clause.value);
+    if (fieldKey === ASSIGNEE_FIELD_KEY) {
+        return idListMatches(row.assignees.map((assignee) => assignee.user_id), operator, clause.value);
+    }
+    if (fieldKey === TAGS_FIELD_KEY) {
+        return idListMatches(row.tags.map((tag) => tag.tag_id), operator, clause.value);
+    }
 
     const kind = fieldKind(fieldKey, fields);
     const stored =
@@ -236,7 +257,7 @@ export function clauseMatches(
 
 /** Does one row satisfy every clause? Clauses combine with AND. */
 export function rowMatchesClauses(
-    row: TaskTreeRow,
+    row: FilterableRow,
     clauses: readonly FilterClause[],
     fields: readonly TaskField[],
 ): boolean {

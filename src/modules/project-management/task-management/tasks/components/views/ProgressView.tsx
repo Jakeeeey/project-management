@@ -80,6 +80,7 @@ import {
 } from "../../utils/completion";
 import { buildTree, flattenVisible, type TreeSourceRow, type TreeNode } from "../../utils/tree";
 import { NO_STATUS_LABEL, TaskStatusBadge } from "../TaskRowBadges";
+import { resolveTaskTags, TaskTagStack } from "../TaskTags";
 import {
     TaskFilterBuilder,
     type FilterBuilderMember,
@@ -162,6 +163,8 @@ const LEAF_ROW_HEIGHT_PX = 40;
 const CARD_HEIGHT_PX = 72;
 const OVERSCAN_ROWS = 10;
 const STATUS_COLUMN_PX = 160;
+/** Two circles plus the `+N` pill fit here; a tag cell only ever needs to be glanced at. */
+const TAGS_COLUMN_PX = 96;
 const COMPLETE_COLUMN_PX = 144;
 const NOTE_COLUMN_PX = 256;
 /** Below `xl` the Note cell holds the flag icon alone, so the column shrinks to the icon. */
@@ -939,6 +942,16 @@ export function ProgressView({
         [catalogs.priorities],
     );
 
+    const filterTags = useMemo<FilterBuilderOption[]>(
+        () =>
+            catalogs.tags.map((tag) => ({
+                id: tag.id,
+                label: tag.label,
+                color: tag.color,
+            })),
+        [catalogs.tags],
+    );
+
     /** Only members who actually hold a task in this list: an empty filter group is noise. */
     const filterMembers = useMemo<FilterBuilderMember[]>(() => {
         const ids = new Set<number>();
@@ -1016,9 +1029,10 @@ export function ProgressView({
      * after the phantom column shifts one place right.
      */
     const showStatusColumn = isColumnBasis;
-    const columnCount = showStatusColumn ? 4 : 3;
+    const columnCount = showStatusColumn ? 5 : 4;
     const tableMinWidthPx =
         TASK_COLUMN_MIN_PX +
+        TAGS_COLUMN_PX +
         (showStatusColumn ? STATUS_COLUMN_PX : 0) +
         COMPLETE_COLUMN_PX +
         (isWideLayout ? NOTE_COLUMN_PX : NOTE_COMPACT_COLUMN_PX);
@@ -1095,6 +1109,7 @@ export function ProgressView({
                                     fields={fields}
                                     statuses={filterStatuses}
                                     priorities={filterPriorities}
+                                    tags={filterTags}
                                     members={filterMembers}
                                     currentUserId={null}
                                     savedFilters={savedFilters}
@@ -1415,6 +1430,19 @@ export function ProgressView({
                                                     >
                                                         {trailing}
                                                     </span>
+                                                    {/* A card has no room for an empty tag glyph, so
+                                                        the stack only appears when there is one. */}
+                                                    {resolveTaskTags(node.tags, catalogs.tags)
+                                                        .length > 0 ? (
+                                                        <TaskTagStack
+                                                            tags={resolveTaskTags(
+                                                                node.tags,
+                                                                catalogs.tags,
+                                                            )}
+                                                            max={2}
+                                                            className="shrink-0"
+                                                        />
+                                                    ) : null}
                                                 </div>
                                             </div>
                                         );
@@ -1431,6 +1459,7 @@ export function ProgressView({
                                 >
                                     <colgroup>
                                         <col />
+                                        <col style={{ width: TAGS_COLUMN_PX }} />
                                         {showStatusColumn ? (
                                             <col style={{ width: STATUS_COLUMN_PX }} />
                                         ) : null}
@@ -1447,6 +1476,9 @@ export function ProgressView({
                                         <TableRow className="border-b-0 bg-card hover:bg-card [&>th]:shadow-[inset_0_-1px_0_var(--color-border)]">
                                             <TableHead scope="col" aria-rowindex={1}>
                                                 Task
+                                            </TableHead>
+                                            <TableHead scope="col" className="text-center">
+                                                Tags
                                             </TableHead>
                                             {showStatusColumn ? (
                                                 <TableHead scope="col">Status</TableHead>
@@ -1669,6 +1701,19 @@ export function ProgressView({
                                                             </span>
                                                         </div>
                                                     </th>
+
+                                                    <TableCell className="px-2 py-1.5 align-middle">
+                                                        <div className="flex justify-center">
+                                                            <TaskTagStack
+                                                                tags={resolveTaskTags(
+                                                                    node.tags,
+                                                                    catalogs.tags,
+                                                                )}
+                                                                max={2}
+                                                                emptyVariant="icon"
+                                                            />
+                                                        </div>
+                                                    </TableCell>
 
                                                     {showStatusColumn ? (
                                                         <TableCell className="px-2 py-0 align-middle">

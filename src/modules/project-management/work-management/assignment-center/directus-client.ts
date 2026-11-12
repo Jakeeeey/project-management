@@ -5,8 +5,12 @@ export interface WorkDatabase {
  read(collection: string, fields: string[], filter: DatabaseRow, limit?: number, page?: number): Promise<DatabaseRow[]>;
  create(collection: string, body: DatabaseRow): Promise<DatabaseRow>;
  createMany(collection: string, bodies: DatabaseRow[], fields?: string[]): Promise<DatabaseRow[]>;
+<<<<<<< HEAD
   update(collection: string, id: string, body: DatabaseRow): Promise<void>;
   updateMany(collection: string, rows: (DatabaseRow & { id: string })[]): Promise<void>;
+=======
+ update(collection: string, id: string, body: DatabaseRow): Promise<void>;
+>>>>>>> origin
  remove(collection: string, ids: string[]): Promise<void>;
 }
 
@@ -21,11 +25,15 @@ export class DirectusClient implements WorkDatabase {
   if (!response.ok) {
    const error = await response.json().catch(() => ({}));
    const code = error.errors?.[0]?.extensions?.code ?? "DIRECTUS_ERROR";
+<<<<<<< HEAD
    // Keep the operation context: Directus errors often otherwise collapse to
    // an unhelpful generic 500 in a multi-step amendment.
    const operation = `${method} ${path.split("?")[0]}`;
    console.error("[work-management] Directus operation failed", { operation, status: response.status, code });
    throw new WorkError(502, code, `Data service request failed during ${operation} (${response.status}, ${code}).`);
+=======
+   throw new WorkError(502, code, `Data service request failed (${response.status}, ${code}).`);
+>>>>>>> origin
   }
   if (response.status === 204) return null;
   const payload = await response.json(); return payload.data;
@@ -42,6 +50,7 @@ export class DirectusClient implements WorkDatabase {
   if (!bodies.length) return [];
   return await this.request(`/items/${collection}?${new URLSearchParams({ fields: fields.join(",") })}`, "POST", bodies) as DatabaseRow[];
  }
+<<<<<<< HEAD
   async update(collection: string, id: string, body: DatabaseRow): Promise<void> {
    await this.request(`/items/${collection}/${encodeURIComponent(id)}`, "PATCH", body);
   }
@@ -50,6 +59,11 @@ export class DirectusClient implements WorkDatabase {
     await this.request(`/items/${collection}`, "PATCH", rows.slice(offset, offset + 100));
    }
   }
+=======
+ async update(collection: string, id: string, body: DatabaseRow): Promise<void> {
+  await this.request(`/items/${collection}/${encodeURIComponent(id)}`, "PATCH", body);
+ }
+>>>>>>> origin
  async remove(collection: string, ids: string[]): Promise<void> {
   if (ids.length) await this.request(`/items/${collection}`, "DELETE", ids);
  }

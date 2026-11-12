@@ -10,7 +10,11 @@ export interface DashboardProps {
  data: DashboardData; selectedEmployee: string;
  periodLabel: string; onSelectEmployee: (id: string) => void; onClearEmployee: () => void;
 }
+<<<<<<< HEAD
 export interface OverviewProps { bootstrap: Bootstrap | null; rows: OccurrenceView[]; onCreate: () => void; onOpen: (id: string) => void }
+=======
+export interface OverviewProps { bootstrap: Bootstrap | null; rows: OccurrenceView[]; onCreate: () => void }
+>>>>>>> origin
 export interface WorkspaceDefinition {
  workspace: Workspace;
  title: string;

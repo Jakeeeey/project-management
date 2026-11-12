@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { CapabilitiesSchema, type Capabilities } from "../types/capabilities";
@@ -38,7 +38,7 @@ const ENDPOINT = "/api/project-management/task-management/tasks";
 const UPPERCASE_CODE_PREFIX = /^[A-Z][A-Z0-9_]*:\s*/;
 
 /** Both catalogs empty until the first successful load — never `undefined`, so consumers can read `.length`. */
-const EMPTY_CATALOGS: TaskCatalogs = { statuses: [], priorities: [] };
+const EMPTY_CATALOGS: TaskCatalogs = { statuses: [], priorities: [], tags: [] };
 
 const EMPTY_FIELDS: TaskField[] = [];
 
@@ -60,10 +60,35 @@ export interface TaskCatalogOption {
     readonly completion_percent: number;
 }
 
-/** The department's two catalog lists — one model per kind, as the configuration section presents them. */
+/** The department's catalog lists — one model per kind, as the configuration section presents them. */
 export interface TaskCatalogs {
     readonly statuses: readonly TaskCatalogOption[];
     readonly priorities: readonly TaskCatalogOption[];
+    /**
+     * The department's tags. A row references one by id (`TaskTagRef`); the label and colour live
+     * here, so a row never carries its own copy. Absent on a server that predates tags — parsed to
+     * an empty list, never `undefined`.
+     */
+    readonly tags: readonly TaskTagOption[];
+}
+
+/** One tag the department defines. Narrower than a status/priority: no default, no completion. */
+export interface TaskTagOption {
+    readonly id: number;
+    readonly label: string;
+    /** Stored 6-digit hex (`#16a34a`) or `null` — rendered as an inline style, never a class. */
+    readonly color: string | null;
+    /**
+     * A lucide icon id (`flame`), not limited to the status/priority allow-list — the tag picker
+     * offers every lucide drawing. `null` falls back to the label's initials.
+     */
+    readonly icon: string | null;
+    readonly sort_order: number;
+}
+
+/** One tag attached to a task row: the id only — `TaskCatalogs.tags` names it. */
+export interface TaskTagRef {
+    readonly tag_id: number;
 }
 
 /**
@@ -156,6 +181,8 @@ export interface TaskListItem {
     /** The server's per-row delete answer: head, granted access, or this task's creator. */
     readonly can_delete: boolean;
     readonly assignees: readonly TaskAssigneeRef[];
+    /** The tag ids attached to this task; the labels/colours come from `catalogs.tags`. */
+    readonly tags: readonly TaskTagRef[];
     readonly attachments: readonly TaskAttachmentRef[];
     /** This task's answers for the department's custom columns; a column with no answer is absent. */
     readonly custom_values: readonly TaskFieldValue[];
@@ -171,6 +198,8 @@ export interface UseTasksResult {
     readonly items: TaskListItem[];
     /** Both per-department catalogs — the pickers and filters' only source of options. */
     readonly catalogs: TaskCatalogs;
+    /** `catalogs.tags` keyed by id, so a row can resolve its tag ids without a second request. */
+    readonly taskTagById: ReadonlyMap<number, TaskTagOption>;
     /** The department's live custom columns, ordered by `(sort_order, id)` — the list's extra columns. */
     readonly fields: readonly TaskField[];
     /** True during the first (cold) load, which renders the tree's loading row. */
@@ -289,7 +318,51 @@ function toCatalogs(raw: unknown): TaskCatalogs {
     return {
         statuses: toCatalogOptions(record.statuses),
         priorities: toCatalogOptions(record.priorities),
+        // A payload written before tags existed has no key at all — an empty list, not `undefined`.
+        tags: toTagOptions(record.tags),
     };
+}
+
+/** One tag catalog row, dropping malformed entries rather than rendering them. */
+function toTagOption(raw: unknown): TaskTagOption | null {
+    if (!isRecord(raw)) return null;
+    const id = toPositiveInt(raw.id);
+    if (id === null) return null;
+    return {
+        id,
+        label: typeof raw.label === "string" ? raw.label : "",
+        color: toNullableString(raw.color),
+        icon: toNullableString(raw.icon),
+        sort_order: toNumber(raw.sort_order),
+    };
+}
+
+/** The whole tag catalog, defensively narrowed — a non-array becomes an empty list. */
+function toTagOptions(raw: unknown): TaskTagOption[] {
+    if (!Array.isArray(raw)) return [];
+
+    const tags: TaskTagOption[] = [];
+    for (const entry of raw) {
+        const tag = toTagOption(entry);
+        if (tag !== null) tags.push(tag);
+    }
+    return tags;
+}
+
+/** The live tags on a row — an absent `tags` key (older server) is an empty list. */
+function toTagRefs(raw: unknown): TaskTagRef[] {
+    if (!Array.isArray(raw)) return [];
+
+    const refs: TaskTagRef[] = [];
+    const seen = new Set<number>();
+    for (const entry of raw) {
+        if (!isRecord(entry)) continue;
+        const tagId = toPositiveInt(entry.tag_id);
+        if (tagId === null || seen.has(tagId)) continue;
+        seen.add(tagId);
+        refs.push({ tag_id: tagId });
+    }
+    return refs;
 }
 
 /** The live assignments on a row; the route already strips soft-deleted nested rows. */
@@ -424,6 +497,7 @@ function toTaskListItems(raw: unknown): TaskListItem[] {
             can_edit: readFlag(entry.can_edit),
             can_delete: readFlag(entry.can_delete),
             assignees: toAssigneeRefs(entry.assignees),
+            tags: toTagRefs(entry.tags),
             attachments: toAttachmentRefs(entry.attachments),
             custom_values: parseTaskFieldValues(entry.custom_values),
             created_at: toNullableString(entry.created_at),
@@ -459,6 +533,16 @@ export function useTasks(listId: number | null = null): UseTasksResult {
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    /**
+     * The tag catalog keyed by id. Derived here, once per payload, so every row on the grid resolves
+     * its tag ids through the same map instead of rebuilding one per render.
+     */
+    const taskTagById = useMemo(() => {
+        const map = new Map<number, TaskTagOption>();
+        for (const tag of catalogs.tags) map.set(tag.id, tag);
+        return map;
+    }, [catalogs.tags]);
 
     /**
      * Mirrors the loaded row count so `fetchTasks` can tell a cold load from a refetch without
@@ -531,6 +615,7 @@ export function useTasks(listId: number | null = null): UseTasksResult {
     return {
         items,
         catalogs,
+        taskTagById,
         fields,
         isLoading,
         isRefreshing,

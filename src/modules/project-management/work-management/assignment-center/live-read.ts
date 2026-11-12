@@ -45,16 +45,25 @@ export class LiveReader {
   if (workspace === "my-tasks") return [actor];
   const allDepartments = workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true;
   const filter = allDepartments ? {} : actor.department_id ? { user_department: { _eq: actor.department_id } } : { user_id: { _eq: actor.id } };
+<<<<<<< HEAD
    const users = (await this.all("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], filter)).filter(user => isActiveEmployeeFlag(user.is_deleted));
    const [departments, grants] = await Promise.all([
     this.byIds("department", ["department_id", "department_name"], "department_id", users.filter(user => user.user_department !== null).map(user => id(user.user_department))),
     this.byIds("pm_work_role_grant", ["user_id", "role", "department_id", "revoked_at"], "user_id", users.map(user => id(user.user_id))),
    ]);
+=======
+  const users = (await this.all("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], filter)).filter(user => isActiveEmployeeFlag(user.is_deleted));
+  const departments = await this.byIds("department", ["department_id", "department_name"], "department_id", users.filter(user => user.user_department !== null).map(user => id(user.user_department)));
+>>>>>>> origin
   return users.map(user => ({
    id: id(user.user_id), name: [user.user_fname, user.user_lname].filter(Boolean).join(" "),
    department_id: user.user_department === null ? "" : id(user.user_department),
    department: String(departments.find(department => String(department.department_id) === String(user.user_department))?.department_name ?? "No department"),
+<<<<<<< HEAD
     roles: id(user.user_id) === actor.id ? actor.roles : grants.filter(grant => id(grant.user_id) === id(user.user_id) && grant.revoked_at == null).map(grant => String(grant.role) as Employee["roles"][number]),
+=======
+   roles: id(user.user_id) === actor.id ? actor.roles : [],
+>>>>>>> origin
   }));
  }
  async detail(actor: Employee, workspace: Workspace, occurrenceId: string) {
@@ -85,6 +94,7 @@ export class LiveReader {
    occurrence.task_revision.reference_file_ids.push(fileId); engine.state.files.push(metadata(file, fileId, id(file.added_by)));
   }
   const decode = (value: unknown) => typeof value === "string" ? JSON.parse(value) : value ?? null;
+<<<<<<< HEAD
   engine.state.events = events.map(event => ({ id: id(event.id), event_type: String(event.event_type), task_id: id(event.task_id), occurrence_id: event.occurrence_id ? id(event.occurrence_id) : null, actor_id: event.actor_id ? id(event.actor_id) : String(event.system_actor ?? "System"), reason: String(event.reason ?? ""), old_values: decode(event.old_values), new_values: decode(event.new_values), created_at: utc(event.created_at), request_id: String(event.request_id), material: /^(TASK_(DETAILS_UPDATED|SCHEDULE_CHANGED|PAUSED|RESUMED|CANCELLED|ARCHIVED|DEADLINE_CHANGED)|OCCURRENCE_(REVIEWED|MARKED_DONE|DEADLINE_CHANGED|CANCELLED))$/.test(String(event.event_type)) })).sort((a, b) => a.created_at.localeCompare(b.created_at));
   engine.state.comments = comments.map(comment => ({ id: id(comment.id), occurrence_id: id(comment.occurrence_id), submission_id: comment.submission_id ? id(comment.submission_id) : null, author_id: id(comment.author_id), text: String(comment.comment_text), created_at: utc(comment.created_at) }));
   const detail = engine.detail(occurrenceId);
@@ -95,11 +105,29 @@ export class LiveReader {
   const state = emptyState();
   let assignmentFilter: Row;
   if (workspace === "my-tasks") assignmentFilter = { assignee_user_id: { _eq: actor.id } };
+=======
+   engine.state.events = events.map(event => ({ id: id(event.id), event_type: String(event.event_type), task_id: id(event.task_id), occurrence_id: event.occurrence_id ? id(event.occurrence_id) : null, actor_id: event.actor_id ? id(event.actor_id) : String(event.system_actor ?? "System"), reason: String(event.reason ?? ""), old_values: decode(event.old_values), new_values: decode(event.new_values), created_at: utc(event.created_at), request_id: String(event.request_id), material: /^(TASK_(DETAILS_UPDATED|SCHEDULE_CHANGED|PAUSED|RESUMED|CANCELLED|ARCHIVED|DEADLINE_CHANGED)|OCCURRENCE_(REVIEWED|MARKED_DONE|DEADLINE_CHANGED|CANCELLED))$/.test(String(event.event_type)) })).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  engine.state.comments = comments.map(comment => ({ id: id(comment.id), occurrence_id: id(comment.occurrence_id), submission_id: comment.submission_id ? id(comment.submission_id) : null, author_id: id(comment.author_id), text: String(comment.comment_text), created_at: utc(comment.created_at) }));
+  const detail = engine.detail(occurrenceId);
+  // Persisted create/read testing is enabled; edit/submit/comment commands and
+  // acknowledgment writes are intentionally not implied by enabling Create Task.
+   return { ...detail, can_edit: false, can_submit: detail.can_submit && workspace === "my-tasks", can_comment: false, unacknowledged: [] };
+ }
+  async load(actor: Employee, workspace: Workspace, period: ReadPeriod): Promise<WorkEngine> {
+  requireRule(workspaceAllowed(actor, workspace), 403, "FORBIDDEN", "You do not have access to this workspace.");
+  const state = emptyState();
+  let assignmentFilter: Row;
+   if (workspace === "my-tasks") assignmentFilter = { assignee_user_id: { _eq: actor.id } };
+>>>>>>> origin
    else if (workspace === "departmental") assignmentFilter = { department_id_at_assignment: { _eq: actor.department_id } };
    else if (workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true) assignmentFilter = {};
   else assignmentFilter = actor.department_id ? { department_id_at_assignment: { _eq: actor.department_id } } : { assignee_user_id: { _eq: actor.id } };
   if (period.employee) {
+<<<<<<< HEAD
    requireRule(workspace !== "my-tasks" || period.employee === actor.id, 403, "OWN_TASKS_ONLY", "My Tasks only shows your own obligations.");
+=======
+    requireRule(workspace !== "my-tasks" || period.employee === actor.id, 403, "OWN_TASKS_ONLY", "My Tasks only shows your own obligations.");
+>>>>>>> origin
    assignmentFilter = { _and: [assignmentFilter, { assignee_user_id: { _eq: period.employee } }] };
   }
   const assignments = await this.all("pm_work_assignment", ["id", "task_id", "assignee_user_id", "department_id_at_assignment", "status"], assignmentFilter);
@@ -113,11 +141,19 @@ export class LiveReader {
   }
   requireRule(occurrenceRows.length <= 5000, 422, "READ_LIMIT", "Too many obligations. Narrow the reporting scope.");
   const taskIds = state.assignments.map(a => a.task_id);
+<<<<<<< HEAD
   const [tasks, schedules, revisions, taskRevisions] = await Promise.all([
    this.byIds("pm_work_task", ["*"], "id", taskIds),
    this.byIds("pm_work_recurrence", ["*"], "task_id", taskIds),
    this.byIds("pm_work_task_revision", ["id", "task_id", "revision_number", "snapshot"], "id", occurrenceRows.map(o => id(o.task_revision_id))),
    this.byIds("pm_work_task_revision", ["id", "task_id", "revision_number", "snapshot"], "task_id", taskIds),
+=======
+   const [tasks, schedules, revisions, taskRevisions] = await Promise.all([
+    this.byIds("pm_work_task", ["*"], "id", taskIds),
+    this.byIds("pm_work_recurrence", ["*"], "task_id", taskIds),
+    this.byIds("pm_work_task_revision", ["id", "task_id", "revision_number", "snapshot"], "id", occurrenceRows.map(o => id(o.task_revision_id))),
+    this.byIds("pm_work_task_revision", ["id", "task_id", "revision_number", "snapshot"], "task_id", taskIds),
+>>>>>>> origin
   ]);
   const scheduleFor = (taskId: string): Schedule => {
    const row = schedules.filter(s => id(s.task_id) === taskId).sort((a, b) => Number(b.schedule_version) - Number(a.schedule_version))[0];
@@ -139,7 +175,15 @@ export class LiveReader {
    return { id: id(o.id), task_id: id(o.task_id), assignment_id: id(o.assignment_id), occurrence_key: String(o.occurrence_key), scheduled_local_date: String(o.scheduled_local_date).slice(0, 10), available_at: utc(o.available_at), original_due_at: utc(o.original_due_at), due_at: utc(o.due_at), row_version: Number(o.row_version), task_revision: historical, status: o.status as Occurrence["status"], completed_at: o.completed_at ? utc(o.completed_at) : null, first_submission_id: o.first_submission_id ? id(o.first_submission_id) : null, latest_submission_id: o.latest_submission_id ? id(o.latest_submission_id) : null };
   });
    const peopleIds = [actor.id, ...state.assignments.map(a => a.assignee_user_id), ...state.tasks.flatMap(t => [t.created_by, t.report_to_user_id])];
+<<<<<<< HEAD
    const directoryScope = workspace === "departmental" ? { user_department: { _eq: actor.department_id } } : workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true ? {} : actor.department_id ? { user_department: { _eq: actor.department_id } } : { user_id: { _eq: actor.id } };
+=======
+<<<<<<<< HEAD:src/modules/project-management/work-management/executive-overview/live-read.ts
+   const directoryScope = workspace === "departmental" ? { user_department: { _eq: actor.department_id } } : workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true ? {} : actor.department_id ? { user_department: { _eq: actor.department_id } } : { user_id: { _eq: actor.id } };
+========
+   const directoryScope = workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true ? {} : actor.department_id ? { user_department: { _eq: actor.department_id } } : { user_id: { _eq: actor.id } };
+>>>>>>>> origin:src/modules/project-management/work-management/assignment-center/live-read.ts
+>>>>>>> origin
    const [submissions, users, directory] = await Promise.all([
     this.byIds("pm_work_submission", ["*"], "occurrence_id", state.occurrences.map(o => o.id)),
     this.byIds("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], "user_id", peopleIds),

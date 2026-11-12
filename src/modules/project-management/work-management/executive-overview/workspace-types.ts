@@ -7,10 +7,17 @@ export interface TrendPoint { date: string; due: number; submitted: number; on_t
 export interface DashboardData { employees: (Employee & Summary)[]; trends: TrendPoint[] }
 export interface WorkspaceActionsProps { bootstrap: Bootstrap | null; onCreate: () => void }
 export interface DashboardProps {
+<<<<<<< HEAD
  data: DashboardData; selectedEmployee: string; loading?: boolean;
  periodLabel: string; onSelectEmployee: (id: string) => void; onClearEmployee: () => void;
 }
 export interface OverviewProps { bootstrap: Bootstrap | null; rows: OccurrenceView[]; onCreate: () => void; onOpen: (id: string) => void }
+=======
+ data: DashboardData; selectedEmployee: string;
+ periodLabel: string; onSelectEmployee: (id: string) => void; onClearEmployee: () => void;
+}
+export interface OverviewProps { bootstrap: Bootstrap | null; rows: OccurrenceView[]; onCreate: () => void }
+>>>>>>> origin
 export interface WorkspaceDefinition {
  workspace: Workspace;
  title: string;

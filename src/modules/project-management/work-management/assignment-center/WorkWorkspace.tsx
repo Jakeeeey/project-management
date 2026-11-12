@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addDays as shiftDay, endOfMonth, format, startOfMonth, startOfWeek } from "date-fns";
+<<<<<<< HEAD
 import { Archive, CalendarDays, CalendarClock, ChevronLeft, ChevronRight, CircleAlert, CircleX, Loader2, PauseCircle, Pencil, Search } from "lucide-react";
+=======
+import { CalendarDays, ChevronLeft, ChevronRight, CircleAlert, Loader2, Search } from "lucide-react";
+>>>>>>> origin
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,7 +17,15 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cn } from "@/lib/utils";
+<<<<<<< HEAD
 import type { Bootstrap, Detail, Employee, OccurrenceView, Summary, Task, Workspace } from "./types";
+=======
+<<<<<<<< HEAD:src/modules/project-management/work-management/my-tasks/WorkWorkspace.tsx
+import type { Bootstrap, Detail, Employee, OccurrenceView, Summary, Task, Workspace } from "./types";
+========
+import type { Bootstrap, Detail, Employee, Notification, OccurrenceView, Summary, Task, Workspace } from "./types";
+>>>>>>>> origin:src/modules/project-management/work-management/assignment-center/WorkWorkspace.tsx
+>>>>>>> origin
 import { localDate } from "./recurrence";
 import type { HeaderAccount, WorkspaceDefinition, DashboardData } from "./workspace-types";
 import { SubmissionBin } from "./SubmissionBin";
@@ -21,12 +33,23 @@ import { useSubmission } from "./useSubmission";
 import { TaskForm } from "./TaskForm";
 import { frequencyLabels, selectClass } from "./presentation";
 
+<<<<<<< HEAD
 const BASE = "/api/project-management/work-management/assignor";
+=======
+<<<<<<<< HEAD:src/modules/project-management/work-management/my-tasks/WorkWorkspace.tsx
+const BASE = "/api/project-management/work-management/assignee";
+========
+const BASE = "/api/project-management/work-management/assignor";
+>>>>>>>> origin:src/modules/project-management/work-management/assignment-center/WorkWorkspace.tsx
+>>>>>>> origin
 const dateTime = (date: string) => new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Manila" }).format(new Date(date));
 function stateOf(o: OccurrenceView) {
  if (o.status === "CANCELLED") return "Cancelled";
  if (o.first_submission_id) return o.submissions.find(s => s.id === o.first_submission_id)?.is_late ? "Submitted late" : "Submitted on time";
+<<<<<<< HEAD
  if (o.status === "COMPLETED") return "Done";
+=======
+>>>>>>> origin
  if (o.due_at < new Date().toISOString()) return "Overdue";
  return o.available_at > new Date().toISOString() ? "Upcoming" : "Available";
 }
@@ -59,7 +82,14 @@ export function WorkWorkspace({ definition, account }: { definition: WorkspaceDe
  const [total, setTotal] = useState(0); const [page, setPage] = useState(1);
   const [dashboardData, setDashboardData] = useState<DashboardData>({ employees: [], trends: [] });
   const bootstrapCache = useRef<Bootstrap | null>(null);
+<<<<<<< HEAD
  const directoryCache = useRef<Employee[] | null>(null);
+=======
+<<<<<<<< HEAD:src/modules/project-management/work-management/my-tasks/WorkWorkspace.tsx
+ const directoryCache = useRef<Employee[] | null>(null);
+========
+>>>>>>>> origin:src/modules/project-management/work-management/assignment-center/WorkWorkspace.tsx
+>>>>>>> origin
  const [selected, setSelected] = useState<string | null>(null); const [day, setDay] = useState<string | null>(null);
  const [form, setForm] = useState<Task | "new" | null>(null);
  const [version, setVersion] = useState(0);
@@ -81,23 +111,55 @@ export function WorkWorkspace({ definition, account }: { definition: WorkspaceDe
    try {
      const q = new URLSearchParams({ from, to, page: String(page), limit: "100", ...(employee ? { employee } : {}) });
      const bootRequest = bootstrapCache.current ? Promise.resolve(bootstrapCache.current) : api<Bootstrap>("bootstrap");
+<<<<<<< HEAD
      const directoryRequest = wantsDirectory ? directoryCache.current ? Promise.resolve(directoryCache.current) : api<Employee[]>("directory").catch(() => null) : Promise.resolve(null);
      const needsCalendar = !executiveDirectory;
      const alternateRoute = view === "Backlog" ? "occurrences/backlog" : null;
      const calendarRequest = needsCalendar ? api<{ items: OccurrenceView[]; total: number; summary: Summary }>(`occurrences/calendar?${q}`) : Promise.resolve(null);
      const displayRequest = needsCalendar && alternateRoute ? api<{ items: OccurrenceView[]; total: number }>(`${alternateRoute}?${q}`) : Promise.resolve(null);
+=======
+<<<<<<<< HEAD:src/modules/project-management/work-management/my-tasks/WorkWorkspace.tsx
+     const directoryRequest = wantsDirectory ? directoryCache.current ? Promise.resolve(directoryCache.current) : api<Employee[]>("directory").catch(() => null) : Promise.resolve(null);
+     const needsCalendar = !executiveDirectory;
+     const alternateRoute = view === "Backlog" ? "occurrences/backlog" : null;
+     const alternateQuery = view === "Backlog" ? new URLSearchParams({ from: format(shiftDay(new Date(), -366), "yyyy-MM-dd"), to: localDate(new Date()), page: String(page), limit: "100" }) : q;
+     const calendarRequest = needsCalendar ? api<{ items: OccurrenceView[]; total: number; summary: Summary }>(`occurrences/calendar?${q}`) : Promise.resolve(null);
+     const displayRequest = needsCalendar && alternateRoute ? api<{ items: OccurrenceView[]; total: number }>(`${alternateRoute}?${alternateQuery}`) : Promise.resolve(null);
+>>>>>>> origin
      const reuseExecutiveMetrics = workspace === "executive" && !!employee;
      const dashboardRequest = definition.loadDashboard && !reuseExecutiveMetrics ? definition.loadDashboard(api, q) : Promise.resolve(null);
      const [boot, data, alternate, dashboard, directory] = await Promise.all([bootRequest, calendarRequest, displayRequest, dashboardRequest, directoryRequest]);
      if (!active) return;
      setLoadedKey(queryKey);
+<<<<<<< HEAD
+=======
+========
+     const needsCalendar = !executiveDirectory;
+     const alternateRoute = view === "For review" ? "reviews" : view === "Backlog" ? "occurrences/backlog" : null;
+     const calendarRequest = needsCalendar ? api<{ items: OccurrenceView[]; total: number; summary: Summary }>(`occurrences/calendar?${q}`) : Promise.resolve(null);
+     const displayRequest = needsCalendar && alternateRoute ? api<{ items: OccurrenceView[]; total: number }>(`${alternateRoute}?${q}`) : Promise.resolve(null);
+     const reuseExecutiveMetrics = workspace === "executive" && !!employee;
+     const dashboardRequest = definition.loadDashboard && !reuseExecutiveMetrics ? definition.loadDashboard(api, q) : Promise.resolve(null);
+     const [boot, data, alternate, dashboard] = await Promise.all([bootRequest, calendarRequest, displayRequest, dashboardRequest]);
+     if (!active) return;
+>>>>>>>> origin:src/modules/project-management/work-management/assignment-center/WorkWorkspace.tsx
+>>>>>>> origin
      bootstrapCache.current = boot;
      setBootstrap(boot);
      if (data) setSummary(data.summary);
      const display = alternate ?? data;
      if (display) { setItems(display.items); setTotal(display.total); }
+<<<<<<< HEAD
      if (directory) directoryCache.current = directory;
      const knownEmployees = new Map([...(directory ?? []), ...boot.employees].map(person => [person.id, person]));
+=======
+<<<<<<<< HEAD:src/modules/project-management/work-management/my-tasks/WorkWorkspace.tsx
+     if (directory) directoryCache.current = directory;
+     const knownEmployees = new Map([...(directory ?? []), ...boot.employees].map(person => [person.id, person]));
+========
+     const knownEmployees = new Map(boot.employees.map(person => [person.id, person]));
+>>>>>>>> origin:src/modules/project-management/work-management/assignment-center/WorkWorkspace.tsx
+>>>>>>> origin
      for (const row of display?.items ?? []) knownEmployees.set(row.assignee.id, row.assignee);
      setBootstrap({ ...boot, employees: [...knownEmployees.values()] });
      if (dashboard && active) setDashboardData(dashboard);
@@ -106,7 +168,15 @@ export function WorkWorkspace({ definition, account }: { definition: WorkspaceDe
    finally { if (active) setLoading(false); }
   })();
   return () => { active = false; };
+<<<<<<< HEAD
   }, [api, from, to, page, employee, version, workspace, view, definition, executiveDirectory, wantsDirectory, queryKey]);
+=======
+<<<<<<<< HEAD:src/modules/project-management/work-management/my-tasks/WorkWorkspace.tsx
+  }, [api, from, to, page, employee, version, workspace, view, definition, executiveDirectory, wantsDirectory, queryKey]);
+========
+  }, [api, from, to, page, employee, version, workspace, view, definition, executiveDirectory]);
+>>>>>>>> origin:src/modules/project-management/work-management/assignment-center/WorkWorkspace.tsx
+>>>>>>> origin
  useEffect(() => { const timer = setInterval(refresh, 30000); window.addEventListener("focus", refresh); return () => { clearInterval(timer); window.removeEventListener("focus", refresh); }; }, [refresh]);
  const searchTokens = useMemo(() => search.trim().toLowerCase().split(/\s+/).filter(Boolean), [search]);
  const matchesSearch = useCallback((value: string) => !searchTokens.length || searchTokens.every(token => value.toLowerCase().includes(token)), [searchTokens]);
@@ -144,7 +214,11 @@ export function WorkWorkspace({ definition, account }: { definition: WorkspaceDe
    {bootstrap?.mode === "LIVE" && bootstrap.writes_enabled === false && <div role="status" className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">Work items are available for viewing. Changes are not enabled for this account.</div>}
  {error && <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-4"><div className="flex items-start gap-2"><CircleAlert className="mt-0.5 size-5 shrink-0 text-destructive" /><div><h2 className="font-medium">Workspace unavailable</h2><p className="mt-1 text-sm">{error}</p><Button variant="outline" size="sm" className="mt-3" onClick={refresh}>Retry</Button></div></div></div>}
  {!error && <>{loading && !summary ? <div role="status" className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[0, 1, 2, 3].map(i => <div key={i} className="h-24 animate-pulse rounded-lg bg-muted" />)}<span className="sr-only">Loading workspace</span></div> : summary && <Stats summary={summary} label={definition.progressLabel ?? "Submission progress"} />}
+<<<<<<< HEAD
  {Overview && view === "All Tasks" && <Overview bootstrap={bootstrap} rows={filtered} onCreate={() => setForm("new")} onOpen={setSelected} />}
+=======
+ {Overview && <Overview bootstrap={bootstrap} rows={filtered} onCreate={() => setForm("new")} onOpen={setSelected} />}
+>>>>>>> origin
   {executiveDirectory && <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><Button size="icon" variant="outline" aria-label="Previous period" onClick={() => navigate(-1)}><ChevronLeft className="size-4" /></Button><Button size="icon" variant="outline" aria-label="Next period" onClick={() => navigate(1)}><ChevronRight className="size-4" /></Button><Button variant="outline" onClick={() => { setDate(localDate(new Date())); setPage(1); }}>Today</Button><label><span className="sr-only">Reporting date</span><input aria-label="Reporting date" type="date" className={selectClass} value={date} onChange={e => { if (e.target.value) { setDate(e.target.value); setPage(1); } }} /></label></div><span className="text-sm font-medium">{format(anchor, "MMMM yyyy")}</span></div>}
   {Dashboard && <Dashboard data={dashboardData} selectedEmployee={employee} periodLabel={`${from} – ${to}`} onSelectEmployee={id => { setEmployee(id); setPage(1); }} onClearEmployee={() => { setEmployee(""); setPage(1); }} />}
   {!executiveDirectory && <Card><CardContent className="space-y-4 p-3 md:p-5">
@@ -160,7 +234,11 @@ export function WorkWorkspace({ definition, account }: { definition: WorkspaceDe
  </main>
  <Dialog open={!!day} onOpenChange={open => { if (!open) setDay(null); }}><DialogContent className="max-h-[85vh] overflow-auto"><DialogHeader><DialogTitle>Due on {day}</DialogTitle><DialogDescription>Individual employee obligations for the selected day.</DialogDescription></DialogHeader><ObligationList rows={filtered.filter(o => localDate(o.due_at) === day)} onOpen={id => { setDay(null); setSelected(id); }} /></DialogContent></Dialog>
  {selected && <DetailPanel id={selected} api={api} workspace={workspace} employees={bootstrap?.employees ?? []} onClose={() => setSelected(null)} onChanged={refresh} onEdit={task => { setSelected(null); setForm(task); }} />}
+<<<<<<< HEAD
   {form && bootstrap && <TaskForm task={form === "new" ? null : form} bootstrap={bootstrap} api={api} globalAssignment={definition.globalAssignment} onClose={() => setForm(null)} onSaved={() => { setForm(null); refresh(); }} />}
+=======
+ {form && bootstrap && <TaskForm task={form === "new" ? null : form} bootstrap={bootstrap} api={api} onClose={() => setForm(null)} onSaved={() => { setForm(null); refresh(); }} />}
+>>>>>>> origin
  </div>;
 }
 
@@ -177,6 +255,7 @@ function DetailPanel({ id, api, workspace, employees, onClose, onChanged, onEdit
  const [detail, setDetail] = useState<Detail | null>(null); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
  const [comment, setComment] = useState(""); const [tab, setTab] = useState("Summary");
  const [action, setAction] = useState(""); const [actionReason, setActionReason] = useState(""); const [deadline, setDeadline] = useState(""); const [changed, setChanged] = useState(false);
+<<<<<<< HEAD
  const [cancelTargets, setCancelTargets] = useState<{ id: string; assignee_name: string; row_version: number; status: string; selectable: boolean }[]>([]);
  const [cancelTargetId, setCancelTargetId] = useState("");
  const [eventFilter, setEventFilter] = useState("All");
@@ -185,6 +264,12 @@ function DetailPanel({ id, api, workspace, employees, onClose, onChanged, onEdit
   useEffect(() => { let active = true; api<Detail>(`occurrences/${id}`).then(d => { if (active) setDetail(d); }).catch(e => { if (active) setError(String(e)); }); return () => { active = false; }; }, [api, id]);
  useEffect(() => { if (action !== "cancel-occurrence") return; let active = true; api<typeof cancelTargets>(`occurrences/${id}/cancel-targets`).then(targets => { if (!active) return; setCancelTargets(targets); setCancelTargetId(targets.find(target => target.id === id && target.selectable)?.id ?? targets.find(target => target.selectable)?.id ?? ""); }).catch(e => { if (active) setError(e instanceof Error ? e.message : "Unable to load assignees for cancellation."); }); return () => { active = false; };
  }, [action, api, id]);
+=======
+ const [eventFilter, setEventFilter] = useState("All");
+ const [noticeOpen, setNoticeOpen] = useState(true);
+ const reload = useCallback(async () => { const d = await api<Detail>(`occurrences/${id}`); setDetail(d); setChanged(false); }, [api, id]);
+ useEffect(() => { let active = true; api<Detail>(`occurrences/${id}`).then(d => { if (active) setDetail(d); }).catch(e => { if (active) setError(String(e)); }); return () => { active = false; }; }, [api, id]);
+>>>>>>> origin
  useEffect(() => { const t = setInterval(async () => { try { const d = await api<Detail>(`occurrences/${id}`); if (detail && (d.row_version !== detail.row_version || d.task.revision_number !== detail.task.revision_number)) setChanged(true); } catch { /* User-triggered refresh surfaces errors without clearing drafts. */ } }, 15000); return () => clearInterval(t); }, [api, id, detail]);
  const mutate = async (path: string, body: unknown, method = "POST") => {
   setBusy(true); setError(""); try { await api(path, { method, headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify(body) }); await reload(); onChanged(); return true; } catch (e) { setError(e instanceof Error ? e.message : "Command failed."); return false; } finally { setBusy(false); }
@@ -198,6 +283,7 @@ function DetailPanel({ id, api, workspace, employees, onClose, onChanged, onEdit
  <div className="flex flex-wrap gap-2"><Badge className={stateClass(stateOf(detail))} variant="outline">{stateOf(detail)}</Badge><Badge variant="secondary">{detail.task_revision.priority}</Badge><Badge variant="outline">{frequencyLabels[detail.task_revision.schedule.frequency]}</Badge></div>
  {detail.unacknowledged.length > 0 && workspace === "my-tasks" && <section aria-label="Unacknowledged task changes" className="space-y-3 rounded-lg border border-amber-500/50 bg-amber-500/5 p-4"><h3 className="font-medium">Task updated · acknowledgment required</h3><p className="text-xs text-muted-foreground">A read receipt, not agreement. Dismissing this panel does not acknowledge changes.</p>{detail.unacknowledged.map(e => <div key={e.id} className="space-y-2 border-t pt-2 text-sm"><p>{e.event_type.replaceAll("_", " ")} · {name(e.actor_id)} · {dateTime(e.created_at)}</p><p>Reason: {e.reason}</p><pre className="max-h-36 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify({ old: e.old_values, new: e.new_values }, null, 2)}</pre><Button size="sm" disabled={busy} onClick={() => mutate(`occurrences/${id}/acknowledge`, { event_id: e.id })}>Acknowledge Update</Button></div>)}</section>}
  <div className="flex flex-wrap gap-1" role="tablist" aria-label="Task detail sections">{["Summary", "Versions", "Comments", "Activity"].map(t => <Button key={t} role="tab" aria-selected={tab === t} size="sm" variant={tab === t ? "secondary" : "ghost"} onClick={() => setTab(t)}>{t}</Button>)}</div>
+<<<<<<< HEAD
  {tab === "Summary" && <><dl className="grid grid-cols-2 gap-3 text-sm">{[["Assignee", detail.assignee.name], ["Created by", name(detail.task_revision.created_by)], ["Report to", name(detail.task_revision.report_to_user_id)], ["Original due", dateTime(detail.original_due_at)], ["Effective due", dateTime(detail.due_at)], ["Available from", dateTime(detail.available_at)]].map(([label, value]) => <div key={label}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1">{value}</dd></div>)}</dl><section><h3 className="mb-2 text-sm font-medium">Instructions · revision {detail.task_revision.revision_number}</h3><p className="whitespace-pre-wrap text-sm">{detail.task_revision.description}</p></section>{detail.task_revision.reference_file_ids.length > 0 && <section><h3 className="text-sm font-medium">Reference attachments</h3>{detail.task_revision.reference_file_ids.map(id => <a key={id} href={`${BASE}/files/${id}/download?workspace=${workspace}`} className="block text-sm text-primary underline">{detail.files.find(f => f.id === id)?.name ?? "Reference file"}</a>)}</section>}
   {detail.can_submit && <SubmissionBin detail={detail} controller={submission} busy={busy} changed={changed} />}
   {workspace === "my-tasks" && !detail.can_submit && !detail.first_submission_id && detail.status !== "CANCELLED" && <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">The submission bin becomes available when this obligation reaches its “Available from” time.</p>}
@@ -208,12 +294,22 @@ function DetailPanel({ id, api, workspace, employees, onClose, onChanged, onEdit
   {detail.task.lifecycle_status === "PAUSED" ? <Button variant="outline" className="border-emerald-500/50 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => { setAction("resume"); setActionReason(""); }}><PauseCircle className="mr-2 size-4" />Reactivate task</Button> : <Button variant="outline" className="border-amber-500/50 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300" onClick={() => { setAction("pause"); setActionReason(""); }}><PauseCircle className="mr-2 size-4" />Deactivate task</Button>}
   <Button variant="outline" className="border-slate-500/50 text-slate-700 hover:bg-slate-500/10 dark:text-slate-300" onClick={() => { setAction("archive"); setActionReason(""); }}><Archive className="mr-2 size-4" />Archive task</Button>
  </div>}</>}
+=======
+ {tab === "Summary" && <><dl className="grid grid-cols-2 gap-3 text-sm">{[["Assignee", detail.assignee.name], ["Created by", name(detail.task_revision.created_by)], ["Report to", name(detail.task_revision.report_to_user_id)], ["Original due", dateTime(detail.original_due_at)], ["Effective due", dateTime(detail.due_at)], ["Available from", dateTime(detail.available_at)]].map(([label, value]) => <div key={label}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1">{value}</dd></div>)}</dl>{detail.events.filter(event => /^(TASK_(DETAILS_UPDATED|SCHEDULE_CHANGED|PAUSED|RESUMED|CANCELLED|ARCHIVED|DEADLINE_CHANGED)|OCCURRENCE_(CANCELLED|DEADLINE_CHANGED))$/.test(event.event_type)).toReversed().slice(0, 1).map(event => <section key={event.id} className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3"><h3 className="text-sm font-medium">Latest change · {event.event_type.replaceAll("_", " ").toLowerCase()}</h3><p className="text-sm">Reason: {event.reason || "No reason provided"}</p><details><summary className="cursor-pointer text-xs text-primary">View change details</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs">{JSON.stringify({ old: event.old_values, new: event.new_values }, null, 2)}</pre></details></section>)}<section><h3 className="mb-2 text-sm font-medium">Instructions · revision {detail.task_revision.revision_number}</h3><p className="whitespace-pre-wrap text-sm">{detail.task_revision.description}</p></section>{detail.task_revision.reference_file_ids.length > 0 && <section><h3 className="text-sm font-medium">Reference attachments</h3>{detail.task_revision.reference_file_ids.map(id => <a key={id} href={`${BASE}/files/${id}/download?workspace=${workspace}`} className="block text-sm text-primary underline">{detail.files.find(f => f.id === id)?.name ?? "Reference file"}</a>)}</section>}
+  {detail.can_submit && <SubmissionBin detail={detail} controller={submission} busy={busy} changed={changed} />}
+  {workspace === "my-tasks" && !detail.can_submit && !detail.first_submission_id && detail.status !== "CANCELLED" && <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">The submission bin becomes available when this obligation reaches its “Available from” time.</p>}
+ {detail.can_edit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => onEdit(detail.task)}>Edit Task</Button>{["deadline", "cancel-occurrence", detail.task.lifecycle_status === "PAUSED" ? "resume" : "pause", "cancel-task"].map(a => <Button key={a} variant="outline" onClick={() => { setAction(a); setActionReason(""); }}>{a.replaceAll("-", " ")}</Button>)}</div>}</>}
+>>>>>>> origin
  {tab === "Versions" && <div className="space-y-4">{detail.submissions.length ? detail.submissions.toReversed().map(s => <section key={s.id} className="space-y-2 rounded-lg border p-4"><div className="flex justify-between"><h3 className="text-sm font-medium">Version {s.version_number}</h3><Badge variant="outline">{s.is_late ? s.version_number === 1 ? "Submitted late" : "Late revision" : "On time"}</Badge></div><p className="text-xs text-muted-foreground">{dateTime(s.submitted_at)} · {name(s.submitted_by)}<br />Evaluated deadline: {dateTime(s.evaluated_due_at)}</p>{s.remark && <p className="text-sm">{s.remark}</p>}{s.revision_reason && <p className="text-sm">Reason: {s.revision_reason}</p>}{s.file_ids.map(id => <a key={id} href={`${BASE}/files/${id}/download?workspace=${workspace}`} className="block text-sm text-primary underline">{detail.files.find(f => f.id === id)?.name ?? "Download file"}</a>)}</section>) : <p className="text-sm text-muted-foreground">No deliverable submitted yet.</p>}</div>}
  {tab === "Comments" && <div className="space-y-3"><p className="text-xs text-muted-foreground">Discussion only — not an approval/rejection workflow.</p>{detail.comments.map(c => <div key={c.id} className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">{name(c.author_id)} · {dateTime(c.created_at)}</p><p className="mt-1 whitespace-pre-wrap text-sm">{c.text}</p></div>)}{detail.can_comment && <><label className="block text-sm">Comment<Textarea value={comment} onChange={e => setComment(e.target.value)} /></label><Button disabled={busy || !comment.trim()} onClick={async () => { if (await mutate(`occurrences/${id}/comments`, { text: comment })) setComment(""); }}>Post Comment</Button></>}</div>}
  {tab === "Activity" && <div className="space-y-3"><div className="flex flex-wrap gap-1">{["All", "Changes", "Submissions", "Comments"].map(f => <Button key={f} variant={eventFilter === f ? "secondary" : "ghost"} size="sm" onClick={() => setEventFilter(f)}>{f}</Button>)}</div>{detail.events.filter(e => eventFilter === "All" || eventFilter === "Changes" && e.material || eventFilter === "Submissions" && /SUBMISSION_(CREATED|REVISED)/.test(e.event_type) || eventFilter === "Comments" && e.event_type === "SUBMISSION_COMMENTED").toReversed().map(e => <article key={e.id} className="border-l-2 pl-4"><h3 className="text-sm font-medium">{e.event_type.replaceAll("_", " ")}</h3><p className="text-xs text-muted-foreground">{name(e.actor_id)} · {dateTime(e.created_at)}</p><p className="mt-1 text-sm">{e.reason}</p><details className="mt-2 text-xs"><summary className="cursor-pointer text-primary">Old → new values</summary><pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded bg-muted p-2">{JSON.stringify({ old: e.old_values, new: e.new_values }, null, 2)}</pre></details></article>)}</div>}
  </>}
  </div></SheetContent>
  <Dialog open={noticeOpen && workspace === "my-tasks" && !!detail?.unacknowledged.length} onOpenChange={setNoticeOpen}><DialogContent className="max-h-[85vh] overflow-auto"><DialogHeader><DialogTitle>Task Updated</DialogTitle><DialogDescription>An assignor changed this task. Acknowledging is a read receipt, not agreement. Dismissal leaves the update unread.</DialogDescription></DialogHeader>{detail?.unacknowledged.map(event => <section key={event.id} className="space-y-2 border-t pt-3"><p className="text-sm font-medium">{event.event_type.replaceAll("_", " ")}</p><p className="text-xs text-muted-foreground">{name(event.actor_id)} · {dateTime(event.created_at)}</p><p className="text-sm">Reason: {event.reason}</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded bg-muted p-3 text-xs">{JSON.stringify({ old: event.old_values, new: event.new_values }, null, 2)}</pre><Button disabled={busy} onClick={() => mutate(`occurrences/${id}/acknowledge`, { event_id: event.id })}>Acknowledge Update</Button></section>)}</DialogContent></Dialog>
+<<<<<<< HEAD
  <Dialog open={!!action} onOpenChange={open => { if (!open) setAction(""); }}><DialogContent><DialogHeader><DialogTitle>Confirm {action === "pause" ? "deactivate task" : action === "resume" ? "reactivate task" : action === "archive" ? "archive task" : action === "cancel-occurrence" ? "cancel this occurrence" : action === "deadline" ? "change deadline" : action.replaceAll("-", " ")}</DialogTitle><DialogDescription>{action === "cancel-occurrence" ? "Choose whose scheduled occurrence to cancel. This affects only that assignee and date; other assignees and future occurrences are unchanged." : action === "pause" ? "Deactivates the entire task for every assignee and prevents future occurrences until it is reactivated." : action === "archive" ? "Archives the entire task for every assignee. Open unsubmitted occurrences are cancelled; submitted history is retained." : "Changes are recorded and affected assignees are notified. Submitted work remains in the task history."}</DialogDescription></DialogHeader>{action === "cancel-occurrence" && <label className="block text-sm">Assignee’s occurrence<select className={selectClass + " mt-1 w-full"} value={cancelTargetId} onChange={event => setCancelTargetId(event.target.value)}>{cancelTargets.filter(target => target.selectable).map(target => <option key={target.id} value={target.id}>{target.assignee_name}{target.id === id ? " (currently open)" : ""}</option>)}</select>{!cancelTargets.length && <span className="mt-1 block text-xs text-muted-foreground">Loading assignees…</span>}</label>}{action === "deadline" && <fieldset className="space-y-2"><legend className="text-sm font-medium">New effective deadline · Manila time</legend><div className="grid grid-cols-2 gap-3"><label className="text-sm">Date<Input type="date" required value={deadline.slice(0, 10)} onChange={e => setDeadline(`${e.target.value}T${deadline.slice(11, 16) || "17:00"}`)} /></label><label className="text-sm">Time<Input type="time" required value={deadline.slice(11, 16)} onChange={e => setDeadline(`${deadline.slice(0, 10)}T${e.target.value}`)} /></label></div><p className="text-xs text-muted-foreground">Choose the date and local time when this obligation is due.</p></fieldset>}<label className="text-sm">Reason (required)<Textarea value={actionReason} onChange={e => setActionReason(e.target.value)} /></label><Button disabled={busy || !actionReason.trim() || action === "deadline" && !deadline || action === "cancel-occurrence" && (!cancelTargetId || !cancelTargets.length)} onClick={async () => { if (!detail) return; const occurrenceAction = action === "deadline" || action === "cancel-occurrence"; const selectedTarget = cancelTargets.find(target => target.id === cancelTargetId); const targetId = action === "cancel-occurrence" ? cancelTargetId : id; const path = occurrenceAction ? `occurrences/${targetId}/${action === "deadline" ? "deadline" : "cancel"}` : `tasks/${detail.task.id}/${action}`; const expected = action === "cancel-occurrence" ? selectedTarget?.row_version : action === "deadline" ? detail.row_version : detail.task.revision_number; const ok = await mutate(path, { reason: actionReason, expected_revision: expected, ...(action === "deadline" ? { due_at: new Date(deadline + ":00+08:00").toISOString() } : {}) }, action === "deadline" ? "PATCH" : "POST"); if (ok) setAction(""); }}>Confirm change</Button></DialogContent></Dialog>
+=======
+ <Dialog open={!!action} onOpenChange={open => { if (!open) setAction(""); }}><DialogContent><DialogHeader><DialogTitle>Confirm {action.replaceAll("-", " ")}</DialogTitle><DialogDescription>Changes are audited and notified. Completed submissions remain historical records.</DialogDescription></DialogHeader>{action === "deadline" && <fieldset className="space-y-2"><legend className="text-sm font-medium">New effective deadline · Manila time</legend><div className="grid grid-cols-2 gap-3"><label className="text-sm">Date<Input type="date" required value={deadline.slice(0, 10)} onChange={e => setDeadline(`${e.target.value}T${deadline.slice(11, 16) || "17:00"}`)} /></label><label className="text-sm">Time<Input type="time" required value={deadline.slice(11, 16)} onChange={e => setDeadline(`${deadline.slice(0, 10)}T${e.target.value}`)} /></label></div><p className="text-xs text-muted-foreground">Choose the date and local time when this obligation is due.</p></fieldset>}<label className="text-sm">Reason (required)<Textarea value={actionReason} onChange={e => setActionReason(e.target.value)} /></label><Button disabled={busy || !actionReason.trim() || action === "deadline" && !deadline} onClick={async () => { if (!detail) return; const occurrenceAction = action === "deadline" || action === "cancel-occurrence"; const path = occurrenceAction ? `occurrences/${id}/${action === "deadline" ? "deadline" : "cancel"}` : `tasks/${detail.task.id}/${action === "cancel-task" ? "cancel" : action}`; const ok = await mutate(path, { reason: actionReason, expected_revision: occurrenceAction ? detail.row_version : detail.task.revision_number, ...(action === "deadline" ? { due_at: new Date(deadline + ":00+08:00").toISOString() } : {}) }, action === "deadline" ? "PATCH" : "POST"); if (ok) setAction(""); }}>Confirm change</Button></DialogContent></Dialog>
+>>>>>>> origin
  </Sheet>;
 }

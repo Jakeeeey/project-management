@@ -1,5 +1,9 @@
 import { randomUUID, createHash } from "node:crypto";
+<<<<<<< HEAD
 import type { State, Employee, Task, Schedule, Occurrence, Workspace, Summary, Detail, OccurrenceView } from "./types";
+=======
+import type { State, Employee, Task, Occurrence, Workspace, Summary, Detail, OccurrenceView } from "./types";
+>>>>>>> origin
 import { canAssign, canEdit, canRead, assertMutableWorkspace, globalAssignor, requireRule, workspaceAllowed } from "./policies";
 import { addDays, localDate, scheduleDates, wallToUtc } from "./recurrence";
 import { Amendment, DeadlineInput, ReasonInput, SubmissionInput, TaskInput } from "./schemas";
@@ -77,8 +81,11 @@ export class WorkEngine {
  }
  generate(task: Task, request: string, futureOnly = false) {
   if (task.lifecycle_status !== "ACTIVE") return;
+<<<<<<< HEAD
   // Persist monthly occurrences across the year so month navigation can load them.
   // Keep higher-frequency schedules bounded to avoid excessive rows per assignment.
+=======
+>>>>>>> origin
   const monthly = task.schedule.frequency === "MONTHLY" || task.schedule.frequency === "CUSTOM" && task.schedule.interval_unit === "MONTH";
   const through = addDays(localDate(this.now, task.schedule.timezone), monthly ? 400 : 60);
   const dates = scheduleDates(task.schedule, through);
@@ -114,8 +121,12 @@ export class WorkEngine {
   requireRule(input.scope_type === task.scope_type && department === task.department_id, 422, "IMMUTABLE_SCOPE", "Create another task to change ownership scope.");
   const addedReferences = input.reference_file_ids.filter(f => !task.reference_file_ids.includes(f));
   for (const file of this.files(addedReferences)) file.state = "CLAIMED";
+<<<<<<< HEAD
    const normalizeSchedule = (schedule: Schedule) => ({ ...schedule, due_local_time: schedule.due_local_time.slice(0, 5), days_of_week: [...schedule.days_of_week].sort((a, b) => a - b) });
    const scheduleChanged = JSON.stringify(normalizeSchedule(task.schedule)) !== JSON.stringify(normalizeSchedule(input.schedule));
+=======
+  const scheduleChanged = JSON.stringify(task.schedule) !== JSON.stringify(input.schedule);
+>>>>>>> origin
   Object.assign(task, { title: input.title, description: input.description, priority: input.priority, report_to_user_id: report, schedule: input.schedule, reference_file_ids: input.reference_file_ids, availability_start_at: new Date(input.availability_start_at).toISOString(), revision_number: task.revision_number + 1, schedule_version: task.schedule_version + (scheduleChanged ? 1 : 0), schedule_effective_at: scheduleChanged ? this.now : task.schedule_effective_at });
   for (const assignment of this.state.assignments.filter(a => a.task_id === task.id)) {
    if (!users.some(u => u.id === assignment.assignee_user_id) && assignment.status === "ACTIVE") {
@@ -194,7 +205,11 @@ export class WorkEngine {
   }
   return { acknowledged: true };
  }
+<<<<<<< HEAD
  list(from: string, to: string, employee?: string): OccurrenceView[] {
+=======
+  list(from: string, to: string, employee?: string): OccurrenceView[] {
+>>>>>>> origin
   return this.state.occurrences.flatMap(o => {
    const task = this.state.tasks.find(t => t.id === o.task_id)!; const assignment = this.state.assignments.find(a => a.id === o.assignment_id)!;
    const assignee = this.state.employees.find(e => e.id === assignment.assignee_user_id)!;

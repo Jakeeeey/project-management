@@ -6,7 +6,11 @@ import { requireRule, WorkError, workspaceAllowed } from "./policies";
 import type { Bootstrap, Employee, Role, Workspace } from "./types";
 import { isActiveEmployeeFlag } from "./employee-policy";
 import { LiveReader, type ReadPeriod } from "./live-read";
+<<<<<<< HEAD
 import { addDays, localDate, parseUtcTimestamp } from "./recurrence";
+=======
+import { addDays, parseUtcTimestamp, wallToUtc } from "./recurrence";
+>>>>>>> origin
 import { resolveWorkspaceReadAccess } from "./workspace-access";
 import { DirectusClient } from "./directus-client";
 import { TaskWriter } from "./task-writer";
@@ -45,7 +49,15 @@ export async function liveBootstrap(): Promise<Bootstrap> {
   const [users, grants, modules] = await Promise.all([
    readRows<{ user_id: number; user_fname: string; user_lname: string; user_department: number | null; is_deleted: unknown; role: unknown; isAdmin: unknown }>("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted", "role", "isAdmin"], { user_id: { _eq: userId } }, 1),
    readRows<{ role: Role; department_id: number | null }>("pm_work_role_grant", ["role", "department_id"], { user_id: { _eq: userId }, revoked_at: { _null: true } }),
+<<<<<<< HEAD
+<<<<<<<< HEAD:src/modules/project-management/work-management/my-tasks/server.ts
    readRows<{ id: number | string; base_path: string }>("modules", ["id", "base_path"], { status: { _eq: "active" }, base_path: { _in: ["/project-management/work-management/assignor", "/project-management/work-management/assignment-center", "/project-management/work-management/assignee", "/project-management/work-management/my-tasks", "/project-management/work-management/executive", "/project-management/work-management/executive-overview", "/project-management/work-management/departmental-overview"] } }),
+========
+   readRows<{ id: number | string; base_path: string }>("modules", ["id", "base_path"], { status: { _eq: "active" }, base_path: { _in: ["/project-management/work-management/assignor", "/project-management/work-management/assignment-center", "/project-management/work-management/assignee", "/project-management/work-management/my-tasks", "/project-management/work-management/executive", "/project-management/work-management/executive-overview"] } }),
+>>>>>>>> origin:src/modules/project-management/work-management/assignment-center/server.ts
+=======
+   readRows<{ id: number | string; base_path: string }>("modules", ["id", "base_path"], { status: { _eq: "active" }, base_path: { _in: ["/project-management/work-management/assignor", "/project-management/work-management/assignment-center", "/project-management/work-management/assignee", "/project-management/work-management/my-tasks", "/project-management/work-management/executive", "/project-management/work-management/executive-overview"] } }),
+>>>>>>> origin
   ]);
   requireRule(users.length && isActiveEmployeeFlag(users[0].is_deleted), 401, "INACTIVE_EMPLOYEE", "Your employee record is unavailable.");
  const user = users[0];
@@ -62,7 +74,15 @@ export async function liveBootstrap(): Promise<Bootstrap> {
   // home department. It never implies global scope; only a GLOBAL_ASSIGNOR grant does that.
   if (readAccess.workspaces.includes("assignor") && !roles.includes("GLOBAL_ASSIGNOR") && !roles.includes("DEPARTMENT_ASSIGNOR")) roles.push("DEPARTMENT_ASSIGNOR");
   const actor: Employee = { id: userId, name: [user.user_fname, user.user_lname].filter(Boolean).join(" "), department_id: String(user.user_department ?? ""), department: departments[0]?.department_name ?? "No department", roles, read_workspaces: readAccess.workspaces, read_all_departments: readAccess.allDepartments };
+<<<<<<< HEAD
+<<<<<<<< HEAD:src/modules/project-management/work-management/my-tasks/server.ts
    return { mode: "LIVE", writes_enabled: true, uploads_enabled: true, reference_uploads_enabled: false, workspace_access: readAccess.workspaces, actor, identities: [], employees: [actor], capabilities: { assign: roles.includes("GLOBAL_ASSIGNOR") || roles.includes("DEPARTMENT_ASSIGNOR"), global: roles.includes("GLOBAL_ASSIGNOR"), executive: workspaceAllowed(actor, "executive") }, blockers: ["Task reference attachments are not enabled. Deliverable uploads are available in My Tasks."] };
+========
+   return { mode: "LIVE", writes_enabled: true, uploads_enabled: false, reference_uploads_enabled: false, workspace_access: readAccess.workspaces, actor, identities: [], employees: [actor], capabilities: { assign: roles.includes("GLOBAL_ASSIGNOR") || roles.includes("DEPARTMENT_ASSIGNOR"), global: roles.includes("GLOBAL_ASSIGNOR"), executive: workspaceAllowed(actor, "executive") }, blockers: ["Changes are saved to the live Directus database. Multi-record operations use compensating cleanup and are not transactional.", "Task reference attachments are not enabled in this workspace."] };
+>>>>>>>> origin:src/modules/project-management/work-management/assignment-center/server.ts
+=======
+   return { mode: "LIVE", writes_enabled: true, uploads_enabled: true, reference_uploads_enabled: false, workspace_access: readAccess.workspaces, actor, identities: [], employees: [actor], capabilities: { assign: roles.includes("GLOBAL_ASSIGNOR") || roles.includes("DEPARTMENT_ASSIGNOR"), global: roles.includes("GLOBAL_ASSIGNOR"), executive: workspaceAllowed(actor, "executive") }, blockers: ["Changes are saved to the live Directus database. Multi-record operations use compensating cleanup and are not transactional.", "Task reference attachments are not enabled; deliverable uploads are stored in Directus and downloaded through authorized workspace routes."] };
+>>>>>>> origin
 }
 
 export async function liveCreateTask(raw: unknown, key: string, workspace: Workspace) {
@@ -117,7 +137,11 @@ export async function liveSubmitOccurrence(occurrenceId: string, raw: unknown, k
  const hash = createHash("sha256").update(JSON.stringify({ occurrenceId, ...input })).digest("hex");
   const operation = `submission:${occurrenceId}`;
   // Include the historical command key so existing idempotency records remain effective.
+<<<<<<< HEAD
   const scope = { actor_key: { _eq: `wm:user:${bootstrap.actor.id}` }, operation: { _eq: operation }, idempotency_key: { _eq: key } };
+=======
+  const scope = { actor_key: { _eq: `wm:user:${bootstrap.actor.id}` }, operation: { _in: [operation, `dummy:submit:${occurrenceId}`] }, idempotency_key: { _eq: key } };
+>>>>>>> origin
  const previous = (await db.read("pm_work_idempotency", ["id", "state", "request_sha256", "response_body"], scope, 1))[0];
  if (previous) {
   requireRule(previous.request_sha256 === hash, 409, "IDEMPOTENCY_MISMATCH", "This submission key was already used with different details.");
@@ -172,6 +196,7 @@ export async function liveRead(path: string[], workspace: Workspace, period: Rea
   const reader = new LiveReader((collection, fields, filter, limit, page) => readRows<Record<string, unknown>>(collection, fields, filter, limit, page));
   return reader.directory(actor, workspace);
  }
+<<<<<<< HEAD
  if (route === "notifications") return readRows("pm_work_notification", ["id", "recipient_id", "event_id", "type", "payload", "read_at", "created_at"], { recipient_id: { _eq: actor.id } }, 100);
  const supported = ["occurrences", "occurrences/calendar", "occurrences/backlog", "analytics/company", "analytics/employees", "analytics/departments", "analytics/trends"];
  requireRule(supported.includes(route), 503, "LIVE_READ_NOT_READY", "This live read endpoint is not implemented yet. Calendar and reporting reads are available; no write was attempted.");
@@ -185,6 +210,18 @@ export async function liveRead(path: string[], workspace: Workspace, period: Rea
   // Final boundary check: My Tasks can only ever return the signed-in assignee's rows.
   const scoped = workspace === "my-tasks" ? rows.filter(o => o.assignee.id === actor.id) : rows;
   return { items: scoped.slice((period.page - 1) * period.limit, period.page * period.limit), total: scoped.length, summary: engine.summary(period.from, period.to, period.employee) };
+=======
+ if (route === "notifications") return readRows("pm_work_notification", ["id", "recipient_id", "event_id", "type", "read_at", "created_at"], { recipient_id: { _eq: actor.id } }, 100);
+ const supported = ["occurrences", "occurrences/calendar", "occurrences/backlog", "reviews", "analytics/company", "analytics/employees", "analytics/departments", "analytics/trends"];
+ requireRule(supported.includes(route), 503, "LIVE_READ_NOT_READY", "This live read endpoint is not implemented yet. Calendar and reporting reads are available; no write was attempted.");
+ if (path[0] === "analytics") requireRule(workspace === "executive" && workspaceAllowed(actor, "executive"), 403, "FORBIDDEN", "Executive access is required.");
+ const reader = new LiveReader((collection, fields, filter, limit, page) => readRows<Record<string, unknown>>(collection, fields, filter, limit, page));
+ const engine = await reader.load(actor, workspace, period, route === "reviews");
+ if (route === "occurrences" || route === "occurrences/calendar" || route === "reviews" || route === "occurrences/backlog") {
+  const rows = route === "occurrences/backlog" ? engine.list("1900-01-01", period.from, period.employee).filter(o => !o.first_submission_id && o.status !== "CANCELLED" && o.due_at < engine.now && o.due_at < wallToUtc(period.from, "00:00", "Asia/Manila"))
+   : engine.list(period.from, period.to, period.employee, route === "reviews");
+  return { items: rows.slice((period.page - 1) * period.limit, period.page * period.limit), total: rows.length, summary: engine.summary(period.from, period.to, period.employee) };
+>>>>>>> origin
  }
  if (route === "analytics/company") return engine.summary(period.from, period.to, period.employee);
  if (route === "analytics/trends") {
@@ -213,7 +250,11 @@ export async function liveDownload(fileId: string, workspace: Workspace): Promis
  requireRule(detail.files.some(candidate => candidate.id === fileId), 404, "NOT_FOUND", "File not found.");
  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "");
  const response = await fetch(`${base}/assets/${encodeURIComponent(String(file.directus_file_id))}`, { headers: { Authorization: `Bearer ${process.env.DIRECTUS_STATIC_TOKEN}` }, cache: "no-store", signal: AbortSignal.timeout(30000) });
+<<<<<<< HEAD
  requireRule(response.ok && response.body, 502, "FILE_STORAGE_UNAVAILABLE", "Unable to read the authorized file.");
+=======
+ requireRule(response.ok && response.body, 502, "FILE_STORAGE_UNAVAILABLE", "Unable to read the authorized file from Directus storage.");
+>>>>>>> origin
  return new Response(response.body, { headers: { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(String(file.original_filename))}`, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" } });
 }
 
