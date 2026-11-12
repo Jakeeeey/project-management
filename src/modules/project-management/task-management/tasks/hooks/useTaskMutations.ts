@@ -50,11 +50,18 @@ type HttpMethod = "POST" | "PATCH" | "DELETE";
 
 export interface UseTaskMutationsOptions {
     /**
-     * Refetch the list after every successful write — the module's single mutation strategy. Pass
-     * `useTasks().refresh`; there is no optimistic patching anywhere, so the tree always shows the
-     * server's answer.
+     * Refetch the list after every successful write whose shape the response cannot answer — a
+     * create, a delete and a move all change rows other than the one they return. Pass
+     * `useTasks().refresh`.
      */
     readonly onChanged: () => Promise<void>;
+    /**
+     * Optional receiver for the row a field update answers with. When supplied, an update merges
+     * that row instead of refetching the whole list: the edit is already painted, the server's row
+     * is authoritative for rollups and filters, and the list read it saves is the slowest thing in
+     * the save path. Pass `useTasks().mergeTaskRow`.
+     */
+    readonly onTaskUpdated?: (row: unknown) => void;
 }
 
 /** The canonical return of the task write hook. */
@@ -129,7 +136,7 @@ function createdIdOf(envelope: Record<string, unknown> | null): number | null {
  * @returns `{ isSubmitting, error, createTask, updateTask, deleteTask, moveTask, uploadAttachment,
  *          detachAttachment, clearError }`.
  */
-export function useTaskMutations({ onChanged }: UseTaskMutationsOptions): UseTaskMutationsResult {
+export function useTaskMutations({ onChanged, onTaskUpdated }: UseTaskMutationsOptions): UseTaskMutationsResult {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -150,17 +157,25 @@ export function useTaskMutations({ onChanged }: UseTaskMutationsOptions): UseTas
         [],
     );
 
-    /** Every write runs through here: act, refetch, toast, and record the persistent error. */
+    /**
+     * Every write runs through here: act, settle, toast, and record the persistent error.
+     *
+     * `settle` receives the response envelope, so a caller whose write answers with a full row can
+     * apply that row instead of paying for a list refetch; every other write falls back to
+     * `onChanged`. The toast is emitted after settling, so it never precedes the state it reports.
+     */
     const runMutation = useCallback(
         async (
             action: () => Promise<Record<string, unknown>>,
             successMessage: string,
             failureTitle: string,
+            settle?: (envelope: Record<string, unknown>) => void,
         ): Promise<Record<string, unknown> | null> => {
             setIsSubmitting(true);
             try {
                 const envelope = await action();
-                await onChanged();
+                if (settle !== undefined) settle(envelope);
+                else await onChanged();
                 setError(null);
                 toast.success(successMessage);
                 return envelope;
@@ -194,10 +209,13 @@ export function useTaskMutations({ onChanged }: UseTaskMutationsOptions): UseTas
                 () => request(`${TASKS_ENDPOINT}/${taskId}`, "PATCH", input),
                 "Changes saved",
                 "Could not save the task",
+                // The PATCH answers with the whole updated row; merging it keeps the list, the
+                // rollups and every other tab in step without re-reading the list.
+                onTaskUpdated === undefined ? undefined : (settled) => onTaskUpdated(settled.data),
             );
             return envelope !== null;
         },
-        [request, runMutation],
+        [request, runMutation, onTaskUpdated],
     );
 
     const deleteTask = useCallback(

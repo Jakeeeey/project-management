@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 
 import type { FilterBuilderMember, FilterBuilderOption } from "../components/TaskFilterBuilder";
 import {
@@ -10,15 +10,17 @@ import {
     rowMatchesClauses,
     type FilterClause,
 } from "../components/task-filter";
+import { knownClauses } from "../components/task-filter-state";
 import { useSavedTaskFilters } from "./useSavedTaskFilters";
+import { useTaskFilterState } from "./useTaskFilterState";
 import type { TaskCatalogs, TaskField, TaskListItem } from "./useTasks";
 
 /**
- * The search + clause state one read-only view owns.
+ * The search + clause state a read-only view reads, over the rows the shell already fetched.
  *
- * Each view keeps its own copy (the List's lives in the shell) so narrowing the Calendar cannot
- * narrow the Team page behind it. Filtering happens here, over the rows the shell already fetched;
- * nothing in this hook fetches or writes.
+ * The state is NOT this view's own: `useTaskFilterState` owns one persisted filter for the whole
+ * tasks page, so narrowing the Calendar and then switching to Team keeps the same rows narrowed
+ * instead of resetting. Nothing in this hook fetches or writes.
  */
 
 interface UseViewTaskFilterArgs {
@@ -55,20 +57,27 @@ export function useViewTaskFilter({
     catalogs,
     memberNameById,
 }: UseViewTaskFilterArgs): ViewTaskFilter {
-    const [search, setSearch] = useState("");
-    const [clauses, setClauses] = useState<readonly FilterClause[]>([]);
+    const { search, clauses, onSearchChange, onClausesChange, clearFilters } = useTaskFilterState();
     const { savedFilters, saveFilter, deleteFilter } = useSavedTaskFilters();
 
+    /**
+     * A persisted custom-column clause outlives the column. Matching with only the clauses this
+     * department still has keeps a deleted field from reading as "no tasks at all"; the builder
+     * still shows the stale row so the reader can see and remove it.
+     */
+    const fieldIds = useMemo<ReadonlySet<number>>(() => new Set(fields.map((field) => field.id)), [fields]);
+    const appliedClauses = useMemo(() => knownClauses(clauses, fieldIds), [clauses, fieldIds]);
+
     const term = search.trim().toLowerCase();
-    const isFiltering = term !== "" || anyClauseActive(clauses);
+    const isFiltering = term !== "" || anyClauseActive(appliedClauses);
 
     const visibleItems = useMemo(() => {
         if (!isFiltering) return items;
         return items.filter((row) => {
             if (term !== "" && !row.title.toLowerCase().includes(term)) return false;
-            return rowMatchesClauses(row, clauses, fields);
+            return rowMatchesClauses(row, appliedClauses, fields);
         });
-    }, [items, isFiltering, term, clauses, fields]);
+    }, [items, isFiltering, term, appliedClauses, fields]);
 
     const statuses = useMemo<FilterBuilderOption[]>(
         () => catalogs.statuses.map((option) => ({ id: option.id, label: option.label, color: option.color })),
@@ -94,20 +103,18 @@ export function useViewTaskFilter({
         [memberNameById],
     );
 
-    const clearFilters = useCallback(() => {
-        setSearch("");
-        setClauses([]);
-    }, []);
-
-    const onApplySavedFilter = useCallback((filter: { readonly clauses: readonly FilterClause[] }) => {
-        setClauses(cloneClausesForApply(filter.clauses));
-    }, []);
+    const onApplySavedFilter = useCallback(
+        (filter: { readonly clauses: readonly FilterClause[] }) => {
+            onClausesChange(cloneClausesForApply(filter.clauses));
+        },
+        [onClausesChange],
+    );
 
     return {
         search,
-        onSearchChange: setSearch,
+        onSearchChange,
         clauses,
-        onClausesChange: setClauses,
+        onClausesChange,
         isFiltering,
         clearFilters,
         visibleItems,

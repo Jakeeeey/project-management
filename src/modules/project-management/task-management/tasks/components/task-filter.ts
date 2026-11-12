@@ -267,6 +267,24 @@ export function rowMatchesClauses(
     return true;
 }
 
+/**
+ * Is this row EXCLUDED — i.e. does it trip a negative (`is not`) clause?
+ *
+ * The tree treats that differently from a row that merely fails a positive clause: an exclusion hides
+ * the whole branch, while a positive clause only selects rows and keeps their subtrees.
+ */
+export function failsExcludingClause(
+    row: FilterableRow,
+    clauses: readonly FilterClause[],
+    fields: readonly TaskField[],
+): boolean {
+    for (const clause of clauses) {
+        if (clause.operator !== "is_not" || !isClauseActive(clause)) continue;
+        if (!clauseMatches(row, clause, fields)) return true;
+    }
+    return false;
+}
+
 /** A saved clause set: a name plus the clauses it restores. `search` is never part of it. */
 export interface SavedTaskFilter {
     readonly id: string;

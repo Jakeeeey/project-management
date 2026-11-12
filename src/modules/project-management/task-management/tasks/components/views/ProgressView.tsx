@@ -65,6 +65,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { useSavedTaskFilters } from "../../hooks/useSavedTaskFilters";
+import { useTaskFilterState } from "../../hooks/useTaskFilterState";
 import type { TaskField, TaskListItem } from "../../hooks/useTasks";
 import type { TaskTreeRow } from "../../hooks/useTaskTree";
 import { assigneeName, type TaskViewProps } from "../../types/task-view";
@@ -78,7 +79,7 @@ import {
     type CompletionFlag,
     type CompletionRollup,
 } from "../../utils/completion";
-import { buildTree, flattenVisible, type TreeSourceRow, type TreeNode } from "../../utils/tree";
+import { buildTree, flattenVisible, pruneForest, type TreeSourceRow, type TreeNode } from "../../utils/tree";
 import { NO_STATUS_LABEL, TaskStatusBadge } from "../TaskRowBadges";
 import { resolveTaskTags, TaskTagStack } from "../TaskTags";
 import {
@@ -89,12 +90,11 @@ import {
 import {
     anyClauseActive,
     cloneClausesForApply,
+    failsExcludingClause as failsExcludingClauseRow,
     isClauseActive,
     rowMatchesClauses,
-    type FilterClause,
     type SavedTaskFilter,
 } from "../task-filter";
-import { pruneToVisible, visibleTaskIds } from "./progress-tree";
 import { buildOffsets, windowFor } from "./window";
 
 /**
@@ -407,11 +407,17 @@ export function ProgressView({
     );
 
     /**
-     * This tab's own search and filters — the List keeps its own state in the shell. The filter model
-     * is the List's clause model, not a second vocabulary, so the two tabs cannot drift.
+     * The live filter, shared with the other tabs and persisted per browser (see
+     * `useTaskFilterState`). The filter model is the List's clause model, not a second vocabulary, so
+     * the tabs cannot drift; the debounce below treats the shared search box like a normal input.
      */
-    const [searchInput, setSearchInput] = useState("");
-    const [clauses, setClauses] = useState<readonly FilterClause[]>([]);
+    const {
+        search: searchInput,
+        onSearchChange: setSearchInput,
+        clauses,
+        onClausesChange: setClauses,
+        clearFilters: clearStoredFilters,
+    } = useTaskFilterState();
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const { savedFilters, saveFilter, deleteFilter } = useSavedTaskFilters();
 
@@ -551,6 +557,12 @@ export function ProgressView({
         [items, memberNameById],
     );
 
+    const filterRowById = useMemo(() => {
+        const byId = new Map<number, TaskTreeRow>();
+        for (const row of filterRows) byId.set(row.id, row);
+        return byId;
+    }, [filterRows]);
+
     /**
      * The rows that MATCH — the same `rowMatchesClauses` the List runs, so a clause means the same
      * thing on both tabs. Percentages and counts still come from the full rollup, which is why
@@ -566,16 +578,25 @@ export function ProgressView({
         return ids;
     }, [filterRows, search, clauses, fields]);
 
-    /** A match plus its ancestors. `null` means nothing is filtering, so every row renders. */
-    const visibleIds = useMemo(
-        () => (isFiltering ? visibleTaskIds(items, matchedIds) : null),
-        [isFiltering, items, matchedIds],
-    );
-
-    const renderForest = useMemo(
-        () => (visibleIds === null ? forest : pruneToVisible(forest, visibleIds)),
-        [forest, visibleIds],
-    );
+    /**
+     * The forest the grid renders: `pruneForest` — the List's rule, both clause directions included —
+     * so a row a negative clause excludes takes its whole subtree with it, while a row a positive
+     * clause selects keeps its children on screen.
+     */
+    const renderForest = useMemo(() => {
+        if (!isFiltering) return forest;
+        return pruneForest(forest, {
+            passesClauses: (row) => {
+                const filterRow = filterRowById.get(row.id);
+                return filterRow !== undefined && rowMatchesClauses(filterRow, clauses, fields);
+            },
+            failsExcludingClause: (row) => {
+                const filterRow = filterRowById.get(row.id);
+                return filterRow !== undefined && failsExcludingClauseRow(filterRow, clauses, fields);
+            },
+            ...(search === "" ? {} : { matchesSearch: (row: TaskListItem) => row.title.toLowerCase().includes(search) }),
+        });
+    }, [isFiltering, forest, filterRowById, clauses, fields, search]);
 
     /** Parents that survive the filter — the only ids `flattenVisible` and Collapse all care about. */
     const renderParentIds = useMemo(() => {
@@ -762,13 +783,12 @@ export function ProgressView({
         });
     }, [anyExpanded, renderParentIds, revealKey]);
 
-    const clearFilterClauses = useCallback(() => setClauses([]), []);
+    const clearFilterClauses = useCallback(() => setClauses([]), [setClauses]);
 
     /** The toolbar's affordance and the empty state both reset search AND filters. */
     const clearAllFilters = useCallback(() => {
-        setSearchInput("");
-        setClauses([]);
-    }, []);
+        clearStoredFilters();
+    }, [clearStoredFilters]);
 
     /**
      * Focus moves by id, not by element: the row the keyboard asked for is usually not mounted yet
@@ -964,9 +984,12 @@ export function ProgressView({
     }, [items, memberNameById]);
 
     /** A saved set restores fresh clause rows, so its ids never collide with the live ones. */
-    const applySavedFilter = useCallback((filter: SavedTaskFilter) => {
-        setClauses(cloneClausesForApply(filter.clauses));
-    }, []);
+    const applySavedFilter = useCallback(
+        (filter: SavedTaskFilter) => {
+            setClauses(cloneClausesForApply(filter.clauses));
+        },
+        [setClauses],
+    );
 
     const statusPercentsUnset = useMemo(
         () => catalogs.statuses.every((status) => status.completion_percent === 0),
