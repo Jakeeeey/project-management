@@ -8,7 +8,7 @@ type Row = Record<string, unknown>;
 export type ReadCollection = (collection: string, fields: string[], filter: Record<string, unknown>, limit: number, page?: number) => Promise<Row[]>;
 export interface ReadPeriod { from: string; to: string; page: number; limit: number; employee?: string }
 const id = (value: unknown) => {
- requireRule(typeof value === "string" || typeof value === "number" && Number.isSafeInteger(value), 502, "INVALID_DATABASE_ID", "Directus returned an invalid or unsafe identifier.");
+ requireRule(typeof value === "string" || typeof value === "number" && Number.isSafeInteger(value), 502, "INVALID_DATABASE_ID", "The stored record has an invalid identifier.");
  return String(value);
 };
 const utc = (value: unknown): string => {
@@ -62,7 +62,7 @@ export class LiveReader {
   const date = localDate(utc(row.due_at));
   const period = { from: date, to: date, page: 1, limit: 100 };
   let engine = await this.load(actor, workspace, period);
-  if (!engine.state.occurrences.some(o => o.id === occurrenceId) && workspace === "my-tasks") engine = await this.load(actor, workspace, period, true);
+  if (!engine.state.occurrences.some(o => o.id === occurrenceId) && workspace === "my-tasks") engine = await this.load(actor, workspace, period);
   const occurrence = engine.occurrence(occurrenceId); // Authorize before exposing files/history.
   const submissions = engine.state.submissions.filter(s => s.occurrence_id === occurrenceId);
   const [files, references, events, comments] = await Promise.all([
@@ -82,26 +82,23 @@ export class LiveReader {
    occurrence.task_revision.reference_file_ids.push(fileId); engine.state.files.push(metadata(file, fileId, id(file.added_by)));
   }
   const decode = (value: unknown) => typeof value === "string" ? JSON.parse(value) : value ?? null;
-  engine.state.events = events.map(event => ({ id: id(event.id), event_type: String(event.event_type), task_id: id(event.task_id), occurrence_id: event.occurrence_id ? id(event.occurrence_id) : null, actor_id: event.actor_id ? id(event.actor_id) : String(event.system_actor ?? "System"), reason: String(event.reason ?? ""), old_values: decode(event.old_values), new_values: decode(event.new_values), created_at: utc(event.created_at), request_id: String(event.request_id), material: false })).sort((a, b) => a.created_at.localeCompare(b.created_at));
+   engine.state.events = events.map(event => ({ id: id(event.id), event_type: String(event.event_type), task_id: id(event.task_id), occurrence_id: event.occurrence_id ? id(event.occurrence_id) : null, actor_id: event.actor_id ? id(event.actor_id) : String(event.system_actor ?? "System"), reason: String(event.reason ?? ""), old_values: decode(event.old_values), new_values: decode(event.new_values), created_at: utc(event.created_at), request_id: String(event.request_id), material: /^(TASK_(DETAILS_UPDATED|SCHEDULE_CHANGED|PAUSED|RESUMED|CANCELLED|ARCHIVED|DEADLINE_CHANGED)|OCCURRENCE_(REVIEWED|MARKED_DONE|DEADLINE_CHANGED|CANCELLED))$/.test(String(event.event_type)) })).sort((a, b) => a.created_at.localeCompare(b.created_at));
   engine.state.comments = comments.map(comment => ({ id: id(comment.id), occurrence_id: id(comment.occurrence_id), submission_id: comment.submission_id ? id(comment.submission_id) : null, author_id: id(comment.author_id), text: String(comment.comment_text), created_at: utc(comment.created_at) }));
   const detail = engine.detail(occurrenceId);
   // Persisted create/read testing is enabled; edit/submit/comment commands and
   // acknowledgment writes are intentionally not implied by enabling Create Task.
    return { ...detail, can_edit: false, can_submit: detail.can_submit && workspace === "my-tasks", can_comment: false, unacknowledged: [] };
  }
- async load(actor: Employee, workspace: Workspace, period: ReadPeriod, review = false): Promise<WorkEngine> {
+  async load(actor: Employee, workspace: Workspace, period: ReadPeriod): Promise<WorkEngine> {
   requireRule(workspaceAllowed(actor, workspace), 403, "FORBIDDEN", "You do not have access to this workspace.");
   const state = emptyState();
   let assignmentFilter: Row;
-  if (workspace === "my-tasks" && !review) assignmentFilter = { assignee_user_id: { _eq: actor.id } };
-  else if (review) {
-   const tasks = await this.all("pm_work_task", ["id"], { _or: [{ created_by: { _eq: actor.id } }, { report_to_user_id: { _eq: actor.id } }] });
-   assignmentFilter = { task_id: { _in: tasks.map(t => id(t.id)) } };
-   if (!tasks.length) { state.employees = [actor]; return new WorkEngine(state, actor, workspace, this.now); }
-  } else if (workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true) assignmentFilter = {};
+   if (workspace === "my-tasks") assignmentFilter = { assignee_user_id: { _eq: actor.id } };
+   else if (workspace === "departmental") assignmentFilter = { department_id_at_assignment: { _eq: actor.department_id } };
+   else if (workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true) assignmentFilter = {};
   else assignmentFilter = actor.department_id ? { department_id_at_assignment: { _eq: actor.department_id } } : { assignee_user_id: { _eq: actor.id } };
   if (period.employee) {
-   requireRule(workspace !== "my-tasks" || review || period.employee === actor.id, 403, "OWN_TASKS_ONLY", "My Tasks only shows your own obligations.");
+    requireRule(workspace !== "my-tasks" || period.employee === actor.id, 403, "OWN_TASKS_ONLY", "My Tasks only shows your own obligations.");
    assignmentFilter = { _and: [assignmentFilter, { assignee_user_id: { _eq: period.employee } }] };
   }
   const assignments = await this.all("pm_work_assignment", ["id", "task_id", "assignee_user_id", "department_id_at_assignment", "status"], assignmentFilter);
@@ -115,10 +112,11 @@ export class LiveReader {
   }
   requireRule(occurrenceRows.length <= 5000, 422, "READ_LIMIT", "Too many obligations. Narrow the reporting scope.");
   const taskIds = state.assignments.map(a => a.task_id);
-  const [tasks, schedules, revisions] = await Promise.all([
-   this.byIds("pm_work_task", ["*"], "id", taskIds),
-   this.byIds("pm_work_recurrence", ["*"], "task_id", taskIds),
-   this.byIds("pm_work_task_revision", ["id", "task_id", "revision_number", "snapshot"], "id", occurrenceRows.map(o => id(o.task_revision_id))),
+   const [tasks, schedules, revisions, taskRevisions] = await Promise.all([
+    this.byIds("pm_work_task", ["*"], "id", taskIds),
+    this.byIds("pm_work_recurrence", ["*"], "task_id", taskIds),
+    this.byIds("pm_work_task_revision", ["id", "task_id", "revision_number", "snapshot"], "id", occurrenceRows.map(o => id(o.task_revision_id))),
+    this.byIds("pm_work_task_revision", ["id", "task_id", "revision_number", "snapshot"], "task_id", taskIds),
   ]);
   const scheduleFor = (taskId: string): Schedule => {
    const row = schedules.filter(s => id(s.task_id) === taskId).sort((a, b) => Number(b.schedule_version) - Number(a.schedule_version))[0];
@@ -129,16 +127,18 @@ export class LiveReader {
   state.tasks = tasks.map(t => ({ id: id(t.id), title: String(t.title), description: String(t.description), scope_type: t.scope_type as Task["scope_type"], department_id: t.department_id === null ? null : id(t.department_id), created_by: id(t.created_by), report_to_user_id: id(t.report_to_user_id), priority: t.priority as Task["priority"], availability_start_at: utc(t.availability_start_at), schedule: scheduleFor(id(t.id)), schedule_version: Number(schedules.filter(s => id(s.task_id) === id(t.id)).reduce((v, s) => Math.max(v, Number(s.schedule_version)), 1)), schedule_effective_at: utc(t.availability_start_at), revision_number: Number(t.revision_number), lifecycle_status: t.lifecycle_status as Task["lifecycle_status"], created_at: utc(t.created_at), reference_file_ids: [] }));
   state.occurrences = occurrenceRows.map(o => {
    const current = state.tasks.find(t => t.id === id(o.task_id));
-   const revision = revisions.find(r => id(r.id) === id(o.task_revision_id));
+    const currentRevision = taskRevisions.filter(r => id(r.task_id) === id(o.task_id)).sort((a, b) => Number(b.revision_number) - Number(a.revision_number))[0];
+    const useCurrentRevision = !o.first_submission_id && o.status !== "CANCELLED" && utc(o.due_at) > this.now && currentRevision;
+    const revision = useCurrentRevision ? currentRevision : revisions.find(r => id(r.id) === id(o.task_revision_id));
    requireRule(current && revision && id(revision.task_id) === current.id, 502, "MISSING_TASK_REVISION", "An obligation is missing its historical task revision.");
    const snapshot = json(revision.snapshot);
    // Only historical presentation fields are taken from a snapshot. Authorization
    // always uses the current authoritative task/assignment, never JSON-supplied IDs.
-   const historical: Task = { ...current, title: typeof snapshot.title === "string" ? snapshot.title : current.title, description: typeof snapshot.description === "string" ? snapshot.description : current.description, priority: (snapshot.priority ?? current.priority) as Task["priority"], revision_number: Number(revision.revision_number) };
+    const historical: Task = { ...current, title: typeof snapshot.title === "string" ? snapshot.title : current.title, description: typeof snapshot.description === "string" ? snapshot.description : current.description, priority: (snapshot.priority ?? current.priority) as Task["priority"], report_to_user_id: typeof snapshot.report_to_user_id === "string" ? snapshot.report_to_user_id : current.report_to_user_id, availability_start_at: typeof snapshot.availability_start_at === "string" ? snapshot.availability_start_at : current.availability_start_at, schedule: snapshot.schedule && typeof snapshot.schedule === "object" ? snapshot.schedule as Schedule : current.schedule, schedule_version: Number(snapshot.schedule_version ?? current.schedule_version), schedule_effective_at: typeof snapshot.schedule_effective_at === "string" ? snapshot.schedule_effective_at : current.schedule_effective_at, reference_file_ids: Array.isArray(snapshot.reference_file_ids) ? snapshot.reference_file_ids as string[] : current.reference_file_ids, revision_number: Number(revision.revision_number) };
    return { id: id(o.id), task_id: id(o.task_id), assignment_id: id(o.assignment_id), occurrence_key: String(o.occurrence_key), scheduled_local_date: String(o.scheduled_local_date).slice(0, 10), available_at: utc(o.available_at), original_due_at: utc(o.original_due_at), due_at: utc(o.due_at), row_version: Number(o.row_version), task_revision: historical, status: o.status as Occurrence["status"], completed_at: o.completed_at ? utc(o.completed_at) : null, first_submission_id: o.first_submission_id ? id(o.first_submission_id) : null, latest_submission_id: o.latest_submission_id ? id(o.latest_submission_id) : null };
   });
    const peopleIds = [actor.id, ...state.assignments.map(a => a.assignee_user_id), ...state.tasks.flatMap(t => [t.created_by, t.report_to_user_id])];
-   const directoryScope = workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true ? {} : actor.department_id ? { user_department: { _eq: actor.department_id } } : { user_id: { _eq: actor.id } };
+   const directoryScope = workspace === "departmental" ? { user_department: { _eq: actor.department_id } } : workspace === "executive" || actor.roles.includes("GLOBAL_ASSIGNOR") || actor.read_all_departments === true ? {} : actor.department_id ? { user_department: { _eq: actor.department_id } } : { user_id: { _eq: actor.id } };
    const [submissions, users, directory] = await Promise.all([
     this.byIds("pm_work_submission", ["*"], "occurrence_id", state.occurrences.map(o => o.id)),
     this.byIds("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted"], "user_id", peopleIds),

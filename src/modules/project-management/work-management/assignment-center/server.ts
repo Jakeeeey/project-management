@@ -2,15 +2,16 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { cookies } from "next/headers";
 import { COOKIE_NAME, decodeJwtPayload } from "@/lib/auth-utils";
-import { requireRule, WorkError, workspaceAllowed } from "./policies";
-import type { Bootstrap, Employee, Role, Workspace } from "./types";
+import { canEdit, requireRule, WorkError, workspaceAllowed } from "./policies";
+import type { Bootstrap, Employee, Role, Schedule, Task, Workspace } from "./types";
 import { isActiveEmployeeFlag } from "./employee-policy";
 import { LiveReader, type ReadPeriod } from "./live-read";
-import { addDays, parseUtcTimestamp, wallToUtc } from "./recurrence";
+import { addDays, localDate, parseUtcTimestamp, wallToUtc } from "./recurrence";
 import { resolveWorkspaceReadAccess } from "./workspace-access";
 import { DirectusClient } from "./directus-client";
 import { TaskWriter } from "./task-writer";
-import { SubmissionInput } from "./schemas";
+import { Amendment, DeadlineInput, ReasonInput, SubmissionInput } from "./schemas";
+import { emptyState, WorkEngine } from "./engine";
 
 /** New module verifies with the issuer independently of legacy middleware coverage. */
 export async function verifiedActor() {
@@ -45,7 +46,7 @@ export async function liveBootstrap(): Promise<Bootstrap> {
   const [users, grants, modules] = await Promise.all([
    readRows<{ user_id: number; user_fname: string; user_lname: string; user_department: number | null; is_deleted: unknown; role: unknown; isAdmin: unknown }>("user", ["user_id", "user_fname", "user_lname", "user_department", "is_deleted", "role", "isAdmin"], { user_id: { _eq: userId } }, 1),
    readRows<{ role: Role; department_id: number | null }>("pm_work_role_grant", ["role", "department_id"], { user_id: { _eq: userId }, revoked_at: { _null: true } }),
-   readRows<{ id: number | string; base_path: string }>("modules", ["id", "base_path"], { status: { _eq: "active" }, base_path: { _in: ["/project-management/work-management/assignor", "/project-management/work-management/assignment-center", "/project-management/work-management/assignee", "/project-management/work-management/my-tasks", "/project-management/work-management/executive", "/project-management/work-management/executive-overview"] } }),
+   readRows<{ id: number | string; base_path: string }>("modules", ["id", "base_path"], { status: { _eq: "active" }, base_path: { _in: ["/project-management/work-management/assignor", "/project-management/work-management/assignment-center", "/project-management/work-management/assignee", "/project-management/work-management/my-tasks", "/project-management/work-management/executive", "/project-management/work-management/executive-overview", "/project-management/work-management/departmental-overview"] } }),
   ]);
   requireRule(users.length && isActiveEmployeeFlag(users[0].is_deleted), 401, "INACTIVE_EMPLOYEE", "Your employee record is unavailable.");
  const user = users[0];
@@ -62,7 +63,7 @@ export async function liveBootstrap(): Promise<Bootstrap> {
   // home department. It never implies global scope; only a GLOBAL_ASSIGNOR grant does that.
   if (readAccess.workspaces.includes("assignor") && !roles.includes("GLOBAL_ASSIGNOR") && !roles.includes("DEPARTMENT_ASSIGNOR")) roles.push("DEPARTMENT_ASSIGNOR");
   const actor: Employee = { id: userId, name: [user.user_fname, user.user_lname].filter(Boolean).join(" "), department_id: String(user.user_department ?? ""), department: departments[0]?.department_name ?? "No department", roles, read_workspaces: readAccess.workspaces, read_all_departments: readAccess.allDepartments };
-   return { mode: "LIVE", writes_enabled: true, uploads_enabled: false, reference_uploads_enabled: false, workspace_access: readAccess.workspaces, actor, identities: [], employees: [actor], capabilities: { assign: roles.includes("GLOBAL_ASSIGNOR") || roles.includes("DEPARTMENT_ASSIGNOR"), global: roles.includes("GLOBAL_ASSIGNOR"), executive: workspaceAllowed(actor, "executive") }, blockers: ["Changes are saved to the live Directus database. Multi-record operations use compensating cleanup and are not transactional.", "Task reference attachments are not enabled in this workspace."] };
+   return { mode: "LIVE", writes_enabled: true, uploads_enabled: false, reference_uploads_enabled: false, workspace_access: readAccess.workspaces, actor, identities: [], employees: [actor], capabilities: { assign: roles.includes("GLOBAL_ASSIGNOR") || roles.includes("DEPARTMENT_ASSIGNOR"), global: roles.includes("GLOBAL_ASSIGNOR"), executive: workspaceAllowed(actor, "executive") }, blockers: ["Task reference attachments are not enabled in this workspace."] };
 }
 
 export async function liveCreateTask(raw: unknown, key: string, workspace: Workspace) {
@@ -117,7 +118,7 @@ export async function liveSubmitOccurrence(occurrenceId: string, raw: unknown, k
  const hash = createHash("sha256").update(JSON.stringify({ occurrenceId, ...input })).digest("hex");
   const operation = `submission:${occurrenceId}`;
   // Include the historical command key so existing idempotency records remain effective.
-  const scope = { actor_key: { _eq: `wm:user:${bootstrap.actor.id}` }, operation: { _in: [operation, `dummy:submit:${occurrenceId}`] }, idempotency_key: { _eq: key } };
+  const scope = { actor_key: { _eq: `wm:user:${bootstrap.actor.id}` }, operation: { _eq: operation }, idempotency_key: { _eq: key } };
  const previous = (await db.read("pm_work_idempotency", ["id", "state", "request_sha256", "response_body"], scope, 1))[0];
  if (previous) {
   requireRule(previous.request_sha256 === hash, 409, "IDEMPOTENCY_MISMATCH", "This submission key was already used with different details.");
@@ -157,11 +158,200 @@ export async function liveSubmitOccurrence(occurrenceId: string, raw: unknown, k
  }
 }
 
+export async function liveAddComment(occurrenceId: string, raw: unknown, key: string, workspace: Workspace) {
+ const bootstrap = await liveBootstrap();
+ requireRule(workspace === "assignor" && /^\d+$/.test(occurrenceId), 403, "ASSIGNOR_WORKSPACE_REQUIRED", "Comment from Assignment Center.");
+ requireRule(/^[A-Za-z0-9:_-]{8,128}$/.test(key), 422, "IDEMPOTENCY_REQUIRED", "Provide a valid request key.");
+ const input = raw as { text?: unknown; submission_id?: unknown };
+ requireRule(typeof input.text === "string" && !!input.text.trim() && input.text.length <= 10000, 422, "INVALID_COMMENT", "Enter a comment of up to 10,000 characters.");
+ const db = workDatabase();
+ const reader = new LiveReader((collection, fields, filter, limit, page) => db.read(collection, fields, filter, limit, page));
+ const detail = await reader.detail(bootstrap.actor, workspace, occurrenceId);
+ requireRule(detail.can_comment, 403, "COMMENT_NOT_ALLOWED", "You cannot comment on this task.");
+ if (input.submission_id !== undefined) requireRule(detail.submissions.some(submission => submission.id === input.submission_id), 404, "SUBMISSION_NOT_FOUND", "Submission not found.");
+ const now = new Date().toISOString();
+ const comment = await db.create("pm_work_comment", { occurrence_id: occurrenceId, submission_id: input.submission_id ?? detail.latest_submission_id, author_id: bootstrap.actor.id, comment_text: input.text.trim(), created_at: now });
+ const event = await db.create("pm_work_audit_event", { event_type: "SUBMISSION_COMMENTED", actor_id: bootstrap.actor.id, entity_type: "occurrence", entity_id: occurrenceId, task_id: detail.task_id, occurrence_id: occurrenceId, task_revision_number: detail.task.revision_number, old_values: null, new_values: { comment_id: comment.id, comment: input.text.trim() }, reason: "Comment added", request_id: key, created_at: now });
+ await db.create("pm_work_notification", { recipient_id: detail.assignee.id, event_id: event.id, type: "SUBMISSION_COMMENTED", payload: { task_id: detail.task_id, occurrence_id: occurrenceId, title: detail.task.title, comment: input.text.trim() }, dedupe_key: `work:${event.id}:${detail.assignee.id}`, created_at: now });
+ return { id: String(comment.id), occurrence_id: occurrenceId };
+}
+
+export async function liveCancelOccurrence(occurrenceId: string, raw: unknown, key: string, workspace: Workspace) {
+ const bootstrap = await liveBootstrap();
+ requireRule(workspace === "assignor" && /^\d+$/.test(occurrenceId), 403, "ASSIGNOR_WORKSPACE_REQUIRED", "Cancel work from Assignment Center.");
+ requireRule(/^[A-Za-z0-9:_-]{8,128}$/.test(key), 422, "IDEMPOTENCY_REQUIRED", "Provide a valid request key.");
+ const input = ReasonInput.parse(raw); const db = workDatabase();
+ const reader = new LiveReader((collection, fields, filter, limit, page) => db.read(collection, fields, filter, limit, page));
+ const detail = await reader.detail(bootstrap.actor, workspace, occurrenceId);
+ requireRule(detail.can_edit, 403, "FORBIDDEN", "You cannot manage this task.");
+ requireRule(detail.row_version === input.expected_revision, 409, "STALE_REVISION", "This obligation changed. Refresh before trying again.");
+ requireRule(!detail.first_submission_id && detail.status !== "CANCELLED", 422, "INVALID_TRANSITION", "Only unsubmitted occurrences can be cancelled.");
+ const now = new Date().toISOString();
+ await db.update("pm_work_occurrence", occurrenceId, { status: "CANCELLED", cancelled_at: now, cancellation_reason: input.reason, row_version: detail.row_version + 1, updated_at: now });
+ const event = await db.create("pm_work_audit_event", { event_type: "OCCURRENCE_CANCELLED", actor_id: bootstrap.actor.id, entity_type: "occurrence", entity_id: occurrenceId, task_id: detail.task_id, occurrence_id: occurrenceId, task_revision_number: detail.task.revision_number, old_values: { status: detail.status }, new_values: { status: "CANCELLED" }, reason: input.reason, request_id: key, created_at: now });
+ await db.create("pm_work_notification", { recipient_id: detail.assignee.id, event_id: event.id, type: "OCCURRENCE_CANCELLED", payload: { task_id: detail.task_id, occurrence_id: occurrenceId, title: detail.task_revision.title, reason: input.reason, old_values: { status: detail.status }, new_values: { status: "CANCELLED" } }, dedupe_key: `work:${event.id}:${detail.assignee.id}`, created_at: now });
+ return { occurrence_id: occurrenceId, assignee_id: detail.assignee.id, status: "CANCELLED" };
+}
+
+export async function liveChangeDeadline(occurrenceId: string, raw: unknown, key: string, workspace: Workspace) {
+ const bootstrap = await liveBootstrap();
+ requireRule(workspace === "assignor" && /^\d+$/.test(occurrenceId), 403, "ASSIGNOR_WORKSPACE_REQUIRED", "Change deadlines from Assignment Center.");
+ requireRule(/^[A-Za-z0-9:_-]{8,128}$/.test(key), 422, "IDEMPOTENCY_REQUIRED", "Provide a valid request key.");
+ const input = DeadlineInput.parse(raw); const db = workDatabase();
+ const reader = new LiveReader((collection, fields, filter, limit, page) => db.read(collection, fields, filter, limit, page));
+ const detail = await reader.detail(bootstrap.actor, workspace, occurrenceId);
+ requireRule(detail.can_edit, 403, "FORBIDDEN", "You cannot manage this task.");
+ requireRule(detail.row_version === input.expected_revision, 409, "STALE_REVISION", "This obligation changed. Refresh before trying again.");
+ requireRule(!detail.first_submission_id && detail.status !== "CANCELLED", 422, "IMMUTABLE_HISTORY", "Submitted or cancelled deadlines cannot be changed.");
+ const dueAt = new Date(input.due_at).toISOString();
+ requireRule(dueAt >= detail.available_at, 422, "INVALID_DEADLINE", "Deadline cannot be earlier than the availability time.");
+ const now = new Date().toISOString();
+ await db.update("pm_work_occurrence", occurrenceId, { due_at: dueAt, row_version: detail.row_version + 1, updated_at: now });
+ const event = await db.create("pm_work_audit_event", { event_type: "TASK_DEADLINE_CHANGED", actor_id: bootstrap.actor.id, entity_type: "occurrence", entity_id: occurrenceId, task_id: detail.task_id, occurrence_id: occurrenceId, task_revision_number: detail.task.revision_number, old_values: { due_at: detail.due_at }, new_values: { due_at: dueAt }, reason: input.reason, request_id: key, created_at: now });
+ await db.create("pm_work_notification", { recipient_id: detail.assignee.id, event_id: event.id, type: "TASK_DEADLINE_CHANGED", payload: { task_id: detail.task_id, occurrence_id: occurrenceId, title: detail.task_revision.title, old_values: { due_at: detail.due_at }, new_values: { due_at: dueAt }, reason: input.reason }, dedupe_key: `work:${event.id}:${detail.assignee.id}`, created_at: now });
+ return { occurrence_id: occurrenceId, due_at: dueAt, row_version: detail.row_version + 1 };
+}
+
+export async function liveOccurrenceCancelTargets(occurrenceId: string, workspace: Workspace) {
+ const bootstrap = await liveBootstrap(); const db = workDatabase();
+ const reader = new LiveReader((collection, fields, filter, limit, page) => db.read(collection, fields, filter, limit, page));
+ const detail = await reader.detail(bootstrap.actor, workspace, occurrenceId);
+ requireRule(detail.can_edit, 403, "FORBIDDEN", "You cannot manage this task.");
+ const current = (await db.read("pm_work_occurrence", ["task_id", "assignment_id", "occurrence_key"], { id: { _eq: occurrenceId } }, 1))[0];
+ requireRule(current, 404, "NOT_FOUND", "Occurrence not found.");
+ const siblings = await db.read("pm_work_occurrence", ["id", "assignment_id", "row_version", "status", "first_submission_id"], { task_id: { _eq: current.task_id }, occurrence_key: { _eq: current.occurrence_key } }, 500);
+ const assignments = await db.read("pm_work_assignment", ["id", "assignee_user_id", "status"], { id: { _in: siblings.map(row => row.assignment_id) } }, 500);
+ const directory = await reader.directory(bootstrap.actor, workspace);
+ return siblings.map(row => {
+  const assignment = assignments.find(value => String(value.id) === String(row.assignment_id));
+  const assigneeId = String(assignment?.assignee_user_id ?? "");
+  return { id: String(row.id), assignee_id: assigneeId, assignee_name: directory.find(person => person.id === assigneeId)?.name ?? `Employee ${assigneeId}`, row_version: Number(row.row_version), status: String(row.status), submitted: !!row.first_submission_id, selectable: !row.first_submission_id && row.status !== "CANCELLED" };
+ });
+}
+
+export async function liveAmendTask(taskId: string, raw: unknown, key: string, workspace: Workspace) {
+ const bootstrap = await liveBootstrap();
+ requireRule(workspace === "assignor" && /^\d+$/.test(taskId), 403, "ASSIGNOR_WORKSPACE_REQUIRED", "Edit tasks from Assignment Center.");
+ requireRule(/^[A-Za-z0-9:_-]{8,128}$/.test(key), 422, "IDEMPOTENCY_REQUIRED", "Provide a valid request key.");
+ const input = Amendment.parse(raw); const db = workDatabase();
+ const [taskRow, recurrenceRows, assignmentRows, employeeDirectory, priorRevisions] = await Promise.all([
+  db.read("pm_work_task", ["id", "title", "description", "scope_type", "department_id", "created_by", "report_to_user_id", "priority", "availability_start_at", "revision_number", "lifecycle_status", "created_at"], { id: { _eq: taskId } }, 1).then(rows => rows[0]),
+  db.read("pm_work_recurrence", ["id", "schedule_version", "frequency", "interval_value", "interval_unit", "days_of_week", "day_of_month", "month_end_policy", "due_local_time", "timezone", "start_date", "end_date", "until_count"], { task_id: { _eq: taskId } }, 100),
+  db.read("pm_work_assignment", ["id", "task_id", "assignee_user_id", "department_id_at_assignment", "status"], { task_id: { _eq: taskId } }, 500),
+  new LiveReader((collection, fields, filter, limit, page) => db.read(collection, fields, filter, limit, page)).directory(bootstrap.actor, "assignor"),
+  db.read("pm_work_task_revision", ["revision_number"], { task_id: { _eq: taskId } }, 500),
+ ]);
+ requireRule(taskRow, 404, "NOT_FOUND", "Task not found.");
+ const existingScheduleRow = recurrenceRows.sort((a, b) => Number(b.schedule_version) - Number(a.schedule_version))[0];
+ requireRule(existingScheduleRow, 502, "MISSING_SCHEDULE", "Task schedule is unavailable.");
+ const weekdays = typeof existingScheduleRow.days_of_week === "string" ? JSON.parse(existingScheduleRow.days_of_week) : existingScheduleRow.days_of_week;
+ const oldSchedule: Schedule = { frequency: existingScheduleRow.frequency as Schedule["frequency"], interval_value: Number(existingScheduleRow.interval_value), interval_unit: existingScheduleRow.interval_unit as Schedule["interval_unit"] ?? undefined, days_of_week: Array.isArray(weekdays) ? weekdays : [], day_of_month: existingScheduleRow.day_of_month == null ? undefined : Number(existingScheduleRow.day_of_month), month_end_policy: existingScheduleRow.month_end_policy as Schedule["month_end_policy"], due_local_time: String(existingScheduleRow.due_local_time), timezone: String(existingScheduleRow.timezone), start_date: String(existingScheduleRow.start_date).slice(0, 10), end_date: existingScheduleRow.end_date ? String(existingScheduleRow.end_date).slice(0, 10) : undefined, until_count: existingScheduleRow.until_count ? Number(existingScheduleRow.until_count) : undefined };
+ const taskRevision = Math.max(Number(taskRow.revision_number), ...priorRevisions.map(row => Number(row.revision_number) || 0));
+ const task: Task = { id: taskId, title: String(taskRow.title), description: String(taskRow.description), scope_type: taskRow.scope_type as Task["scope_type"], department_id: taskRow.department_id == null ? null : String(taskRow.department_id), created_by: String(taskRow.created_by), report_to_user_id: String(taskRow.report_to_user_id), priority: taskRow.priority as Task["priority"], availability_start_at: parseUtcTimestamp(String(taskRow.availability_start_at)) ? new Date(parseUtcTimestamp(String(taskRow.availability_start_at))).toISOString() : String(taskRow.availability_start_at), schedule: oldSchedule, schedule_version: Number(existingScheduleRow.schedule_version), schedule_effective_at: String(taskRow.availability_start_at), revision_number: taskRevision, lifecycle_status: taskRow.lifecycle_status as Task["lifecycle_status"], created_at: String(taskRow.created_at), reference_file_ids: [] };
+ requireRule(canEdit(bootstrap.actor, task), 403, "FORBIDDEN", "You cannot edit this task.");
+  requireRule(input.expected_revision === Number(taskRow.revision_number) || input.expected_revision === taskRevision, 409, "STALE_REVISION", "This task changed. Refresh before editing.");
+ requireRule(input.scope_type === task.scope_type && String(input.department_id ?? "") === String(task.department_id ?? ""), 422, "IMMUTABLE_SCOPE", "Task ownership scope cannot be changed by editing.");
+ const state = emptyState(); state.employees = employeeDirectory;
+ if (!state.employees.some(person => person.id === bootstrap.actor.id)) state.employees.push(bootstrap.actor);
+ state.tasks = [task];
+ state.assignments = assignmentRows.map(row => ({ id: String(row.id), task_id: taskId, assignee_user_id: String(row.assignee_user_id), department_id_at_assignment: String(row.department_id_at_assignment), status: row.status as "ACTIVE" | "ENDED" }));
+ const engine = new WorkEngine(state, bootstrap.actor, "assignor");
+   const updated = engine.amend(taskId, { ...input, expected_revision: taskRevision }, key);
+   updated.revision_number = taskRevision + 1;
+   const normalizeSchedule = (schedule: Schedule) => ({ ...schedule, due_local_time: schedule.due_local_time.slice(0, 5), days_of_week: [...schedule.days_of_week].sort((a, b) => a - b) });
+   const scheduleChanged = JSON.stringify(normalizeSchedule(oldSchedule)) !== JSON.stringify(normalizeSchedule(updated.schedule));
+   updated.schedule_version = Number(existingScheduleRow.schedule_version) + (scheduleChanged ? 1 : 0);
+  const previouslyActiveUsers = new Set(assignmentRows.filter(row => row.status === "ACTIVE").map(row => String(row.assignee_user_id)));
+  const requestedUsers = new Set(input.assignee_user_ids);
+  const assignmentsChanged = previouslyActiveUsers.size !== requestedUsers.size || [...previouslyActiveUsers].some(id => !requestedUsers.has(id));
+ const now = new Date().toISOString();
+  const revision = await db.create("pm_work_task_revision", { task_id: taskId, revision_number: updated.revision_number, changed_by: bootstrap.actor.id, change_reason: input.reason, snapshot: updated, changed_at: now });
+ let recurrenceId = String(existingScheduleRow.id);
+ if (scheduleChanged) {
+  const schedule = updated.schedule;
+  const recurrence = await db.create("pm_work_recurrence", { task_id: taskId, schedule_version: updated.schedule_version, frequency: schedule.frequency, interval_value: schedule.interval_value, interval_unit: schedule.frequency === "CUSTOM" ? schedule.interval_unit : null, days_of_week: schedule.days_of_week, day_of_month: schedule.day_of_month ?? null, month_end_policy: schedule.month_end_policy, due_local_time: schedule.due_local_time, timezone: schedule.timezone, start_date: schedule.start_date, end_date: schedule.end_date ?? null, until_count: schedule.until_count ?? null, effective_from: localDate(new Date(now), schedule.timezone), created_at: now });
+   recurrenceId = String(recurrence.id);
+ }
+  await db.update("pm_work_task", taskId, { title: updated.title, description: updated.description, report_to_user_id: updated.report_to_user_id, priority: updated.priority, availability_start_at: updated.availability_start_at, schedule_type: updated.schedule.frequency, revision_number: updated.revision_number, updated_at: now });
+ const activeByUser = new Map(assignmentRows.filter(row => row.status === "ACTIVE").map(row => [String(row.assignee_user_id), row]));
+ const dbAssignmentByUser = new Map<string, string>();
+ for (const assignment of engine.state.assignments) {
+  const existing = activeByUser.get(assignment.assignee_user_id);
+  if (existing && assignment.status === "ACTIVE") dbAssignmentByUser.set(assignment.assignee_user_id, String(existing.id));
+  else if (!existing && assignment.status === "ACTIVE") {
+   const created = await db.create("pm_work_assignment", { task_id: taskId, assignee_user_id: assignment.assignee_user_id, department_id_at_assignment: assignment.department_id_at_assignment, assigned_by: bootstrap.actor.id, assigned_at: now, status: "ACTIVE" });
+   dbAssignmentByUser.set(assignment.assignee_user_id, String(created.id));
+  }
+  if (existing && assignment.status === "ENDED") await db.update("pm_work_assignment", String(existing.id), { status: "ENDED" });
+ }
+ const openRows = await db.read("pm_work_occurrence", ["id", "assignment_id", "recurrence_id", "due_at", "first_submission_id", "status", "row_version"], { task_id: { _eq: taskId }, first_submission_id: { _null: true }, status: { _neq: "CANCELLED" } }, 5000);
+ const activeDbIds = new Set([...dbAssignmentByUser.values()]);
+  const occurrenceUpdates: (Record<string, unknown> & { id: string })[] = [];
+  for (const occurrence of openRows) {
+   const removed = !activeDbIds.has(String(occurrence.assignment_id));
+   const future = String(occurrence.due_at) > now;
+   if (removed || future && (scheduleChanged || String(occurrence.recurrence_id) !== recurrenceId)) {
+    occurrenceUpdates.push({ id: String(occurrence.id), status: "CANCELLED", cancelled_at: now, cancellation_reason: input.reason, row_version: Number(occurrence.row_version) + 1, updated_at: now });
+   } else if (future && !removed && (scheduleChanged || assignmentsChanged || String(occurrence.recurrence_id) !== recurrenceId)) {
+    // The occurrence snapshot powers all three workspace UIs; attach the new
+    // revision when its recurrence remains valid so changed task details appear.
+    occurrenceUpdates.push({ id: String(occurrence.id), task_revision_id: revision.id, row_version: Number(occurrence.row_version) + 1, updated_at: now });
+   }
+  }
+  await db.updateMany("pm_work_occurrence", occurrenceUpdates);
+  if (scheduleChanged || assignmentsChanged || openRows.some(o => String(o.recurrence_id) !== recurrenceId)) for (const occurrence of engine.state.occurrences) {
+  const assignment = engine.state.assignments.find(row => row.id === occurrence.assignment_id)!;
+  const assignmentId = dbAssignmentByUser.get(assignment.assignee_user_id);
+  if (!assignmentId) continue;
+   const existing = await db.read("pm_work_occurrence", ["id"], { assignment_id: { _eq: assignmentId }, occurrence_key: { _eq: occurrence.occurrence_key } }, 1);
+   if (existing.length) continue;
+   await db.create("pm_work_occurrence", { task_id: taskId, assignment_id: assignmentId, recurrence_id: recurrenceId, task_revision_id: revision.id, occurrence_key: occurrence.occurrence_key, scheduled_local_date: occurrence.scheduled_local_date, available_at: occurrence.available_at, original_due_at: occurrence.original_due_at, due_at: occurrence.due_at, row_version: 1, status: occurrence.status, created_at: now, updated_at: now });
+ }
+  const oldValues = { title: task.title, description: task.description, priority: task.priority, report_to_user_id: task.report_to_user_id, availability_start_at: task.availability_start_at, assignee_user_ids: [...previouslyActiveUsers], schedule: oldSchedule };
+  const newValues = { title: updated.title, description: updated.description, priority: updated.priority, report_to_user_id: updated.report_to_user_id, availability_start_at: updated.availability_start_at, assignee_user_ids: input.assignee_user_ids, schedule: updated.schedule };
+  const event = await db.create("pm_work_audit_event", { event_type: scheduleChanged ? "TASK_SCHEDULE_CHANGED" : "TASK_DETAILS_UPDATED", actor_id: bootstrap.actor.id, entity_type: "task", entity_id: taskId, task_id: taskId, occurrence_id: null, task_revision_number: updated.revision_number, old_values: oldValues, new_values: newValues, reason: input.reason, request_id: key, created_at: now });
+  const recipients = new Set([...activeByUser.keys(), ...input.assignee_user_ids]);
+  const notifications = [...recipients].map(recipient_id => ({ recipient_id, event_id: event.id, type: String(event.event_type), payload: { task_id: taskId, title: updated.title, old_values: oldValues, new_values: newValues, reason: input.reason }, dedupe_key: `work:${event.id}:${recipient_id}`, created_at: now }));
+  await db.createMany("pm_work_notification", notifications);
+ return { id: taskId, revision_number: updated.revision_number, assignment_count: input.assignee_user_ids.length, occurrence_count: engine.state.occurrences.length };
+}
+
+export async function liveTaskLifecycle(taskId: string, action: string, raw: unknown, key: string, workspace: Workspace) {
+ const bootstrap = await liveBootstrap();
+ requireRule(workspace === "assignor", 403, "ASSIGNOR_WORKSPACE_REQUIRED", "Manage tasks from Assignment Center.");
+ requireRule(/^\d+$/.test(taskId) && /^[A-Za-z0-9:_-]{8,128}$/.test(key), 422, "INVALID_REQUEST", "A valid task and request key are required.");
+ const body = raw as { reason?: unknown; expected_revision?: unknown };
+ requireRule(typeof body.reason === "string" && !!body.reason.trim() && body.reason.length <= 2000, 422, "REASON_REQUIRED", "A reason is required for this task change.");
+ requireRule(Number.isSafeInteger(body.expected_revision) && Number(body.expected_revision) > 0, 422, "REVISION_REQUIRED", "Refresh this task before making a change.");
+ requireRule(["pause", "resume", "cancel", "archive"].includes(action), 404, "NOT_FOUND", "Task action not found.");
+ const db = workDatabase();
+ const taskRow = (await db.read("pm_work_task", ["id", "title", "scope_type", "department_id", "lifecycle_status", "revision_number"], { id: { _eq: taskId } }, 1))[0];
+ requireRule(taskRow, 404, "NOT_FOUND", "Task not found.");
+ const task: Task = { id: taskId, title: String(taskRow.title), description: "", scope_type: taskRow.scope_type as Task["scope_type"], department_id: taskRow.department_id == null ? null : String(taskRow.department_id), created_by: bootstrap.actor.id, report_to_user_id: bootstrap.actor.id, priority: "NORMAL", availability_start_at: new Date(0).toISOString(), schedule: { frequency: "ONCE", interval_value: 1, days_of_week: [], month_end_policy: "CLAMP_TO_LAST_DAY", due_local_time: "00:00", timezone: "Asia/Manila", start_date: "1970-01-01" }, schedule_version: 1, schedule_effective_at: new Date(0).toISOString(), revision_number: Number(taskRow.revision_number), lifecycle_status: taskRow.lifecycle_status as Task["lifecycle_status"], created_at: new Date(0).toISOString(), reference_file_ids: [] };
+ requireRule(canEdit(bootstrap.actor, task), 403, "FORBIDDEN", "You cannot manage this task.");
+ requireRule(Number(body.expected_revision) === task.revision_number, 409, "STALE_REVISION", "This task changed. Refresh before trying again.");
+ const nextStatus = action === "pause" ? "PAUSED" : action === "resume" ? "ACTIVE" : "CANCELLED";
+ requireRule(action === "pause" && task.lifecycle_status === "ACTIVE" || action === "resume" && task.lifecycle_status === "PAUSED" || (action === "cancel" || action === "archive") && task.lifecycle_status !== "CANCELLED", 422, "INVALID_TRANSITION", "This task cannot make that status change.");
+ const now = new Date().toISOString();
+ const assignments = await db.read("pm_work_assignment", ["id", "assignee_user_id"], { task_id: { _eq: taskId }, status: { _eq: "ACTIVE" } }, 500);
+  await db.update("pm_work_task", taskId, { lifecycle_status: nextStatus, revision_number: task.revision_number + 1, ...(nextStatus === "CANCELLED" ? { cancelled_at: now, cancellation_reason: body.reason.trim() } : {}), updated_at: now });
+ if (nextStatus === "CANCELLED") {
+  const open = await db.read("pm_work_occurrence", ["id", "row_version"], { task_id: { _eq: taskId }, first_submission_id: { _null: true }, status: { _neq: "CANCELLED" } }, 5000);
+  for (const occurrence of open) await db.update("pm_work_occurrence", String(occurrence.id), { status: "CANCELLED", cancelled_at: now, cancellation_reason: body.reason.trim(), row_version: Number(occurrence.row_version) + 1, updated_at: now });
+ }
+ const event = await db.create("pm_work_audit_event", { event_type: action === "pause" ? "TASK_PAUSED" : action === "resume" ? "TASK_RESUMED" : "TASK_ARCHIVED", actor_id: bootstrap.actor.id, entity_type: "task", entity_id: taskId, task_id: taskId, occurrence_id: null, task_revision_number: task.revision_number + 1, old_values: { lifecycle_status: task.lifecycle_status }, new_values: { lifecycle_status: nextStatus, reason: body.reason.trim() }, reason: body.reason.trim(), request_id: key, created_at: now });
+ for (const userId of [...new Set(assignments.map(row => String(row.assignee_user_id)))]) {
+  await db.create("pm_work_notification", { recipient_id: userId, event_id: event.id, type: String(event.event_type), payload: { task_id: taskId, title: task.title, old_status: task.lifecycle_status, status: nextStatus, reason: body.reason.trim() }, dedupe_key: `work:${event.id}:${userId}`, created_at: now });
+ }
+ return { task_id: taskId, lifecycle_status: nextStatus, revision_number: task.revision_number + 1, notified: assignments.length };
+}
+
 export async function liveRead(path: string[], workspace: Workspace, period: ReadPeriod): Promise<unknown> {
  const { actor } = await liveBootstrap();
  const route = path.join("/");
- if (path[0] === "occurrences" && /^\d+$/.test(path[1] ?? "")) {
-  const reader = new LiveReader((collection, fields, filter, limit, page) => readRows<Record<string, unknown>>(collection, fields, filter, limit, page));
+  if (path[0] === "occurrences" && /^\d+$/.test(path[1] ?? "")) {
+   if (path[2] === "cancel-targets") return liveOccurrenceCancelTargets(path[1], workspace);
+   const reader = new LiveReader((collection, fields, filter, limit, page) => readRows<Record<string, unknown>>(collection, fields, filter, limit, page));
   const detail = await reader.detail(actor, workspace, path[1]);
   if (path[2] === "submissions") return detail.submissions;
   if (path[2] === "audit-events") return detail.events;
@@ -172,16 +362,24 @@ export async function liveRead(path: string[], workspace: Workspace, period: Rea
   const reader = new LiveReader((collection, fields, filter, limit, page) => readRows<Record<string, unknown>>(collection, fields, filter, limit, page));
   return reader.directory(actor, workspace);
  }
- if (route === "notifications") return readRows("pm_work_notification", ["id", "recipient_id", "event_id", "type", "read_at", "created_at"], { recipient_id: { _eq: actor.id } }, 100);
- const supported = ["occurrences", "occurrences/calendar", "occurrences/backlog", "reviews", "analytics/company", "analytics/employees", "analytics/departments", "analytics/trends"];
+ if (path[0] === "tasks" && /^\d+$/.test(path[1] ?? "") && path[2] === "assignments") {
+  const taskRow = (await readRows<Record<string, unknown>>("pm_work_task", ["id", "scope_type", "department_id"], { id: { _eq: path[1] } }, 1))[0];
+  requireRule(taskRow, 404, "NOT_FOUND", "Task not found.");
+  requireRule(canEdit(actor, { scope_type: taskRow.scope_type, department_id: taskRow.department_id === null ? null : String(taskRow.department_id) } as Task), 403, "FORBIDDEN", "You cannot edit this task.");
+  return readRows("pm_work_assignment", ["id", "task_id", "assignee_user_id", "department_id_at_assignment", "status"], { task_id: { _eq: path[1] } }, 500);
+ }
+ if (route === "notifications") return readRows("pm_work_notification", ["id", "recipient_id", "event_id", "type", "payload", "read_at", "created_at"], { recipient_id: { _eq: actor.id } }, 100);
+ const supported = ["occurrences", "occurrences/calendar", "occurrences/backlog", "analytics/company", "analytics/employees", "analytics/departments", "analytics/trends"];
  requireRule(supported.includes(route), 503, "LIVE_READ_NOT_READY", "This live read endpoint is not implemented yet. Calendar and reporting reads are available; no write was attempted.");
  if (path[0] === "analytics") requireRule(workspace === "executive" && workspaceAllowed(actor, "executive"), 403, "FORBIDDEN", "Executive access is required.");
  const reader = new LiveReader((collection, fields, filter, limit, page) => readRows<Record<string, unknown>>(collection, fields, filter, limit, page));
- const engine = await reader.load(actor, workspace, period, route === "reviews");
- if (route === "occurrences" || route === "occurrences/calendar" || route === "reviews" || route === "occurrences/backlog") {
+  const engine = await reader.load(actor, workspace, period);
+ if (route === "occurrences" || route === "occurrences/calendar" || route === "occurrences/backlog") {
   const rows = route === "occurrences/backlog" ? engine.list("1900-01-01", period.from, period.employee).filter(o => !o.first_submission_id && o.status !== "CANCELLED" && o.due_at < engine.now && o.due_at < wallToUtc(period.from, "00:00", "Asia/Manila"))
-   : engine.list(period.from, period.to, period.employee, route === "reviews");
-  return { items: rows.slice((period.page - 1) * period.limit, period.page * period.limit), total: rows.length, summary: engine.summary(period.from, period.to, period.employee) };
+   : engine.list(period.from, period.to, period.employee);
+  // Final boundary check: My Tasks can only ever return the signed-in assignee's rows.
+  const scoped = workspace === "my-tasks" ? rows.filter(o => o.assignee.id === actor.id) : rows;
+  return { items: scoped.slice((period.page - 1) * period.limit, period.page * period.limit), total: scoped.length, summary: engine.summary(period.from, period.to, period.employee) };
  }
  if (route === "analytics/company") return engine.summary(period.from, period.to, period.employee);
  if (route === "analytics/trends") {
@@ -210,7 +408,7 @@ export async function liveDownload(fileId: string, workspace: Workspace): Promis
  requireRule(detail.files.some(candidate => candidate.id === fileId), 404, "NOT_FOUND", "File not found.");
  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "");
  const response = await fetch(`${base}/assets/${encodeURIComponent(String(file.directus_file_id))}`, { headers: { Authorization: `Bearer ${process.env.DIRECTUS_STATIC_TOKEN}` }, cache: "no-store", signal: AbortSignal.timeout(30000) });
- requireRule(response.ok && response.body, 502, "FILE_STORAGE_UNAVAILABLE", "Unable to read the authorized file from Directus storage.");
+ requireRule(response.ok && response.body, 502, "FILE_STORAGE_UNAVAILABLE", "Unable to read the authorized file.");
  return new Response(response.body, { headers: { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(String(file.original_filename))}`, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" } });
 }
 

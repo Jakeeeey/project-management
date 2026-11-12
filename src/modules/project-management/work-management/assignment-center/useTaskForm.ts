@@ -15,6 +15,7 @@ export function useTaskForm({ task, bootstrap, api, onSaved }: {
  const initialDepartment = task?.department_id ?? (bootstrap.actor.department_id || ((bootstrap.capabilities.global || bootstrap.actor.read_all_departments) ? bootstrap.employees.find(employee => employee.department_id)?.department_id : "") || "");
  const [dept, setDept] = useState(initialDepartment);
  const [assignees, setAssignees] = useState<string[]>([]); const [personSearch, setPersonSearch] = useState("");
+ const [originalAssignees, setOriginalAssignees] = useState<string[]>([]);
  const [report, setReport] = useState(task?.report_to_user_id ?? ""); const [priority, setPriority] = useState(task?.priority ?? "NORMAL");
  const [frequency, setFrequency] = useState<Frequency>(task?.schedule.frequency ?? "ONCE");
  const [start, setStart] = useState(task?.schedule.start_date ?? localDate(new Date())); const [end, setEnd] = useState(task?.schedule.end_date ?? "");
@@ -30,7 +31,7 @@ export function useTaskForm({ task, bootstrap, api, onSaved }: {
   if (!task) return;
   let active = true;
   api<Assignment[]>(`tasks/${task.id}/assignments`).then(assignments => {
-   if (active) { setAssignees(assignments.filter(a => a.status === "ACTIVE").map(a => a.assignee_user_id)); setReady(true); }
+   if (active) { const ids = assignments.filter(a => a.status === "ACTIVE").map(a => String(a.assignee_user_id)); setAssignees(ids); setOriginalAssignees(ids); setReady(true); }
   }).catch(error => { if (active) setError(String(error)); });
   return () => { active = false; };
  }, [api, task]);
@@ -61,5 +62,5 @@ export function useTaskForm({ task, bootstrap, api, onSaved }: {
   } catch (error) { setError(error instanceof Error ? error.message : "Unable to save task."); }
   finally { setBusy(false); }
  };
- return { title, setTitle, description, setDescription, scope, setScope, dept, setDept, assignees, setAssignees, personSearch, setPersonSearch, report, setReport, priority, setPriority, frequency, setFrequency, start, setStart, end, setEnd, time, setTime, interval, setIntervalValue, unit, setUnit, weekdays, setWeekdays, monthday, setMonthday, monthEnd, setMonthEnd, availability, setAvailability, setReferences, reason, setReason, error, busy, ready, people, save };
+ return { title, setTitle, description, setDescription, scope, setScope, dept, setDept, assignees, originalAssignees, setAssignees, personSearch, setPersonSearch, report, setReport, priority, setPriority, frequency, setFrequency, start, setStart, end, setEnd, time, setTime, interval, setIntervalValue, unit, setUnit, weekdays, setWeekdays, monthday, setMonthday, monthEnd, setMonthEnd, availability, setAvailability, setReferences, reason, setReason, error, busy, ready, people, save };
 }
