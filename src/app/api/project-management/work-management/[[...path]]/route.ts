@@ -11,11 +11,7 @@ async function dispatch(method: "GET" | "POST" | "PATCH", request: NextRequest, 
  const workspace = request.nextUrl.searchParams.get("workspace") ?? "my-tasks";
  const handlers = workspace === "assignor" || workspace === "assignment-center"
   ? AssignmentCenter
-<<<<<<< HEAD
    : workspace === "executive" || workspace === "executive-overview" || workspace === "departmental" || workspace === "departmental-overview"
-=======
-  : workspace === "executive" || workspace === "executive-overview"
->>>>>>> origin
    ? ExecutiveOverview
    : MyTasks;
  return handlers[method](request, context);

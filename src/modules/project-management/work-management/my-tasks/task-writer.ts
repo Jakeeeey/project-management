@@ -7,11 +7,7 @@ import type { DatabaseRow, WorkDatabase } from "./directus-client";
 
 export interface TaskSaveResult { id: string; assignment_count: number; occurrence_count: number; persistence: "directus"; atomic: false }
 const rowId = (row: DatabaseRow) => {
-<<<<<<< HEAD
  requireRule(typeof row.id === "string" || typeof row.id === "number" && Number.isSafeInteger(row.id), 502, "INVALID_INSERT_ID", "The stored record did not return a safe ID.");
-=======
- requireRule(typeof row.id === "string" || typeof row.id === "number" && Number.isSafeInteger(row.id), 502, "INVALID_INSERT_ID", "Directus did not return a safe record ID.");
->>>>>>> origin
  return String(row.id);
 };
 
@@ -29,11 +25,7 @@ export class TaskWriter {
     requireRule(state.occurrences.length <= 1000, 422, "OCCURRENCE_LIMIT", "This schedule creates too many obligations. Shorten the schedule or select fewer employees.");
   const hash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
    // Include the historical command key so existing idempotency records remain effective.
-<<<<<<< HEAD
    const scope = { actor_key: { _eq: `wm:user:${actor.id}` }, operation: { _eq: "task:create" }, idempotency_key: { _eq: key } };
-=======
-   const scope = { actor_key: { _eq: `wm:user:${actor.id}` }, operation: { _in: ["task:create", "dummy:create-task"] }, idempotency_key: { _eq: key } };
->>>>>>> origin
   const previous = (await this.db.read("pm_work_idempotency", ["id", "state", "request_sha256", "response_body"], scope, 1))[0];
   if (previous) {
    requireRule(previous.request_sha256 === hash, 409, "IDEMPOTENCY_MISMATCH", "This save key was already used for different task details.");

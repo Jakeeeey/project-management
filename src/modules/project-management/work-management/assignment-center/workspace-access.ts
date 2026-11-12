@@ -39,10 +39,7 @@ export function resolveWorkspaceReadAccess(source: AccessSource): { workspaces: 
    // A generic parent-module grant is NOT an executive/global-work capability.
    if ([workspacePath("assignor"), `${ROOT}/assignor`].includes(path)) access.add("assignor");
    if ([workspacePath("executive"), `${ROOT}/executive`].includes(path)) access.add("executive");
-<<<<<<< HEAD
     if ([workspacePath("departmental"), `${ROOT}/departmental-overview`].includes(path)) access.add("departmental");
-=======
->>>>>>> origin
  }
  return { workspaces: [...access], allDepartments: source.roles.includes("GLOBAL_ASSIGNOR") };
 }

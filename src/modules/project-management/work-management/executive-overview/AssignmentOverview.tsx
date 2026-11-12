@@ -19,11 +19,7 @@ export function AssignmentOverview({ bootstrap, rows }: OverviewProps) {
   </div>
   <Card><CardHeader className="pb-2"><CardTitle className="text-base">Team assignment overview</CardTitle></CardHeader><CardContent className="space-y-3">
    <p className="text-sm text-muted-foreground">Manage work assigned to your team—not your personal Submission Bin. Current loaded period/page: <strong>{tasks.size} task definitions</strong> · <strong>{people.size} employees</strong> · <strong>{rows.length} individual obligations</strong>.</p>
-<<<<<<< HEAD
    {availability && !availability.canSave && <div role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm"><p className="font-medium">You can review assignment details; saving is unavailable for your account.</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">{availability.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul><p className="mt-2 text-xs">Use <strong>Create &amp; Assign Task</strong> to review employee selection, reporting, and recurrence controls.</p></div>}
-=======
-   {availability && !availability.canSave && <div role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm"><p className="font-medium">Assignment form is available to preview; saving is unavailable.</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">{availability.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul><p className="mt-2 text-xs">Use <strong>Create &amp; Assign Task</strong> to inspect employee selection, reporting, and recurrence controls. Previewing does not create assignments.</p></div>}
->>>>>>> origin
   </CardContent></Card>
  </section>;
 }

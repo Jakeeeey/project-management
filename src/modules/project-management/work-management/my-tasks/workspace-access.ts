@@ -4,21 +4,14 @@ const ROOT = "/project-management/work-management";
 
 /** Browser paths follow the manually registered sub-module names. API IDs stay stable. */
 export function workspacePath(workspace: Workspace): string {
-<<<<<<< HEAD
  return `${ROOT}/${workspace === "my-tasks" ? "assignee" : workspace === "departmental" ? "departmental-overview" : workspace}`;
-=======
- return `${ROOT}/${workspace === "my-tasks" ? "assignee" : workspace}`;
->>>>>>> origin
 }
 
 export function normalizeWorkspace(value: string): Workspace | null {
  if (value === "assignee" || value === "my-tasks") return "my-tasks";
  if (value === "assignor" || value === "assignment-center") return "assignor";
  if (value === "executive" || value === "executive-overview") return "executive";
-<<<<<<< HEAD
   if (value === "departmental" || value === "departmental-overview") return "departmental";
-=======
->>>>>>> origin
  return null;
 }
 
@@ -36,27 +29,17 @@ export function isPlatformAdministrator(role: unknown, flag: unknown): boolean {
 /** Navigation/read access is separate from permission to create or change work. */
 export function resolveWorkspaceReadAccess(source: AccessSource): { workspaces: Workspace[]; allDepartments: boolean } {
  const admin = isPlatformAdministrator(source.platformRole, source.isAdmin);
-<<<<<<< HEAD
  if (admin) return { workspaces: ["assignor", "my-tasks", "executive", "departmental"], allDepartments: true };
  const access = new Set<Workspace>(["my-tasks"]);
  if (source.roles.includes("GLOBAL_ASSIGNOR") || source.roles.includes("DEPARTMENT_ASSIGNOR")) access.add("assignor");
  if (source.roles.includes("EXECUTIVE_VIEWER")) access.add("executive");
   if (source.roles.includes("DEPARTMENT_ASSIGNOR")) access.add("departmental");
-=======
- if (admin) return { workspaces: ["assignor", "my-tasks", "executive"], allDepartments: true };
- const access = new Set<Workspace>(["my-tasks"]);
- if (source.roles.includes("GLOBAL_ASSIGNOR") || source.roles.includes("DEPARTMENT_ASSIGNOR")) access.add("assignor");
- if (source.roles.includes("EXECUTIVE_VIEWER")) access.add("executive");
->>>>>>> origin
   for (const rawPath of source.grantedModulePaths) {
    const path = rawPath.trim().replace(/\/+$/, "");
    // A generic parent-module grant is NOT an executive/global-work capability.
    if ([workspacePath("assignor"), `${ROOT}/assignor`].includes(path)) access.add("assignor");
    if ([workspacePath("executive"), `${ROOT}/executive`].includes(path)) access.add("executive");
-<<<<<<< HEAD
     if ([workspacePath("departmental"), `${ROOT}/departmental-overview`].includes(path)) access.add("departmental");
-=======
->>>>>>> origin
  }
  return { workspaces: [...access], allDepartments: source.roles.includes("GLOBAL_ASSIGNOR") };
 }

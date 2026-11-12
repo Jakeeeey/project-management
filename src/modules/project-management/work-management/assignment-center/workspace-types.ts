@@ -17,12 +17,8 @@ export interface WorkspaceDefinition {
  description: string;
  views: readonly string[];
  initialView?: string;
-<<<<<<< HEAD
   progressLabel?: string;
   globalAssignment?: boolean;
-=======
- progressLabel?: string;
->>>>>>> origin
  Overview?: ComponentType<OverviewProps>;
  Actions?: ComponentType<WorkspaceActionsProps>;
  Dashboard?: ComponentType<DashboardProps>;
