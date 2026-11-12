@@ -1,4 +1,4 @@
-export type Workspace = "assignor" | "my-tasks" | "executive";
+export type Workspace = "assignor" | "my-tasks" | "executive" | "departmental";
 export type Role = "DEPARTMENT_ASSIGNOR" | "GLOBAL_ASSIGNOR" | "ASSIGNEE" | "EXECUTIVE_VIEWER";
 export type Frequency = "ONCE" | "DAILY" | "WEEKLY" | "MONTHLY" | "CUSTOM";
 export interface Employee {
@@ -31,7 +31,7 @@ export interface Submission { id: string; occurrence_id: string; version_number:
 export interface WorkFile { id: string; owner_id: string; name: string; mime: string; size: number; sha256: string; expires_at: string; state: "VERIFIED" | "CLAIMED"; bytes: string }
 export interface AuditEvent { id: string; event_type: string; task_id: string; occurrence_id: string | null; actor_id: string; reason: string; old_values: unknown; new_values: unknown; created_at: string; request_id: string; material: boolean }
 export interface Comment { id: string; occurrence_id: string; submission_id: string | null; author_id: string; text: string; created_at: string }
-export interface Notification { id: string; recipient_id: string; event_id: string; type: string; read_at: string | null; created_at: string }
+export interface Notification { id: string; recipient_id: string; event_id: string; type: string; read_at: string | null; created_at: string; payload?: Record<string, unknown> }
 export interface State {
  employees: Employee[]; tasks: Task[]; assignments: Assignment[]; occurrences: Occurrence[];
  submissions: Submission[]; files: WorkFile[]; events: AuditEvent[]; comments: Comment[];

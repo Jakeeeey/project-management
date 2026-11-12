@@ -5,7 +5,8 @@ export interface WorkDatabase {
  read(collection: string, fields: string[], filter: DatabaseRow, limit?: number, page?: number): Promise<DatabaseRow[]>;
  create(collection: string, body: DatabaseRow): Promise<DatabaseRow>;
  createMany(collection: string, bodies: DatabaseRow[], fields?: string[]): Promise<DatabaseRow[]>;
- update(collection: string, id: string, body: DatabaseRow): Promise<void>;
+  update(collection: string, id: string, body: DatabaseRow): Promise<void>;
+  updateMany(collection: string, rows: (DatabaseRow & { id: string })[]): Promise<void>;
  remove(collection: string, ids: string[]): Promise<void>;
 }
 
@@ -20,7 +21,11 @@ export class DirectusClient implements WorkDatabase {
   if (!response.ok) {
    const error = await response.json().catch(() => ({}));
    const code = error.errors?.[0]?.extensions?.code ?? "DIRECTUS_ERROR";
-   throw new WorkError(502, code, `Data service request failed (${response.status}, ${code}).`);
+   // Keep the operation context: Directus errors often otherwise collapse to
+   // an unhelpful generic 500 in a multi-step amendment.
+   const operation = `${method} ${path.split("?")[0]}`;
+   console.error("[work-management] Directus operation failed", { operation, status: response.status, code });
+   throw new WorkError(502, code, `Data service request failed during ${operation} (${response.status}, ${code}).`);
   }
   if (response.status === 204) return null;
   const payload = await response.json(); return payload.data;
@@ -37,9 +42,14 @@ export class DirectusClient implements WorkDatabase {
   if (!bodies.length) return [];
   return await this.request(`/items/${collection}?${new URLSearchParams({ fields: fields.join(",") })}`, "POST", bodies) as DatabaseRow[];
  }
- async update(collection: string, id: string, body: DatabaseRow): Promise<void> {
-  await this.request(`/items/${collection}/${encodeURIComponent(id)}`, "PATCH", body);
- }
+  async update(collection: string, id: string, body: DatabaseRow): Promise<void> {
+   await this.request(`/items/${collection}/${encodeURIComponent(id)}`, "PATCH", body);
+  }
+  async updateMany(collection: string, rows: (DatabaseRow & { id: string })[]): Promise<void> {
+   for (let offset = 0; offset < rows.length; offset += 100) {
+    await this.request(`/items/${collection}`, "PATCH", rows.slice(offset, offset + 100));
+   }
+  }
  async remove(collection: string, ids: string[]): Promise<void> {
   if (ids.length) await this.request(`/items/${collection}`, "DELETE", ids);
  }

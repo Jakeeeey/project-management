@@ -22,8 +22,8 @@ async function handle(req: NextRequest, ctx: Context) {
   const path = (await ctx.params).path ?? [];
   if (req.method === "GET" && path.join("/") === "bootstrap") return NextResponse.json({ success: true, data: await liveBootstrap(), mode: "LIVE" }, { headers: { "Cache-Control": "no-store" } });
   const requestedWorkspace = req.nextUrl.searchParams.get("workspace");
-   requireRule(!requestedWorkspace || requestedWorkspace === "executive", 403, "WORKSPACE_MISMATCH", "This endpoint belongs to the executive-overview workspace.");
-   const workspace: Workspace = "executive";
+    requireRule(!requestedWorkspace || requestedWorkspace === "executive" || requestedWorkspace === "departmental", 403, "WORKSPACE_MISMATCH", "This endpoint belongs to an overview workspace.");
+    const workspace: Workspace = requestedWorkspace === "departmental" ? "departmental" : "executive";
   if (req.method === "GET" && path[0] === "files" && path[2] === "download") return await liveDownload(path[1], workspace);
   if (req.method === "GET") {
    const period = query.parse(Object.fromEntries(req.nextUrl.searchParams));
