@@ -202,6 +202,8 @@ export interface TaskTreeProps {
      * the button's face, so a 180px column never has to grow to fit a picker.
      */
     onEditTags?: (taskId: number) => void;
+    /** Opens the new-subtask dialog for a row, from the `+` beside its name. */
+    onAddSubtask?: (taskId: number) => void;
     /**
      * Ids on screen only as the ancestor path of a match. Their rows render muted: they are the
      * hierarchy the match lives in, not results. Empty when nothing is filtered.
@@ -274,6 +276,7 @@ export function TaskTree({
     onCancelCellEdit,
     onCommitCellEdit,
     onEditTags,
+    onAddSubtask,
     contextIds,
     className,
     "aria-label": ariaLabel = "Task list",
@@ -658,6 +661,7 @@ export function TaskTree({
                                               onCancelCellEdit,
                                               onCommitCellEdit,
                                               onEditTags,
+                                              onAddSubtask,
                                           };
                                           const rendered = renderRow
                                               ? renderRow(rowProps)

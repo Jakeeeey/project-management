@@ -927,6 +927,7 @@ export function ProgressView({
                 id: status.id,
                 label: status.label,
                 color: status.color,
+                icon: status.icon,
             })),
         [catalogs.statuses],
     );
@@ -937,6 +938,7 @@ export function ProgressView({
                 id: priority.id,
                 label: priority.label,
                 color: priority.color,
+                icon: priority.icon,
             })),
         [catalogs.priorities],
     );
@@ -947,6 +949,7 @@ export function ProgressView({
                 id: tag.id,
                 label: tag.label,
                 color: tag.color,
+                icon: tag.icon,
             })),
         [catalogs.tags],
     );

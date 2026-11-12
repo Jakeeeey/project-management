@@ -80,17 +80,35 @@ export function useViewTaskFilter({
     }, [items, isFiltering, term, appliedGroups, fields]);
 
     const statuses = useMemo<FilterBuilderOption[]>(
-        () => catalogs.statuses.map((option) => ({ id: option.id, label: option.label, color: option.color })),
+        () =>
+            catalogs.statuses.map((option) => ({
+                id: option.id,
+                label: option.label,
+                color: option.color,
+                icon: option.icon,
+            })),
         [catalogs.statuses],
     );
 
     const priorities = useMemo<FilterBuilderOption[]>(
-        () => catalogs.priorities.map((option) => ({ id: option.id, label: option.label, color: option.color })),
+        () =>
+            catalogs.priorities.map((option) => ({
+                id: option.id,
+                label: option.label,
+                color: option.color,
+                icon: option.icon,
+            })),
         [catalogs.priorities],
     );
 
     const tags = useMemo<FilterBuilderOption[]>(
-        () => catalogs.tags.map((tag) => ({ id: tag.id, label: tag.label, color: tag.color })),
+        () =>
+            catalogs.tags.map((tag) => ({
+                id: tag.id,
+                label: tag.label,
+                color: tag.color,
+                icon: tag.icon,
+            })),
         [catalogs.tags],
     );
 
