@@ -4,19 +4,19 @@ import { useCallback, useMemo } from "react";
 
 import type { FilterBuilderMember, FilterBuilderOption } from "../components/TaskFilterBuilder";
 import {
-    anyClauseActive,
-    cloneClausesForApply,
-    isClauseActive,
-    rowMatchesClauses,
-    type FilterClause,
+    anyGroupActive,
+    cloneGroupsForApply,
+    countActiveClauses,
+    rowMatchesFilter,
+    type FilterGroup,
 } from "../components/task-filter";
-import { knownClauses } from "../components/task-filter-state";
+import { knownGroups } from "../components/task-filter-state";
 import { useSavedTaskFilters } from "./useSavedTaskFilters";
 import { useTaskFilterState } from "./useTaskFilterState";
 import type { TaskCatalogs, TaskField, TaskListItem } from "./useTasks";
 
 /**
- * The search + clause state a read-only view reads, over the rows the shell already fetched.
+ * The search + group state a read-only view reads, over the rows the shell already fetched.
  *
  * The state is NOT this view's own: `useTaskFilterState` owns one persisted filter for the whole
  * tasks page, so narrowing the Calendar and then switching to Team keeps the same rows narrowed
@@ -33,11 +33,11 @@ interface UseViewTaskFilterArgs {
 export interface ViewTaskFilter {
     readonly search: string;
     readonly onSearchChange: (value: string) => void;
-    readonly clauses: readonly FilterClause[];
-    readonly onClausesChange: (clauses: readonly FilterClause[]) => void;
+    readonly groups: readonly FilterGroup[];
+    readonly onGroupsChange: (groups: readonly FilterGroup[]) => void;
     /** Search or any live clause is narrowing the view. */
     readonly isFiltering: boolean;
-    /** Resets both the search box and the clauses. */
+    /** Resets both the search box and the groups. */
     readonly clearFilters: () => void;
     /** Rows that match, in the order the caller passed them. */
     readonly visibleItems: readonly TaskListItem[];
@@ -47,7 +47,7 @@ export interface ViewTaskFilter {
     readonly members: readonly FilterBuilderMember[];
     readonly savedFilters: ReturnType<typeof useSavedTaskFilters>["savedFilters"];
     readonly onSaveFilter: ReturnType<typeof useSavedTaskFilters>["saveFilter"];
-    readonly onApplySavedFilter: (filter: { readonly id: string; readonly clauses: readonly FilterClause[] }) => void;
+    readonly onApplySavedFilter: (filter: { readonly id: string; readonly groups: readonly FilterGroup[] }) => void;
     readonly onDeleteSavedFilter: ReturnType<typeof useSavedTaskFilters>["deleteFilter"];
 }
 
@@ -57,7 +57,7 @@ export function useViewTaskFilter({
     catalogs,
     memberNameById,
 }: UseViewTaskFilterArgs): ViewTaskFilter {
-    const { search, clauses, onSearchChange, onClausesChange, clearFilters } = useTaskFilterState();
+    const { search, groups, onSearchChange, onGroupsChange, clearFilters } = useTaskFilterState();
     const { savedFilters, saveFilter, deleteFilter } = useSavedTaskFilters();
 
     /**
@@ -66,18 +66,18 @@ export function useViewTaskFilter({
      * still shows the stale row so the reader can see and remove it.
      */
     const fieldIds = useMemo<ReadonlySet<number>>(() => new Set(fields.map((field) => field.id)), [fields]);
-    const appliedClauses = useMemo(() => knownClauses(clauses, fieldIds), [clauses, fieldIds]);
+    const appliedGroups = useMemo(() => knownGroups(groups, fieldIds), [groups, fieldIds]);
 
     const term = search.trim().toLowerCase();
-    const isFiltering = term !== "" || anyClauseActive(appliedClauses);
+    const isFiltering = term !== "" || anyGroupActive(appliedGroups);
 
     const visibleItems = useMemo(() => {
         if (!isFiltering) return items;
         return items.filter((row) => {
             if (term !== "" && !row.title.toLowerCase().includes(term)) return false;
-            return rowMatchesClauses(row, appliedClauses, fields);
+            return rowMatchesFilter(row, appliedGroups, fields);
         });
-    }, [items, isFiltering, term, appliedClauses, fields]);
+    }, [items, isFiltering, term, appliedGroups, fields]);
 
     const statuses = useMemo<FilterBuilderOption[]>(
         () => catalogs.statuses.map((option) => ({ id: option.id, label: option.label, color: option.color })),
@@ -104,17 +104,17 @@ export function useViewTaskFilter({
     );
 
     const onApplySavedFilter = useCallback(
-        (filter: { readonly clauses: readonly FilterClause[] }) => {
-            onClausesChange(cloneClausesForApply(filter.clauses));
+        (filter: { readonly groups: readonly FilterGroup[] }) => {
+            onGroupsChange(cloneGroupsForApply(filter.groups));
         },
-        [onClausesChange],
+        [onGroupsChange],
     );
 
     return {
         search,
         onSearchChange,
-        clauses,
-        onClausesChange,
+        groups,
+        onGroupsChange,
         isFiltering,
         clearFilters,
         visibleItems,
@@ -129,7 +129,7 @@ export function useViewTaskFilter({
     };
 }
 
-/** The clause count a filter trigger prints, ignoring rows the user has not finished filling in. */
-export function activeClauseCount(clauses: readonly FilterClause[]): number {
-    return clauses.filter(isClauseActive).length;
+/** How many filled-in clauses a filter trigger counts, across every group. */
+export function activeClauseCount(groups: readonly FilterGroup[]): number {
+    return countActiveClauses(groups);
 }

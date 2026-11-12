@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, type ReactNode } from "react";
+import { useCallback, type CSSProperties, type ReactNode, type Ref } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -212,6 +212,11 @@ export interface TaskRowProps {
     setSize: number;
     hasChildren: boolean;
     isExpanded: boolean;
+    /**
+     * True when the row is on-screen only as the ancestor path of a match beneath it. A filter never
+     * turns a match into its subtree, so a dimmed row is context: kept for the hierarchy, not a hit.
+     */
+    isContext?: boolean;
     onToggleExpand: (id: number) => void;
     /** Slot for the row's overflow menu / actions. */
     actions?: ReactNode;
@@ -244,6 +249,17 @@ export interface TaskRowProps {
      * stack — the same rule the assignees cell follows.
      */
     onEditTags?: (taskId: number) => void;
+    /**
+     * The dnd-kit handle, supplied by the sortable wrapper. Kept as a slot so the row itself stays
+     * presentational and never imports drag machinery — a row rendered without it is still a row.
+     */
+    dragHandle?: ReactNode;
+    /** Forwarded to the `<tr>` so the sortable wrapper can measure and transform it. */
+    rowRef?: Ref<HTMLTableRowElement>;
+    /** Inline transform/transition from `useSortable`; empty for a plain render. */
+    rowStyle?: CSSProperties;
+    /** Drag-state and drop-indicator classes merged onto the row — the row supplies nothing itself. */
+    rowClassName?: string;
 }
 
 /**
@@ -266,6 +282,7 @@ export function TaskRow({
     setSize,
     hasChildren,
     isExpanded,
+    isContext = false,
     onToggleExpand,
     actions,
     frozenColumns,
@@ -277,6 +294,10 @@ export function TaskRow({
     onCancelCellEdit,
     onCommitCellEdit,
     onEditTags,
+    dragHandle,
+    rowRef,
+    rowStyle,
+    rowClassName,
 }: TaskRowProps) {
     const indentDepth = Math.min(node.depth, MAX_INDENT_DEPTH);
     const subtaskCount = node.children.length;
@@ -327,6 +348,8 @@ export function TaskRow({
 
     return (
         <TableRow
+            ref={rowRef}
+            style={rowStyle}
             role="row"
             data-slot="task-tree-row"
             data-task-id={node.id}
@@ -336,13 +359,14 @@ export function TaskRow({
             aria-posinset={posInSet}
             aria-setsize={setSize}
             aria-expanded={hasChildren ? isExpanded : undefined}
-            className="group"
+            className={cn("group", rowClassName)}
         >
             <TableCell
                 style={expandFrozenLeft === undefined ? undefined : { left: expandFrozenLeft }}
                 className={expandFrozenLeft === undefined ? undefined : FROZEN_BODY_CELL_CLASS}
             >
                 <div className="flex items-center gap-1">
+                    {dragHandle}
                     {hasChildren ? (
                         <Button
                             type="button"
@@ -374,7 +398,10 @@ export function TaskRow({
                         : cn(FROZEN_BODY_CELL_CLASS, FROZEN_EDGE_CLASS)
                 }
             >
-                <div className="flex items-center gap-1.5" style={{ paddingLeft: indentDepth * INDENT_STEP_PX }}>
+                <div
+                    className={cn("flex items-center gap-1.5", isContext ? "text-muted-foreground" : undefined)}
+                    style={{ paddingLeft: indentDepth * INDENT_STEP_PX }}
+                >
                     {/*
                      * The subtask-count badge leads the title cell, before the status glyph. It used
                      * to trail the title, where its position followed the resizable title column's

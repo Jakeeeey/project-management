@@ -14,18 +14,20 @@ import { TaskFormDialog, type TaskBreadcrumb } from "./components/TaskFormDialog
 import { TaskListSwitcher } from "./components/TaskListSwitcher";
 import { DEFAULT_TASK_PAGE_SIZE, TaskPagination } from "./components/TaskPagination";
 import { TaskTree } from "./components/TaskTree";
+import { SortableTaskRow } from "./components/tree-dnd/SortableTaskRow";
+import { TreeDndProvider } from "./components/tree-dnd/TreeDndProvider";
 import { TaskTagsDialog } from "./components/TaskTagsDialog";
 import { TasksHeaderActions } from "./components/TasksHeaderActions";
 import { TasksToolbar } from "./components/TasksToolbar";
 import {
-    anyClauseActive,
-    cloneClausesForApply,
-    failsExcludingClause,
-    rowMatchesClauses,
-    type FilterClause,
+    anyGroupActive,
+    cloneGroupsForApply,
+    failsExcludingGroup,
+    rowMatchesFilter,
+    type FilterGroup,
     type SavedTaskFilter,
 } from "./components/task-filter";
-import { knownClauses } from "./components/task-filter-state";
+import { knownGroups } from "./components/task-filter-state";
 import { TasksViewTabs } from "./components/TasksViewTabs";
 import { BoardView } from "./components/views/BoardView";
 import { CalendarView } from "./components/views/CalendarView";
@@ -34,7 +36,7 @@ import { GanttView } from "./components/views/GanttView";
 import { ProgressView } from "./components/views/ProgressView";
 import { TeamView } from "./components/views/TeamView";
 import type { CellEditRequest } from "./components/TaskCellEditor";
-import type { TaskRowPatch, TaskRowView } from "./components/TaskRow";
+import type { TaskRowPatch, TaskRowProps, TaskRowView } from "./components/TaskRow";
 import type { TaskViewProps, TasksViewId } from "./types/task-view";
 import { useAssignees } from "./hooks/useAssignees";
 import { useSavedTaskFilters } from "./hooks/useSavedTaskFilters";
@@ -50,7 +52,7 @@ import { useTaskFilterState } from "./hooks/useTaskFilterState";
 import { useTaskLists } from "./hooks/useTaskLists";
 import { useTaskTree, type TaskTreeRow } from "./hooks/useTaskTree";
 import { useTags } from "./hooks/useTags";
-import type { CreateTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
+import type { CreateTaskInput, MoveTaskInput, UpdateTaskInput } from "./types/pm-task.schema";
 
 /**
  * The Tasks client orchestrator.
@@ -305,6 +307,22 @@ export interface TasksModuleProps {
     readonly userId: number | null;
 }
 
+/**
+ * The row a drop just moved, plus the `items` array the payload was computed against. Remembering
+ * the array is what makes the optimistic patch self-expiring: a refetch always hands back a new
+ * array, so a rejected move reverts without an extra code path.
+ */
+interface PendingTreeMove {
+    readonly taskId: number;
+    readonly payload: MoveTaskInput;
+    readonly items: readonly TaskListItem[];
+}
+
+/** Stable row renderer: the sortable wrapper the dnd engine needs, defined once. */
+function SortableRow(props: TaskRowProps) {
+    return <SortableTaskRow {...props} />;
+}
+
 export function TasksModule({ userId }: TasksModuleProps) {
     /**
      * The switcher's source, and the owner of the one-shot default-list bootstrap: a department
@@ -355,12 +373,37 @@ export function TasksModule({ userId }: TasksModuleProps) {
         createTask,
         updateTask,
         deleteTask,
+        moveTask,
         uploadAttachment,
         detachAttachment,
         clearError,
     } = useTaskMutations({ onChanged: refresh, onTaskUpdated: mergeTaskRow });
+    /**
+     * The dropped row renders in its new place immediately; the refetch that `moveTask` triggers
+     * replaces it a moment later. Expiring on `items` identity keeps the two from disagreeing.
+     */
+    const [pendingMove, setPendingMove] = useState<PendingTreeMove | null>(null);
+    const activeMove = pendingMove !== null && pendingMove.items === items ? pendingMove : null;
+    const displayItems = useMemo(() => {
+        if (activeMove === null) {
+            return items;
+        }
+        const { taskId, payload } = activeMove;
+        const siblingOrder = new Map(payload.sibling_ids.map((id, index) => [id, index]));
+        return items.map((row) => {
+            const sortOrder = siblingOrder.get(row.id);
+            if (row.id === taskId) {
+                return {
+                    ...row,
+                    parent_id: payload.parent_id,
+                    sort_order: sortOrder ?? row.sort_order,
+                };
+            }
+            return sortOrder === undefined ? row : { ...row, sort_order: sortOrder };
+        });
+    }, [items, activeMove]);
     const { roots, expandedIds, toggleExpand, expandAll, collapseAll } = useTaskTree(
-        items,
+        displayItems,
         memberNameById,
     );
     const { savedFilters, saveFilter, deleteFilter } = useSavedTaskFilters();
@@ -368,10 +411,11 @@ export function TasksModule({ userId }: TasksModuleProps) {
     /**
      * The live filter, shared with every other tab and persisted per browser — see
      * `useTaskFilterState`. It lives here rather than in the toolbar so switching tabs and reloading
-     * both keep it. A clause with no field — or a value-taking clause with no value — is inactive,
-     * which is what keeps picking a field from blanking the list.
+     * both keep it. Groups combine with AND; rows inside a group combine by the group's own setting.
+     * A clause with no field — or a value-taking clause with no value — is inactive, which is what
+     * keeps picking a field from blanking the list.
      */
-    const { search, clauses, onSearchChange, onClausesChange, clearFilters } = useTaskFilterState();
+    const { search, groups, onSearchChange, onGroupsChange, clearFilters } = useTaskFilterState();
     const [page, setPage] = useState(1);
     /**
      * Roots per page. It is an INPUT to the page set, so changing it resets to page 1 exactly as a
@@ -457,13 +501,13 @@ export function TasksModule({ userId }: TasksModuleProps) {
         return counts;
     }, [items]);
 
-    /** The custom columns this department still has — see `knownClauses`. */
+    /** The custom columns this department still has — see `knownGroups`. */
     const fieldIds = useMemo<ReadonlySet<number>>(() => new Set(fields.map((field) => field.id)), [fields]);
 
-    /** Every clause that still names a live column — the set both the filter and the tree read. */
-    const appliedClauses = useMemo(() => knownClauses(clauses, fieldIds), [clauses, fieldIds]);
+    /** Every group that still names a live column — the set both the filter and the tree read. */
+    const appliedGroups = useMemo(() => knownGroups(groups, fieldIds), [groups, fieldIds]);
 
-    const isFiltering = normaliseSearch(search) !== "" || anyClauseActive(appliedClauses);
+    const isFiltering = normaliseSearch(search) !== "" || anyGroupActive(appliedGroups);
 
     /**
      * Identifies the filter currently applied. A collapse made while filtering is remembered against
@@ -472,10 +516,15 @@ export function TasksModule({ userId }: TasksModuleProps) {
      */
     const revealKey = useMemo(
         () =>
-            `${normaliseSearch(search)}\u0000${appliedClauses
-                .map((clause) => `${clause.fieldKey}:${clause.operator}:${clause.value ?? ""}`)
-                .join("\u0001")}`,
-        [search, appliedClauses],
+            `${normaliseSearch(search)}\u0000${appliedGroups
+                .map(
+                    (group) =>
+                        `${group.operator}(${group.clauses
+                            .map((clause) => `${clause.fieldKey}:${clause.operator}:${clause.value ?? ""}`)
+                            .join("\u0001")})`,
+                )
+                .join("\u0002")}`,
+        [search, appliedGroups],
     );
 
     /** Rows the user folded away UNDER the current filter. Empty for any other filter. */
@@ -487,17 +536,36 @@ export function TasksModule({ userId }: TasksModuleProps) {
         collapsedWhileFiltered.key === revealKey ? collapsedWhileFiltered.ids : EMPTY_ID_SET;
 
     /**
-     * The forest the List renders. Clauses select and exclude in their own directions — a positive
-     * clause keeps a match's subtree, a negative one drops its branch — and search reveals ancestors.
+     * The forest the List renders. Groups combine with AND; inside a group a positive row keeps its
+     * subtree and an `is not` row drops its branch — and search reveals ancestors.
      */
     const filteredRoots = useMemo(() => {
         const term = normaliseSearch(search);
         return pruneForest(roots, {
-            passesClauses: (row) => rowMatchesClauses(row, appliedClauses, fields),
-            failsExcludingClause: (row) => failsExcludingClause(row, appliedClauses, fields),
+            passesClauses: (row) => rowMatchesFilter(row, appliedGroups, fields),
+            failsExcludingClause: (row) => failsExcludingGroup(row, appliedGroups, fields),
             ...(term === "" ? {} : { matchesSearch: (row) => row.title.toLowerCase().includes(term) }),
         });
-    }, [roots, search, appliedClauses, fields]);
+    }, [roots, search, appliedGroups, fields]);
+
+    /**
+     * Rows on screen only as the ancestor path of a match. A filter selects the rows it matches and
+     * nothing else, so a parent can be visible while failing every clause; those rows are the
+     * hierarchy around a hit, and rendering them muted keeps "kept for context" from reading as
+     * "matched too". Empty when no filter or search is active.
+     */
+    const contextIds = useMemo<ReadonlySet<number>>(() => {
+        if (!isFiltering) return EMPTY_ID_SET;
+        const term = normaliseSearch(search);
+        const gating = anyGroupActive(appliedGroups);
+        const ids = new Set<number>();
+        for (const row of items) {
+            const passesFilter = !gating || rowMatchesFilter(row, appliedGroups, fields);
+            const passesSearch = term === "" || row.title.toLowerCase().includes(term);
+            if (!passesFilter || !passesSearch) ids.add(row.id);
+        }
+        return ids;
+    }, [items, isFiltering, appliedGroups, fields, search]);
 
     const autoExpandedIds = useMemo(
         () => (isFiltering ? expandableIds(filteredRoots) : EMPTY_ID_SET),
@@ -579,21 +647,21 @@ export function TasksModule({ userId }: TasksModuleProps) {
         [onSearchChange],
     );
 
-    const handleClausesChange = useCallback(
-        (next: readonly FilterClause[]) => {
-            onClausesChange(next);
+    const handleGroupsChange = useCallback(
+        (next: readonly FilterGroup[]) => {
+            onGroupsChange(next);
             setPage(1);
         },
-        [onClausesChange],
+        [onGroupsChange],
     );
 
-    /** Applying a saved set restores fresh clause rows, so its ids never collide with the live ones. */
+    /** Applying a saved set restores fresh group and row ids, so they never collide with the live ones. */
     const handleApplySavedFilter = useCallback(
         (filter: SavedTaskFilter) => {
-            onClausesChange(cloneClausesForApply(filter.clauses));
+            onGroupsChange(cloneGroupsForApply(filter.groups));
             setPage(1);
         },
-        [onClausesChange],
+        [onGroupsChange],
     );
 
     const handleClearFilters = useCallback(() => {
@@ -646,6 +714,23 @@ export function TasksModule({ userId }: TasksModuleProps) {
     const handleRefresh = useCallback(() => {
         void refresh();
     }, [refresh]);
+
+    /**
+     * A drop persists through the pinned `{ parent_id, sibling_ids }` contract. `moveTask` refetches
+     * on success; on failure it does not, so the revert that clears the optimistic patch has to be
+     * asked for explicitly.
+     */
+    const handleTreeMove = useCallback(
+        (activeId: number, payload: MoveTaskInput): void => {
+            setPendingMove({ taskId: activeId, payload, items });
+            void moveTask(activeId, payload).then((moved) => {
+                if (!moved) {
+                    void refresh();
+                }
+            });
+        },
+        [items, moveTask, refresh],
+    );
 
     const handlePageChange = useCallback(
         (next: number) => {
@@ -1013,8 +1098,8 @@ export function TasksModule({ userId }: TasksModuleProps) {
             <TasksToolbar
                 searchValue={search}
                 onSearchChange={handleSearchChange}
-                clauses={clauses}
-                onClausesChange={handleClausesChange}
+                groups={groups}
+                onGroupsChange={handleGroupsChange}
                 fields={fields}
                 statuses={catalogs.statuses}
                 priorities={catalogs.priorities}
@@ -1033,9 +1118,18 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 onSubtasksExpandedChange={handleSubtasksExpandedChange}
             />
 
-            <TaskTree
+            <TreeDndProvider
+                roots={filteredRoots}
+                expandedIds={renderExpandedIds}
+                allRows={items}
+                reorderDisabled={isFiltering}
+                onMove={handleTreeMove}
+            >
+                <TaskTree
                 roots={filteredRoots}
                 rows={pagedRows}
+                contextIds={contextIds}
+                renderRow={SortableRow}
                 expandedIds={renderExpandedIds}
                 onToggleExpand={handleToggleExpand}
                 isLoading={isLoading}
@@ -1054,6 +1148,7 @@ export function TasksModule({ userId }: TasksModuleProps) {
                 renderActions={renderRowActions}
                 aria-label="Task list"
             />
+            </TreeDndProvider>
 
             {/*
              * The pager is pinned BELOW the tree and outside its horizontal-scroll container, so one

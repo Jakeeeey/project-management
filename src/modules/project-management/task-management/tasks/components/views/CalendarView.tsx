@@ -152,8 +152,8 @@ export function CalendarView({
                 searchValue={filter.search}
                 onSearchChange={filter.onSearchChange}
                 searchPlaceholder="Search tasks by title"
-                clauses={filter.clauses}
-                onClausesChange={filter.onClausesChange}
+                groups={filter.groups}
+                onGroupsChange={filter.onGroupsChange}
                 fields={fields}
                 statuses={filter.statuses}
                 priorities={filter.priorities}

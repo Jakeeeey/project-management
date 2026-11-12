@@ -20,6 +20,8 @@ import { columnWeightScore, completionFlag, computeCompletion, describeCompletio
 
 // @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
 import { buildOffsets, windowFor } from "../components/views/window.ts";
+// @ts-expect-error -- Node requires the ".ts" extension here; tsc forbids it (see the file header).
+import { STATUS_FIELD_KEY, TAGS_FIELD_KEY, anyGroupActive, cloneGroupsForApply, countActiveClauses, failsExcludingGroup, groupMatches, parseSavedTaskFilters, rowMatchesAnyClause, rowMatchesClauses, rowMatchesFilter, type FilterGroup, type FilterableRow } from "../components/task-filter.ts";
 
 interface FixtureRow extends TreeSourceRow {
     readonly title: string;
@@ -221,11 +223,12 @@ check(
     findNode(pruneForest(roots, { failsExcludingClause: (row) => row.id === 4 }), 3) !== undefined,
 );
 
-// The positive direction: a match is a selection, so its subtree comes with it.
+// The positive direction selects ONE row: its children stay hidden when they do not match, and the
+// ancestors above it are kept only as context.
 const matchedBranch = pruneForest(roots, { passesClauses: (row) => row.id === 3 });
 check(
-    "a matched row keeps its children even when they do not match",
-    sameIds(childIds(requireNode(matchedBranch, 3)), [4]),
+    "a matched row does not drag its non-matching children in",
+    sameIds(childIds(requireNode(matchedBranch, 3)), []),
 );
 check(
     "a matched row keeps its ancestors as context",
@@ -236,10 +239,10 @@ check(
     findNode(matchedBranch, 2) === undefined && findNode(matchedBranch, 5) === undefined,
 );
 check(
-    "a matched root keeps every level beneath it",
+    "a matched root keeps only itself, not the levels beneath it",
     (() => {
         const kept = pruneForest(roots, { passesClauses: (row) => row.id === 1 });
-        return findNode(kept, 2) !== undefined && findNode(kept, 3) !== undefined && findNode(kept, 4) !== undefined;
+        return findNode(kept, 1) !== undefined && findNode(kept, 2) === undefined && findNode(kept, 3) === undefined;
     })(),
 );
 
@@ -588,6 +591,112 @@ check(
 check(
     "the window never runs past the last row",
     windowFor(tallOffsets, 1200, 120, 10).end === 30,
+);
+
+// --- AND/OR: groups combine with AND, rows inside a group by its own operator -----------------------
+// The shape the reader asked for: "this tag, and either status A or B" is one AND of two groups.
+
+type GroupRow = FilterableRow;
+
+const groupRow = (statusId: number, tagIds: readonly number[]): GroupRow => ({
+    status_id: statusId,
+    priority_id: 0,
+    custom_values: [],
+    tags: tagIds.map((tag_id) => ({ tag_id })),
+    assignees: [],
+});
+
+const statusClause = (id: string, operator: "is" | "is_not", statusId: string) => ({
+    id,
+    fieldKey: STATUS_FIELD_KEY,
+    operator,
+    value: statusId,
+});
+
+const tagClause = (id: string, operator: "is" | "is_not", tagId: string) => ({
+    id,
+    fieldKey: TAGS_FIELD_KEY,
+    operator,
+    value: tagId,
+});
+
+/** `Tags is 2` AND `Status is 5 or Status is 6`; `fields` is empty because no custom column is used. */
+const tagAndStatuses: FilterGroup[] = [
+    { id: "g1", operator: "and", clauses: [tagClause("c1", "is", "2")] },
+    {
+        id: "g2",
+        operator: "or",
+        clauses: [statusClause("c2", "is", "5"), statusClause("c3", "is", "6")],
+    },
+];
+
+check(
+    "an OR group accepts either status",
+    rowMatchesFilter(groupRow(5, [2]), tagAndStatuses, []) &&
+        rowMatchesFilter(groupRow(6, [2]), tagAndStatuses, []),
+);
+check(
+    "the AND between groups still demands the tag",
+    !rowMatchesFilter(groupRow(5, []), tagAndStatuses, []),
+);
+check(
+    "a status outside the OR group is rejected",
+    !rowMatchesFilter(groupRow(7, [2]), tagAndStatuses, []),
+);
+check("a status outside the OR group is rejected", !groupMatches(groupRow(7, [2]), tagAndStatuses[1], []));
+check(
+    "an empty group matches everything, so adding one never blanks the list",
+    rowMatchesFilter(groupRow(99, []), [{ id: "g3", operator: "and", clauses: [] }], []),
+);
+check("anyGroupActive ignores blank groups", !anyGroupActive([{ id: "g4", operator: "or", clauses: [] }]));
+check("countActiveClauses counts filled rows across groups", countActiveClauses(tagAndStatuses) === 3);
+
+// An `is not` veto binds AND groups only: inside an OR group a failing `is not` is a missed branch.
+const notTagOrStatus: FilterGroup[] = [
+    {
+        id: "g5",
+        operator: "or",
+        clauses: [tagClause("c5", "is_not", "9"), statusClause("c6", "is", "5")],
+    },
+];
+check(
+    "an is-not inside an OR group does not veto a row that matches the other branch",
+    !failsExcludingGroup(groupRow(5, [9]), notTagOrStatus, []),
+);
+check(
+    "the same is-not inside an AND group does veto",
+    failsExcludingGroup(groupRow(5, [9]), [{ id: "g6", operator: "and", clauses: [tagClause("c7", "is_not", "9")] }], []),
+);
+check(
+    "a legacy flat clause list still reads as one AND group",
+    !rowMatchesClauses(groupRow(5, []), [tagClause("c8", "is", "2")], []) &&
+        rowMatchesAnyClause(groupRow(5, []), [tagClause("c8", "is", "2"), statusClause("c9", "is", "5")], []),
+);
+
+// Persistence keeps a legacy flat saved filter readable and preserves a group's operator on the way
+// back out. The LIVE filter's own parser is exercised in the browser against `pm-tasks-filter:v1`,
+// because importing its module here would drag a value import into this node-run harness.
+const clonedGroups = cloneGroupsForApply(tagAndStatuses);
+check(
+    "applying a saved filter mints fresh group and row ids",
+    clonedGroups.length === 2 &&
+        clonedGroups[0].id !== tagAndStatuses[0].id &&
+        clonedGroups[0].clauses[0].id !== tagAndStatuses[0].clauses[0].id &&
+        clonedGroups[0].clauses[0].value === "2",
+);
+
+const savedRoundTrip = parseSavedTaskFilters(
+    JSON.stringify([
+        { id: "s1", name: "legacy", clauses: [{ id: "a", fieldKey: "tags", operator: "is", value: "2" }] },
+        { id: "s2", name: "groups", groups: [{ operator: "or", clauses: [{ id: "b", fieldKey: "status", operator: "is", value: "5" }] }] },
+    ]),
+);
+check(
+    "saved filters read both shapes, keeping the OR operator",
+    savedRoundTrip.length === 2 &&
+        savedRoundTrip[0].groups.length === 1 &&
+        savedRoundTrip[0].groups[0].operator === "and" &&
+        savedRoundTrip[1].groups[0].operator === "or",
 );
 
 if (failures > 0) {

@@ -220,7 +220,7 @@ export function flattenVisible<T extends TreeSourceRow>(
 
 /** The row rules a pruned forest applies. All are optional. */
 export interface ForestVisibility<T extends TreeSourceRow> {
-    /** The clause set. A row that MATCHES keeps itself **and its whole subtree** — a match is a selection. */
+    /** The clause set. A row that MATCHES stays; it does NOT bring its subtree with it. */
     readonly passesClauses?: (row: T) => boolean;
     /**
      * A negative clause (`is not X`). A row it excludes is dropped TOGETHER with its whole subtree, so
@@ -235,23 +235,22 @@ export interface ForestVisibility<T extends TreeSourceRow> {
  * Clause half. Two directions, because `is` and `is not` mean opposite things:
  *
  * - `excluded(node)` drops the node and everything beneath it.
- * - `passes(node)` selects the node, and from there DOWN the clause stops filtering: a matched task's
- *   subtasks are shown as its contents even when they carry a different status, tag or owner.
- * - A node that neither matches nor is inside a match survives only as the ancestor path of a match
- *   beneath it, so a deep hit is still reachable.
+ * - `passes(node)` selects that node and nothing else. A match does NOT drag its subtree in: a child
+ *   that contradicts the filter must not appear merely because its parent matched.
+ * - A node that does not match survives only as the ancestor path of a match beneath it, so a deep
+ *   hit stays reachable and the hierarchy still reads. Those rows are context, not results.
  */
 function pruneByClauses<T extends TreeSourceRow>(
     nodes: readonly TreeNode<T>[],
     passes: ((row: T) => boolean) | undefined,
     excluded: ((row: T) => boolean) | undefined,
-    insideMatch: boolean,
 ): TreeNode<T>[] {
     const kept: TreeNode<T>[] = [];
     for (const node of nodes) {
         if (excluded !== undefined && excluded(node)) continue;
 
-        const accepted = insideMatch || passes === undefined || passes(node);
-        const children = pruneByClauses(node.children, passes, excluded, accepted);
+        const accepted = passes === undefined || passes(node);
+        const children = pruneByClauses(node.children, passes, excluded);
         if (accepted || children.length > 0) kept.push({ ...node, children });
     }
     return kept;
@@ -274,12 +273,12 @@ function pruneBySearch<T extends TreeSourceRow>(
  * Prunes a forest to the rows the screen may render — the one rule the List and the Progress tab
  * share, so the two views cannot drift apart.
  *
- * - Clauses select DOWN and exclude DOWN, which are two different things:
- *   `is X` keeps a matching row **and its whole subtree** (a match is a selection, so its subtasks
- *   come with it), while `is not X` drops the offending row and everything beneath it — otherwise a
- *   tagged parent's tagless children would survive the branch that was filtered out.
- * - A row that neither matches nor sits inside a match is kept only as the ancestor path of a match
- *   beneath it, so a deep hit stays reachable.
+ * - Clauses select the row and nothing more: `is X` keeps a matching row but not its subtree (a child
+ *   that contradicts the filter stays hidden), while `is not X` drops the offending row and everything
+ *   beneath it — otherwise a tagged parent's tagless children would survive the branch that was
+ *   filtered out.
+ * - A row that does not match is kept only as the ancestor path of a match beneath it, so a deep hit
+ *   stays reachable; such a row is context, and the views render it muted.
  * - Search reveals UP: a hit stays plus the ancestors leading to it — ancestors are context, not
  *   matches — and a branch with no hit anywhere beneath it is dropped.
  * - Both together: the clause set is applied first, then the search keeps hits inside what survives.
@@ -299,6 +298,6 @@ export function pruneForest<T extends TreeSourceRow>(
     const gated =
         passesClauses === undefined && failsExcludingClause === undefined
             ? [...nodes]
-            : pruneByClauses(nodes, passesClauses, failsExcludingClause, false);
+            : pruneByClauses(nodes, passesClauses, failsExcludingClause);
     return matchesSearch === undefined ? gated : pruneBySearch(gated, matchesSearch);
 }

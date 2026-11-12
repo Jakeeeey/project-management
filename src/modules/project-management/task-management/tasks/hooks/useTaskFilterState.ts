@@ -9,7 +9,7 @@ import {
     writeTaskFilterState,
     type TaskFilterState,
 } from "../components/task-filter-state";
-import type { FilterClause } from "../components/task-filter";
+import { type FilterGroup } from "../components/task-filter";
 
 /**
  * The ONE live filter every task tab reads and writes, backed by localStorage.
@@ -74,10 +74,10 @@ function commitState(next: TaskFilterState): void {
 
 export interface UseTaskFilterStateResult {
     readonly search: string;
-    readonly clauses: readonly FilterClause[];
+    readonly groups: readonly FilterGroup[];
     readonly onSearchChange: (value: string) => void;
-    readonly onClausesChange: (clauses: readonly FilterClause[]) => void;
-    /** Resets both the search box and the clauses. */
+    readonly onGroupsChange: (groups: readonly FilterGroup[]) => void;
+    /** Resets both the search box and the groups. */
     readonly clearFilters: () => void;
 }
 
@@ -88,8 +88,8 @@ export function useTaskFilterState(): UseTaskFilterStateResult {
         commitState({ ...getStateSnapshot(), search: value });
     }, []);
 
-    const onClausesChange = useCallback((clauses: readonly FilterClause[]): void => {
-        commitState({ ...getStateSnapshot(), clauses });
+    const onGroupsChange = useCallback((groups: readonly FilterGroup[]): void => {
+        commitState({ ...getStateSnapshot(), groups });
     }, []);
 
     const clearFilters = useCallback((): void => {
@@ -98,9 +98,9 @@ export function useTaskFilterState(): UseTaskFilterStateResult {
 
     return {
         search: state.search,
-        clauses: state.clauses,
+        groups: state.groups,
         onSearchChange,
-        onClausesChange,
+        onGroupsChange,
         clearFilters,
     };
 }

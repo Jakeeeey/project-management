@@ -13,16 +13,24 @@
  * degrades to "no filter" rather than throwing or hiding every task.
  */
 
-import { createFilterClauseId, FILTER_OPERATORS, type FilterClause, type FilterOperator } from "./task-filter";
+import {
+    createFilterClauseId,
+    createFilterGroupId,
+    FILTER_OPERATORS,
+    type FilterClause,
+    type FilterGroup,
+    type FilterGroupOperator,
+    type FilterOperator,
+} from "./task-filter";
 
-/** The whole live filter: what the search input holds and the clauses the builder edits. */
+/** The whole live filter: what the search input holds and the clause groups the builder edits. */
 export interface TaskFilterState {
     readonly search: string;
-    readonly clauses: readonly FilterClause[];
+    readonly groups: readonly FilterGroup[];
 }
 
 /** The unfiltered state — also the server snapshot, so hydration never disagrees with the markup. */
-export const EMPTY_TASK_FILTER_STATE: TaskFilterState = { search: "", clauses: [] };
+export const EMPTY_TASK_FILTER_STATE: TaskFilterState = { search: "", groups: [] };
 
 /** The versioned localStorage key — bump the suffix if the persisted shape ever changes. */
 export const TASK_FILTER_STATE_KEY = "pm-tasks-filter:v1";
@@ -74,7 +82,12 @@ function parseClause(value: unknown, seenIds: Set<string>): FilterClause | null 
     };
 }
 
-/** Parses the persisted JSON defensively; a malformed root or entry is dropped, never thrown. */
+/**
+ * Parses the persisted JSON defensively; a malformed root or entry is dropped, never thrown.
+ *
+ * A value written before groups existed holds a flat `clauses` array. It is read back as one AND
+ * group, which is what those clauses meant, so an upgrade never loses the reader's filter.
+ */
 export function parseTaskFilterState(raw: string | null): TaskFilterState {
     if (raw === null || raw.trim() === "") return EMPTY_TASK_FILTER_STATE;
 
@@ -87,17 +100,38 @@ export function parseTaskFilterState(raw: string | null): TaskFilterState {
     if (!isRecord(parsed)) return EMPTY_TASK_FILTER_STATE;
 
     const search = typeof parsed.search === "string" ? parsed.search.slice(0, MAX_SEARCH_LENGTH) : "";
-
     const seenIds = new Set<string>();
-    const clauses: FilterClause[] = [];
-    if (Array.isArray(parsed.clauses)) {
-        for (const entry of parsed.clauses) {
-            const clause = parseClause(entry, seenIds);
-            if (clause !== null) clauses.push(clause);
+
+    const groups: FilterGroup[] = [];
+    if (Array.isArray(parsed.groups)) {
+        for (const entry of parsed.groups) {
+            if (!isRecord(entry)) continue;
+            const clauses = parseClauses(entry.clauses, seenIds);
+            if (clauses.length === 0) continue;
+            const operator: FilterGroupOperator = entry.operator === "or" ? "or" : "and";
+            const storedGroupId =
+                typeof entry.id === "string" && entry.id !== "" && !seenIds.has(entry.id) ? entry.id : null;
+            const id = storedGroupId ?? createFilterGroupId();
+            seenIds.add(id);
+            groups.push({ id, operator, clauses });
         }
+    } else if (Array.isArray(parsed.clauses)) {
+        const clauses = parseClauses(parsed.clauses, seenIds);
+        if (clauses.length > 0) groups.push({ id: createFilterGroupId(), operator: "and", clauses });
     }
 
-    return { search, clauses };
+    return { search, groups };
+}
+
+/** The valid clauses of one persisted group. */
+function parseClauses(raw: unknown, seenIds: Set<string>): FilterClause[] {
+    if (!Array.isArray(raw)) return [];
+    const clauses: FilterClause[] = [];
+    for (const entry of raw) {
+        const clause = parseClause(entry, seenIds);
+        if (clause !== null) clauses.push(clause);
+    }
+    return clauses;
 }
 
 /** Reads the stored filter, tolerating missing storage, denied access and corrupt JSON alike. */
@@ -119,19 +153,36 @@ export function writeTaskFilterState(state: TaskFilterState): void {
 }
 
 /**
- * The clauses that still name something this department has.
+ * The groups whose clauses still name something this department has.
  *
  * A persisted `field:<id>` clause outlives the column it was written for: rename or delete that
  * custom field and the clause would match no row at all, which reads as "the list is empty" rather
- * than "one filter is stale". Built-in keys are always known; only a custom key can go missing.
+ * than "one filter is stale". Built-in keys are always known; only a custom key can go missing. A
+ * group left with no clauses at all is dropped instead of being kept as a match-everything block.
  */
+export function knownGroups(
+    groups: readonly FilterGroup[],
+    fieldIds: ReadonlySet<number>,
+): readonly FilterGroup[] {
+    const known: FilterGroup[] = [];
+    for (const group of groups) {
+        const clauses = group.clauses.filter((clause) => isKnownClauseKey(clause.fieldKey, fieldIds));
+        if (clauses.length > 0) known.push({ ...group, clauses });
+    }
+    return known;
+}
+
+/** The flat form of {@link knownGroups}, for callers still holding a clause array. */
 export function knownClauses(
     clauses: readonly FilterClause[],
     fieldIds: ReadonlySet<number>,
 ): readonly FilterClause[] {
-    return clauses.filter((clause) => {
-        if (clause.fieldKey === null || !clause.fieldKey.startsWith("field:")) return true;
-        const fieldId = Number(clause.fieldKey.slice("field:".length));
-        return Number.isInteger(fieldId) && fieldIds.has(fieldId);
-    });
+    return clauses.filter((clause) => isKnownClauseKey(clause.fieldKey, fieldIds));
+}
+
+/** A built-in key is always known; a custom key survives only while its column does. */
+function isKnownClauseKey(fieldKey: string | null, fieldIds: ReadonlySet<number>): boolean {
+    if (fieldKey === null || !fieldKey.startsWith("field:")) return true;
+    const fieldId = Number(fieldKey.slice("field:".length));
+    return Number.isInteger(fieldId) && fieldIds.has(fieldId);
 }

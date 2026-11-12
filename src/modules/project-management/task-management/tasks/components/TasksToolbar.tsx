@@ -15,8 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 
 import type { FilterBuilderMember, FilterBuilderOption } from "./TaskFilterBuilder";
-import { TaskFilterControl } from "./TaskFilterControl";
-import type { FilterClause, SavedTaskFilter } from "./task-filter";
+import { FILTER_BAR_ITEM_CLASS, TaskFilterControl } from "./TaskFilterControl";
+import type { FilterGroup, SavedTaskFilter } from "./task-filter";
 import type { TaskField } from "../hooks/useTasks";
 
 /**
@@ -31,8 +31,8 @@ import type { TaskField } from "../hooks/useTasks";
 export interface TasksToolbarProps {
     readonly searchValue: string;
     readonly onSearchChange: (value: string) => void;
-    readonly clauses: readonly FilterClause[];
-    readonly onClausesChange: (next: readonly FilterClause[]) => void;
+    readonly groups: readonly FilterGroup[];
+    readonly onGroupsChange: (next: readonly FilterGroup[]) => void;
     readonly fields: readonly TaskField[];
     readonly statuses: readonly FilterBuilderOption[];
     readonly priorities: readonly FilterBuilderOption[];
@@ -40,7 +40,7 @@ export interface TasksToolbarProps {
     readonly members: readonly FilterBuilderMember[];
     readonly currentUserId: number | null;
     readonly savedFilters: readonly SavedTaskFilter[];
-    readonly onSaveFilter: (name: string, clauses: readonly FilterClause[]) => void;
+    readonly onSaveFilter: (name: string, groups: readonly FilterGroup[]) => void;
     readonly onApplySavedFilter: (filter: SavedTaskFilter) => void;
     readonly onDeleteSavedFilter: (id: string) => void;
     readonly isFiltering: boolean;
@@ -59,8 +59,8 @@ export interface TasksToolbarProps {
 export function TasksToolbar({
     searchValue,
     onSearchChange,
-    clauses,
-    onClausesChange,
+    groups,
+    onGroupsChange,
     fields,
     statuses,
     priorities,
@@ -103,8 +103,8 @@ export function TasksToolbar({
                 <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
                     <TaskFilterControl
                         chrome={false}
-                        clauses={clauses}
-                        onClausesChange={onClausesChange}
+                        groups={groups}
+                        onGroupsChange={onGroupsChange}
                         fields={fields}
                         statuses={statuses}
                         priorities={priorities}
@@ -128,7 +128,7 @@ export function TasksToolbar({
                                 aria-label={subtasksAriaLabel}
                                 title={subtasksAriaLabel}
                                 aria-haspopup="menu"
-                                className="rounded-full"
+                                className={FILTER_BAR_ITEM_CLASS}
                             >
                                 <ListTree className="size-4" aria-hidden="true" />
                                 Subtasks
@@ -168,6 +168,7 @@ export function TasksToolbar({
                         disabled={isRefreshing}
                         aria-label="Refresh tasks"
                         title="Refresh tasks"
+                        className={FILTER_BAR_ITEM_CLASS}
                     >
                         {isRefreshing ? (
                             <Spinner className="size-4" />

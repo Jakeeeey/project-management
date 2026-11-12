@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useMemo, useState, type ReactNode } from "react";
 import { ChevronRight, ListTree, RotateCcw, TriangleAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -174,8 +174,15 @@ export interface TaskTreeProps {
     onRetry?: () => void;
     /** One short sentence for the empty state. */
     emptyMessage?: string;
+    /** Slot for the dnd-kit handle in each wide row's leading gutter. */
+    renderDragHandle?: (node: TreeNode<TaskRowView>) => ReactNode;
     /** Slot for each row's actions menu. */
     renderActions?: (node: TreeNode<TaskRowView>) => ReactNode;
+    /**
+     * Overrides how a data row is rendered. Defaults to `TaskRow`; the List view passes a wrapper
+     * that renders it inside its sortable shell, while the tree keeps owning the aria/computed props.
+     */
+    renderRow?: (props: TaskRowProps) => ReactNode;
     /** The department's custom columns — one extra table column and one extra card field each. */
     fields?: readonly TaskField[];
     /**
@@ -195,6 +202,11 @@ export interface TaskTreeProps {
      * the button's face, so a 180px column never has to grow to fit a picker.
      */
     onEditTags?: (taskId: number) => void;
+    /**
+     * Ids on screen only as the ancestor path of a match. Their rows render muted: they are the
+     * hierarchy the match lives in, not results. Empty when nothing is filtered.
+     */
+    contextIds?: ReadonlySet<number>;
     className?: string;
     /** Accessible name of the grid. */
     "aria-label"?: string;
@@ -250,7 +262,9 @@ export function TaskTree({
     error = null,
     onRetry,
     emptyMessage = "No tasks found.",
+    renderDragHandle,
     renderActions,
+    renderRow,
     fields = [],
     catalogs,
     members,
@@ -260,6 +274,7 @@ export function TaskTree({
     onCancelCellEdit,
     onCommitCellEdit,
     onEditTags,
+    contextIds,
     className,
     "aria-label": ariaLabel = "Task list",
 }: TaskTreeProps) {
@@ -628,8 +643,10 @@ export function TaskTree({
                                               posInSet: position.posInSet,
                                               setSize: position.setSize,
                                               hasChildren,
+                                              isContext: contextIds?.has(node.id) ?? false,
                                               isExpanded: expandedIds.has(node.id),
                                               onToggleExpand,
+                                              dragHandle: renderDragHandle?.(node),
                                               actions: renderActions?.(node),
                                               frozenColumns: frozenOffsets,
                                               fields,
@@ -642,7 +659,10 @@ export function TaskTree({
                                               onCommitCellEdit,
                                               onEditTags,
                                           };
-                                          return <TaskRow key={node.id} {...rowProps} />;
+                                          const rendered = renderRow
+                                              ? renderRow(rowProps)
+                                              : <TaskRow {...rowProps} />;
+                                          return <Fragment key={node.id}>{rendered}</Fragment>;
                                       })}
                         </TableBody>
                     </Table>

@@ -6,7 +6,7 @@ import {
     createFilterClauseId,
     readSavedTaskFilters,
     writeSavedTaskFilters,
-    type FilterClause,
+    type FilterGroup,
     type SavedTaskFilter,
 } from "../components/task-filter";
 
@@ -28,8 +28,8 @@ import {
 
 export interface UseSavedTaskFiltersResult {
     readonly savedFilters: readonly SavedTaskFilter[];
-    /** Saves the current clauses under a name; a blank name or an empty set is a no-op. */
-    readonly saveFilter: (name: string, clauses: readonly FilterClause[]) => void;
+    /** Saves the current groups under a name; a blank name or a set with no filled-in row is a no-op. */
+    readonly saveFilter: (name: string, groups: readonly FilterGroup[]) => void;
     /** Removes one saved set by id. */
     readonly deleteFilter: (id: string) => void;
 }
@@ -48,9 +48,12 @@ export function useSavedTaskFilters(): UseSavedTaskFiltersResult {
     }, []);
 
     const saveFilter = useCallback(
-        (name: string, clauses: readonly FilterClause[]): void => {
+        (name: string, groups: readonly FilterGroup[]): void => {
             const trimmed = name.trim();
-            if (trimmed === "" || clauses.length === 0) return;
+            const kept = groups
+                .map((group) => ({ ...group, clauses: group.clauses.map((clause) => ({ ...clause })) }))
+                .filter((group) => group.clauses.length > 0);
+            if (trimmed === "" || kept.length === 0) return;
 
             const lower = trimmed.toLowerCase();
             const rest = filtersRef.current.filter((filter) => filter.name.toLowerCase() !== lower);
@@ -59,7 +62,7 @@ export function useSavedTaskFilters(): UseSavedTaskFiltersResult {
                 {
                     id: createFilterClauseId(),
                     name: trimmed,
-                    clauses: clauses.map((clause) => ({ ...clause })),
+                    groups: kept,
                 },
             ]);
         },
